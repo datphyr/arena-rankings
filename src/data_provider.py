@@ -26,6 +26,40 @@ from src.table import Col, fmt_date, fmt_rating, fmt_wr, fmt_rd, fmt_vol, fmt_ti
 TIER_ORDER = {"premier": 0, "major": 1, "minor": 2}
 
 
+# ─── Glicko-2 RD-stripped rating (single source of truth) ───────────────────
+#
+# Glicko-2 ranks/peaks use the *conservative lower bound* rating - RD rather
+# than the raw rating, so players with high uncertainty (large RD) are demoted.
+# This logic is used in several queries (top players, leaderboard, rank, peak).
+# Keep it in ONE place so it stays consistent everywhere.
+
+def _glicko_rank_sql(alias: str = "") -> str:
+    """SQL expression for the RD-stripped Glicko-2 rating (rating - rd).
+
+    Pass an alias (e.g. "h") when the columns are qualified in the query.
+    """
+    p = f"{alias}." if alias else ""
+    return f"{p}rating - {p}rd"
+
+
+def _glicko_rank_value(rating, rd) -> float:
+    """Python value for the RD-stripped Glicko-2 rating (rating - rd).
+
+    rd may be None (missing) — treat as 0 so the value equals the raw rating.
+    """
+    return rating - (rd if rd is not None else 0)
+
+
+def _glicko_order_expr(system: str) -> str:
+    """ORDER BY expression for a rating system.
+
+    Glicko-2 sorts by rating - RD (conservative lower bound); Elo by raw rating.
+    """
+    if system == "glicko2":
+        return f"{_glicko_rank_sql()} DESC"
+    return "rating DESC"
+
+
 def _tier_key(tier: str):
     """Sort key for a tier string: premier->major->minor, unknown tiers last."""
     if not tier:
@@ -874,7 +908,7 @@ class DataProvider:
                 query += " AND matches_played >= %(mm)s"
             # Glicko-2: sort by rating - RD (conservative lower bound) to demote uncertain players
             if system == "glicko2":
-                query += " ORDER BY rating - rd DESC LIMIT %(lim)s"
+                query += f" ORDER BY {_glicko_rank_sql()} DESC LIMIT %(lim)s"
             else:
                 query += " ORDER BY rating DESC LIMIT %(lim)s"
             rows = self.db.client.execute(query, params)
@@ -928,7 +962,7 @@ class DataProvider:
                 query += " AND matches_played >= %(mm)s"
             # Glicko-2: sort by rating - RD (conservative lower bound)
             if system == "glicko2":
-                query += " ORDER BY rating - rd DESC LIMIT %(lim)s"
+                query += f" ORDER BY {_glicko_rank_sql()} DESC LIMIT %(lim)s"
             else:
                 query += " ORDER BY rating DESC LIMIT %(lim)s"
             rows = self.db.client.execute(query, params)
@@ -1199,7 +1233,7 @@ class DataProvider:
                 GROUP BY h.player_id, p.peak, p.peak_date{group_extra}
             """
         else:
-            order_expr = "rating - rd DESC" if system == "glicko2" else "rating DESC"
+            order_expr = _glicko_order_expr(system)
             query = f"""
                 SELECT player_id,
                        argMax(rating, played_at) AS rating,
@@ -1933,8 +1967,8 @@ class DataProvider:
         # Glicko-2 ranks by rating - RD (conservative lower bound), matching the
         # leaderboard sort. Elo ranks by raw rating.
         if system == "glicko2":
-            rank_expr = "rating - rd"
-            player_val = rating - (rd if rd is not None else 0)
+            rank_expr = _glicko_rank_sql()
+            player_val = _glicko_rank_value(rating, rd)
         else:
             rank_expr = "rating"
             player_val = rating
@@ -2093,12 +2127,13 @@ class DataProvider:
         considered (matching the leaderboard's min-matches filter).
         """
         if system == "glicko2":
+            rank_expr = _glicko_rank_sql("h")
             if min_matches > 0:
                 rows = self.db.client.execute(
-                    """
-                    SELECT h.player_id, max(h.rating - h.rd) AS peak,
-                           argMax(h.played_at, h.rating - h.rd) AS peak_date,
-                           argMax(h.game_name, h.rating - h.rd) AS peak_game
+                    f"""
+                    SELECT h.player_id, max({rank_expr}) AS peak,
+                           argMax(h.played_at, {rank_expr}) AS peak_date,
+                           argMax(h.game_name, {rank_expr}) AS peak_game
                     FROM rating_history h
                     WHERE h.rating_system = %(rs)s AND h.matches_played >= %(mm)s
                     GROUP BY h.player_id
@@ -2109,10 +2144,10 @@ class DataProvider:
                 )
             else:
                 rows = self.db.client.execute(
-                    """
-                    SELECT h.player_id, max(h.rating - h.rd) AS peak,
-                           argMax(h.played_at, h.rating - h.rd) AS peak_date,
-                           argMax(h.game_name, h.rating - h.rd) AS peak_game
+                    f"""
+                    SELECT h.player_id, max({rank_expr}) AS peak,
+                           argMax(h.played_at, {rank_expr}) AS peak_date,
+                           argMax(h.game_name, {rank_expr}) AS peak_game
                     FROM rating_history h
                     WHERE h.rating_system = %(rs)s
                     GROUP BY h.player_id

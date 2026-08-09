@@ -63,6 +63,10 @@
 {% block scripts %}
 <script>
 const tierData = {{ tier_stats.tiers | tojson }};
+function cssVar(name, fallback) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
 new Chart(document.getElementById('tierChart'), {
   type: 'doughnut',
   data: {
@@ -70,14 +74,14 @@ new Chart(document.getElementById('tierChart'), {
     datasets: [{
       data: tierData.map(t => t.tournaments),
       backgroundColor: ['#fbbf24', '#ef4444', '#dc2626', '#6b6b6b'],
-      borderColor: '#161616',
+      borderColor: cssVar('--bg-card', '#161616'),
       borderWidth: 2,
     }]
   },
   options: {
     responsive: true, maintainAspectRatio: false,
     plugins: {
-      legend: { position: 'bottom', labels: { color: '#a3a3a3', padding: 12 } }
+      legend: { position: 'bottom', labels: { color: cssVar('--text-dim', '#a3a3a3'), padding: 12 } }
     }
   }
 });

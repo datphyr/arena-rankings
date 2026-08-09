@@ -2,7 +2,7 @@
 {% block title %}{{ player_name }} — Arena Rankings{% endblock %}
 {% block content %}
 <div class="player-head">
-  <div class="player-avatar">{{ player_name[0]|upper }}</div>
+  <div class="player-avatar" style="background: {{ player_id|avatar_gradient }};">{{ player_name[0]|upper }}</div>
   <div>
     <h1>{{ player_name }}{% if summary and summary.aliases %}<span class="player-aliases"> ({{ summary.aliases|join(', ') }})</span>{% endif %}</h1>
     {% if summary and (summary.first_match or summary.last_match) %}
@@ -35,13 +35,13 @@
   {% if summary.best_game %}
   <div class="highlight-box">
     <div class="label">Best Game</div>
-    <div class="value accent" style="font-size:1rem;"><a class="game-link" href="/leaderboard?game={{ summary.best_game.game }}">{{ summary.best_game.game }}</a></div>
+    <div class="value gold" style="font-size:1rem;"><a class="game-link" href="/leaderboard?game={{ summary.best_game.game }}">{{ summary.best_game.game }}</a></div>
   </div>
   {% endif %}
   {% if summary.worst_game and summary.worst_game.game != summary.best_game.game %}
   <div class="highlight-box">
     <div class="label">Worst Game</div>
-    <div class="value" style="font-size:1rem;"><a class="game-link" href="/leaderboard?game={{ summary.worst_game.game }}">{{ summary.worst_game.game }}</a></div>
+    <div class="value slate" style="font-size:1rem;"><a class="game-link" href="/leaderboard?game={{ summary.worst_game.game }}">{{ summary.worst_game.game }}</a></div>
   </div>
   {% endif %}
 </div>
@@ -178,6 +178,12 @@ function fmtDT(ms) {
   return s.slice(0, 10) + ', ' + s.slice(11, 16);
 }
 
+// Read a CSS custom property (theme-aware: follows light/dark system setting).
+function cssVar(name, fallback) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
+
 function buildChart(history) {
   // Build data points with numeric x (epoch ms) so the x-axis is a LINEAR
   // time scale: horizontal distance is proportional to real elapsed time.
@@ -244,15 +250,15 @@ function buildChart(history) {
         {
           label: 'Elo',
           data: pts,
-          borderColor: '#ef4444',
+          borderColor: cssVar('--accent', '#ef4444'),
           backgroundColor: 'rgba(239,68,68,0.08)',
           fill: true, tension: 0, pointRadius: 0, borderWidth: 2
         },
         {
           label: 'Glicko-2',
           data: ptsG,
-          borderColor: '#fbbf24',
-          backgroundColor: 'rgba(251,191,36,0.06)',
+          borderColor: cssVar('--plum', '#7c3aed'),
+          backgroundColor: 'rgba(124,58,237,0.08)',
           fill: true, tension: 0, pointRadius: 0, borderWidth: 2
         }
       ]
@@ -262,7 +268,7 @@ function buildChart(history) {
       plugins: {
         legend: {
           labels: {
-            color: '#a3a3a3',
+            color: cssVar('--text-dim', '#a3a3a3'),
             generateLabels: function (chart) {
               const items = Chart.defaults.plugins.legend.labels.generateLabels(chart);
               return items.map(function (item) {
@@ -282,11 +288,11 @@ function buildChart(history) {
           }
         },
         tooltip: {
-          backgroundColor: 'rgba(10,10,10,0.9)',
-          borderColor: '#2a2a2a',
+          backgroundColor: cssVar('--bg-card', 'rgba(10,10,10,0.9)'),
+          borderColor: cssVar('--border', '#2a2a2a'),
           borderWidth: 1,
-          titleColor: '#f5f5f5',
-          bodyColor: '#a3a3a3',
+          titleColor: cssVar('--text', '#f5f5f5'),
+          bodyColor: cssVar('--text-dim', '#a3a3a3'),
           callbacks: {
             title: function (items) {
               if (!items.length) return '';
@@ -304,9 +310,9 @@ function buildChart(history) {
           // after the data from Chart.js "nice" rounding).
           min: pts.length ? pts[0].x : undefined,
           max: pts.length ? pts[pts.length - 1].x : undefined,
-          grid: { color: 'rgba(255,255,255,0.04)' },
+          grid: { color: cssVar('--border-soft', 'rgba(255,255,255,0.04)') },
           ticks: {
-            color: '#a3a3a3',
+            color: cssVar('--text-dim', '#a3a3a3'),
             maxTicksLimit: 10,
             maxRotation: 0,
             callback: function (value) {
@@ -318,7 +324,7 @@ function buildChart(history) {
             axis.ticks = boundaryTicksList.map(function (b) { return { value: b.value }; });
           }
         },
-        y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#a3a3a3' } }
+        y: { grid: { color: cssVar('--border-soft', 'rgba(255,255,255,0.04)') }, ticks: { color: cssVar('--text-dim', '#a3a3a3') } }
       }
     }
   });
@@ -333,7 +339,7 @@ const peakMarker = {
     const ctx = chart.ctx;
     const series = [
       { idx: 0, color: '#ef4444' },  // Elo
-      { idx: 1, color: '#fbbf24' }   // Glicko-2
+      { idx: 1, color: '#7c3aed' }   // Glicko-2
     ];
     const area = chart.chartArea;
     for (const s of series) {

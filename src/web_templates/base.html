@@ -9,6 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/chart.umd.min.js"></script>
+  <script src="/static/theme.js" defer></script>
   <script src="/static/tables.js" defer></script>
   <script src="/static/sort-scroll.js" defer></script>
   <script src="/static/ajax-filters.js" defer></script>
@@ -29,6 +30,9 @@
         <a href="/tournaments" class="nav-link {{ 'active' if active == 'tournaments' }}">Tournaments</a>
         <a href="/h2h" class="nav-link {{ 'active' if active == 'h2h' }}">Head-to-Head</a>
       </nav>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle color theme" title="Toggle light/dark theme">
+        <span class="theme-toggle-icon">🌙</span>
+      </button>
     </div>
   </header>
 

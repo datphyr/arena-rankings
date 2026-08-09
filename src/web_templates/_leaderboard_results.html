@@ -18,7 +18,7 @@
       <tbody>
         {% for p in players %}
         <tr>
-          <td class="num"><span class="rank-badge {{ 'rank-1' if p.rank == 1 else 'rank-2' if p.rank == 2 else 'rank-3' if p.rank == 3 }}">{{ p.rank }}</span></td>
+          <td class="num"><span class="rank-badge {{ 'rank-1' if p.rank == 1 else 'rank-2' if p.rank == 2 else 'rank-3' if p.rank == 3 else 'rank-4' if p.rank == 4 else 'rank-5' if p.rank == 5 }}">{{ p.rank }}</span></td>
           <td><a class="player-link" href="/player/{{ p.player_id }}/{{ slug(p.name) }}">{{ p.name }}</a></td>
           {% if not game %}<td>{% if p.main_game %}<a class="game-link" href="/leaderboard?game={{ p.main_game }}">{{ p.main_game }}</a>{% else %}—{% endif %}</td>{% endif %}
           <td class="num rating {{ 'rating-elo' if system == 'elo' else 'rating-glicko2' }}">{{ "%.0f"|format(p.peak if sort == 'peak' and p.peak else p.rating) if (p.peak if sort == 'peak' and p.peak else p.rating) else '—' }}</td>

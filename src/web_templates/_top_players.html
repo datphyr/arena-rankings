@@ -3,7 +3,7 @@
   <tbody>
     {% for p in top_players %}
     <tr>
-      <td><span class="rank-badge {{ 'rank-1' if loop.index == 1 else 'rank-2' if loop.index == 2 else 'rank-3' if loop.index == 3 }}">{{ loop.index }}</span></td>
+      <td><span class="rank-badge {{ 'rank-1' if loop.index == 1 else 'rank-2' if loop.index == 2 else 'rank-3' if loop.index == 3 else 'rank-4' if loop.index == 4 else 'rank-5' if loop.index == 5 }}">{{ loop.index }}</span></td>
       <td><a class="player-link" href="/player/{{ p.player_id }}/{{ slug(p.name) }}">{{ p.name }}</a></td>
       <td>{% if p.main_game %}<a class="game-link" href="/leaderboard?game={{ p.main_game }}">{{ p.main_game }}</a>{% else %}—{% endif %}</td>
       <td class="num rating rating-elo">{{ "%.0f"|format(p.rating if top_sort == 'elo' else p.elo) if (p.rating if top_sort == 'elo' else p.elo) else '—' }}</td>
