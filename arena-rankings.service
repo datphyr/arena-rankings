@@ -1,0 +1,16 @@
+[Unit]
+Description=Arena Rankings Pipeline
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/arena-rankings
+ExecStart=/usr/bin/python3 daemon.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
