@@ -47,15 +47,15 @@ Generates player rankings (Elo / Glicko-2) from [plusforward.net](https://www.pl
 ## CLI
 
 ```
-cli.py top [--game ql] [--system elo|glicko2] [--limit N] [--min-matches N]
-cli.py player <name> [--game ql] [--system elo|glicko2]
-cli.py history <name> [--game ql] [--system elo|glicko2]
-cli.py h2h <player1> <player2> [--game ql]
+cli.py top [--game ql] [--system elo|glicko2] [--limit N] [--min-matches N] [--date YYYY-MM-DD] [--sort rating|peak]
+cli.py player <name> [--min-matches N]
+cli.py history <name> [--game ql] [--system elo|glicko2] [--limit N]
+cli.py h2h <player1> <player2> [--game ql] [--limit N]
 cli.py matches [--game ql] [--limit N]
 cli.py player-matches <name> [--game ql] [--limit N]
-cli.py stats [--game ql]
+cli.py stats
 cli.py games
-cli.py tournaments [--game ql]
+cli.py tournaments [--tier premier|major|minor] [--game ql] [--limit N]
 ```
 
 Game aliases: `ql`, `qc`, `q3`, `cpm`, `q4`, `qw`, etc.
@@ -75,13 +75,15 @@ Game aliases: `ql`, `qc`, `q3`, `cpm`, `q4`, `qw`, etc.
 
 ## Configuration
 
-All settings via environment variables with defaults (see `.env.example`):
+All settings via environment variables with defaults (see `config.py`; `.env.example` documents the secrets):
 - ClickHouse: host, port, database, user, password
-- Scraping: base URL, rate limit, HTTP timeout, retry backoff, user agents
-- Downloader: 1 worker (network-limited) · Parser: all CPU cores
-- Elo: K-factor tiers, tier multipliers · Glicko-2: period, tau, initial vol
+- Scraping: `RATE_LIMIT_DELAY` (default 0.0), `HTTP_TIMEOUT` (default 3s)
+- Downloader: `DOWNLOADER_WORKERS` (default 1, network-limited) · Parser: `PARSER_WORKERS` (default all CPU cores)
+- Elo: K-factor tiers, tier multipliers · Glicko-2: `GLICKO2_PERIOD` (month), `GLICKO2_TAU` (1.2), `GLICKO2_INITIAL_VOL` (0.06)
 - Discord / Twitch: bot tokens from env
-- Min matches: Elo=0, Glicko-2=30 (filters provisional players)
+- Min matches: `MIN_MATCHES_ELO`=0, `MIN_MATCHES_GLICKO2`=30 (filters provisional players)
+
+Note: `RETRY_BACKOFF` and `USER_AGENTS` are hardcoded in `config.py` (not env-configurable).
 
 ## File structure
 
