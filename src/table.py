@@ -23,7 +23,7 @@ class Col:
 def fmt_date(dt) -> str:
     if not dt or dt == datetime(1970, 1, 1):
         return "—"
-    return dt.strftime("%Y-%m-%d")
+    return dt.strftime("%Y-%m-%d, %H:%M")
 
 
 def fmt_rating(r: float) -> str:

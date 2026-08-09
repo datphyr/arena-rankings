@@ -453,10 +453,89 @@ class DataProvider:
     def __init__(self, db: Optional[Database] = None):
         self.db = db or Database()
         self._owns_db = db is None
+        # Cache of canonical (most-used) display name per player_id.
+        # Populated lazily by _canonical_name / _canonical_names.
+        self._canonical_cache: dict[int, str] = {}
 
     def close(self):
         if self._owns_db:
             self.db.close()
+
+    # --- Canonical display names ---
+
+    def _canonical_names(self, player_ids: list[int]) -> dict[int, str]:
+        """Return the canonical (most-used) display name for each player_id.
+
+        The canonical name is the most frequently occurring spelling of the
+        player's name across all matches (player1_name + player2_name counts).
+        This ensures a single stable display name per player_id, so the same
+        player never shows up under multiple spellings in autocomplete or
+        leaderboards. Falls back to the players table name, then to a
+        player_<id> placeholder.
+        """
+        missing = [pid for pid in player_ids if pid not in self._canonical_cache]
+        if missing:
+            # Most-used spelling per player_id from matches (both sides).
+            rows = self.db.client.execute(
+                """
+                SELECT pid, argMax(name, cnt) AS name
+                FROM (
+                    SELECT player1_id AS pid, player1_name AS name, count() AS cnt
+                    FROM matches FINAL
+                    WHERE player1_id IN %(ids)s AND player1_name != ''
+                    GROUP BY player1_id, player1_name
+                    UNION ALL
+                    SELECT player2_id AS pid, player2_name AS name, count() AS cnt
+                    FROM matches FINAL
+                    WHERE player2_id IN %(ids)s AND player2_name != ''
+                    GROUP BY player2_id, player2_name
+                )
+                GROUP BY pid
+                """,
+                {"ids": tuple(missing)},
+            )
+            found = {r[0]: r[1] for r in rows}
+            # Fallback: players table for ids with no matches.
+            still = [pid for pid in missing if pid not in found]
+            if still:
+                prows = self.db.client.execute(
+                    "SELECT player_id, name FROM players FINAL WHERE player_id IN %(ids)s",
+                    {"ids": tuple(still)},
+                )
+                for pid, name in prows:
+                    if name:
+                        found[pid] = name
+            for pid in missing:
+                self._canonical_cache[pid] = found.get(pid, f"player_{pid}")
+        return {pid: self._canonical_cache[pid] for pid in player_ids}
+
+    def _canonical_name(self, player_id: int) -> str:
+        """Canonical (most-used) display name for a single player_id."""
+        return self._canonical_names([player_id])[player_id]
+
+    def _aliases(self, player_id: int) -> list[str]:
+        """All distinct name spellings for a player_id, most-used first,
+        EXCLUDING the canonical (most-used) name.
+
+        Returns the least-used aliases (e.g. case variants, old tags) so the
+        UI can show them dimmed next to the main name. Empty list if the
+        player has only ever used one spelling.
+        """
+        rows = self.db.client.execute(
+            """
+            SELECT name, count() AS cnt
+            FROM (
+                SELECT player1_name AS name FROM matches FINAL WHERE player1_id = %(pid)s AND player1_name != ''
+                UNION ALL
+                SELECT player2_name AS name FROM matches FINAL WHERE player2_id = %(pid)s AND player2_name != ''
+            )
+            GROUP BY name
+            ORDER BY cnt DESC, name
+            """,
+            {"pid": player_id},
+        )
+        canon = self._canonical_name(player_id)
+        return [r[0] for r in rows if r[0] != canon]
 
     def __enter__(self):
         return self
@@ -465,49 +544,45 @@ class DataProvider:
         self.close()
 
     def _resolve_name(self, name: str) -> str:
-        """Resolve a player name case-insensitively. Returns the canonical name, or the input if no match."""
-        row = self.db.client.execute(
-            "SELECT player_name FROM player_ratings FINAL WHERE lowerUTF8(player_name) = lowerUTF8(%(n)s) LIMIT 1",
-            {"n": name},
-        )
-        if row:
-            return row[0][0]
-        # Fall back to matches table (player might not have ratings yet)
-        row = self.db.client.execute(
-            "SELECT player1_name FROM matches FINAL WHERE lowerUTF8(player1_name) = lowerUTF8(%(n)s) LIMIT 1",
-            {"n": name},
-        )
-        if row:
-            return row[0][0]
-        row = self.db.client.execute(
-            "SELECT player2_name FROM matches FINAL WHERE lowerUTF8(player2_name) = lowerUTF8(%(n)s) LIMIT 1",
-            {"n": name},
-        )
-        if row:
-            return row[0][0]
+        """Resolve a player name case-insensitively to its canonical display name.
+
+        Returns the canonical (most-used) spelling for the matching player_id,
+        or the input unchanged if no player matches. This ensures that any
+        spelling of a player's name (e.g. 'pthy' vs 'Pthy') resolves to the
+        same single display name.
+        """
+        pid = self._player_id(name)
+        if pid is not None:
+            return self._canonical_name(pid)
         return name
 
     def name_exists(self, name: str) -> bool:
         """True if `name` matches an exact known player name (case-insensitive)."""
-        return self._resolve_name(name).lower() == name.lower() and bool(
-            self.db.client.execute(
-                "SELECT 1 FROM player_ratings FINAL WHERE lowerUTF8(player_name) = lowerUTF8(%(n)s) LIMIT 1",
-                {"n": name},
-            )
-            or self.db.client.execute(
-                "SELECT 1 FROM matches FINAL WHERE lowerUTF8(player1_name) = lowerUTF8(%(n)s) OR lowerUTF8(player2_name) = lowerUTF8(%(n)s) LIMIT 1",
-                {"n": name},
-            )
-        )
+        return self._player_id(name) is not None
 
     def _player_id(self, name: str) -> Optional[int]:
-        """Resolve the player_id for a canonical player name, or None."""
+        """Resolve the player_id for a player name, or None.
+
+        Prefers an EXACT-case match first (so distinct players that differ only
+        by case, e.g. 'pavel' (836) vs 'Pavel' (9152), stay distinct), then
+        falls back to case-insensitive matching (so 'PTHY' resolves to 'pthy').
+        Prefers player_ratings (players with ratings), then the matches table.
+        """
+        # 1. Exact-case match in player_ratings.
         row = self.db.client.execute(
             "SELECT player_id FROM player_ratings FINAL WHERE player_name = %(n)s LIMIT 1",
             {"n": name},
         )
         if row:
             return row[0][0]
+        # 2. Case-insensitive match in player_ratings.
+        row = self.db.client.execute(
+            "SELECT player_id FROM player_ratings FINAL WHERE lowerUTF8(player_name) = lowerUTF8(%(n)s) LIMIT 1",
+            {"n": name},
+        )
+        if row:
+            return row[0][0]
+        # 3. Exact-case match in matches (players without ratings yet).
         row = self.db.client.execute(
             "SELECT player1_id FROM matches FINAL WHERE player1_name = %(n)s LIMIT 1",
             {"n": name},
@@ -516,6 +591,19 @@ class DataProvider:
             return row[0][0]
         row = self.db.client.execute(
             "SELECT player2_id FROM matches FINAL WHERE player2_name = %(n)s LIMIT 1",
+            {"n": name},
+        )
+        if row:
+            return row[0][0]
+        # 4. Case-insensitive match in matches.
+        row = self.db.client.execute(
+            "SELECT player1_id FROM matches FINAL WHERE lowerUTF8(player1_name) = lowerUTF8(%(n)s) LIMIT 1",
+            {"n": name},
+        )
+        if row:
+            return row[0][0]
+        row = self.db.client.execute(
+            "SELECT player2_id FROM matches FINAL WHERE lowerUTF8(player2_name) = lowerUTF8(%(n)s) LIMIT 1",
             {"n": name},
         )
         if row:
@@ -531,45 +619,64 @@ class DataProvider:
         )
         return [r[0] for r in rows]
 
-    def autocomplete(self, kind: str, q: str, limit: int = 20) -> list[str]:
+    def autocomplete(self, kind: str, q: str, limit: int = 20) -> list[dict] | list[str]:
         """Return matching names for autocomplete dropdowns.
 
         kind is 'player' or 'tournament'. Matching is case-insensitive and
         partial (substring), so typing 'ra' matches 'rapha'. Returns up to
-        `limit` distinct names ordered alphabetically.
+        `limit` entries.
+
+        For 'player', returns a list of {"name", "id"} dicts — one per
+        distinct name spelling (no dedup by player_id, so all unique aliases
+        of the same player appear, e.g. 'davjs', 'davis', 'lat',
+        'lateral0lz' all show up). The id is the player_id for that spelling.
+
+        For 'tournament', returns a list of plain name strings.
         """
         q = (q or "").strip()
         if not q:
             return []
         like = f"%{q}%"
         if kind == "player":
+            # Collect distinct (player_id, name) pairs whose name matches the
+            # substring — one row per distinct spelling, so aliases of the
+            # same player are NOT collapsed into a single canonical entry.
             rows = self.db.client.execute(
                 """
-                SELECT DISTINCT player_name FROM player_ratings FINAL
+                SELECT DISTINCT player_id, player_name
+                FROM player_ratings FINAL
                 WHERE lowerUTF8(player_name) LIKE lowerUTF8(%(q)s)
-                ORDER BY player_name LIMIT %(lim)s
+                LIMIT %(lim)s
                 """,
                 {"q": like, "lim": limit},
             )
-            if len(rows) < limit:
-                # Also include players that only appear in matches (no ratings yet).
+            entries = [{"name": r[1], "id": r[0]} for r in rows]
+            if len(entries) < limit:
+                # Also pull distinct spellings from matches (both sides) —
+                # catches aliases that only ever appear in match rows (e.g.
+                # 'davjs', 'lateral0lz') and are absent from player_ratings.
                 extra = self.db.client.execute(
                     """
-                    SELECT DISTINCT player1_name FROM matches FINAL
-                    WHERE lowerUTF8(player1_name) LIKE lowerUTF8(%(q)s)
-                      AND player1_name NOT IN (SELECT player_name FROM player_ratings FINAL)
-                    ORDER BY player1_name LIMIT %(lim)s
+                    SELECT DISTINCT pid, name FROM (
+                        SELECT player1_id AS pid, player1_name AS name FROM matches FINAL
+                        WHERE lowerUTF8(player1_name) LIKE lowerUTF8(%(q)s)
+                        UNION ALL
+                        SELECT player2_id AS pid, player2_name AS name FROM matches FINAL
+                        WHERE lowerUTF8(player2_name) LIKE lowerUTF8(%(q)s)
+                    )
+                    LIMIT %(lim)s
                     """,
                     {"q": like, "lim": limit},
                 )
-                seen = {r[0] for r in rows}
-                for r in extra:
-                    if r[0] not in seen:
-                        rows.append(r)
-                        seen.add(r[0])
-                        if len(rows) >= limit:
+                seen = {(e["id"], e["name"]) for e in entries}
+                for pid, name in extra:
+                    if (pid, name) not in seen:
+                        entries.append({"name": name, "id": pid})
+                        seen.add((pid, name))
+                        if len(entries) >= limit:
                             break
-            return [r[0] for r in rows]
+            entries.sort(key=lambda e: e["name"].lower())
+            return entries[:limit]
         if kind == "tournament":
             rows = self.db.client.execute(
                 """
@@ -774,6 +881,7 @@ class DataProvider:
 
             # Batch-fetch main game (most matches) for all player IDs
             player_ids = [r[0] for r in rows]
+            canon = self._canonical_names(player_ids)
             main_games = {}
             peaks = {}
             if player_ids:
@@ -790,7 +898,7 @@ class DataProvider:
             results = [
                 {
                     "player_id": r[0],
-                    "name": r[1],
+                    "name": canon.get(r[0], r[1]),
                     "rating": round(r[2], 1),
                     "rd": round(r[3], 1) if r[3] else None,
                     "vol": round(r[4], 4) if r[4] else None,
@@ -825,11 +933,12 @@ class DataProvider:
                 query += " ORDER BY rating DESC LIMIT %(lim)s"
             rows = self.db.client.execute(query, params)
             player_ids = [r[0] for r in rows]
+            canon = self._canonical_names(player_ids)
             peaks = self._fetch_peaks(player_ids, system)
             results = [
                 {
                     "player_id": r[0],
-                    "name": r[1],
+                    "name": canon.get(r[0], r[1]),
                     "rating": round(r[2], 1),
                     "rd": round(r[3], 1) if r[3] else None,
                     "vol": round(r[4], 4) if r[4] else None,
@@ -971,7 +1080,7 @@ class DataProvider:
             if r:
                 results.append({
                     "player_id": r[0],
-                    "name": r[1],
+                    "name": self._canonical_name(r[0]),
                     "rating": round(r[2], 1),
                     "rd": round(r[3], 1) if r[3] else None,
                     "vol": round(r[4], 4) if r[4] else None,
@@ -987,12 +1096,7 @@ class DataProvider:
                 })
             else:
                 # Player has history but no current rating (e.g. retired)
-                # Fetch name from player_ratings (any game)
-                name_row = self.db.client.execute(
-                    "SELECT player_name FROM player_ratings FINAL WHERE player_id = %(pid)s LIMIT 1",
-                    {"pid": pid},
-                )
-                name = name_row[0][0] if name_row else f"player_{pid}"
+                name = self._canonical_name(pid)
                 results.append({
                     "player_id": pid,
                     "name": name,
@@ -1242,16 +1346,19 @@ class DataProvider:
 
     def get_player_ratings(self, player_name: str) -> list[dict]:
         """All ratings for a player across games and systems."""
-        player_name = self._resolve_name(player_name)
+        player_id = self._player_id(player_name)
+        if player_id is None:
+            return []
+        canon = self._canonical_name(player_id)
         rows = self.db.client.execute(
             """
             SELECT player_id, player_name, game_name, rating_system, rating, rd, vol,
                    wins, losses, matches_played, last_match_id, last_match_date, first_match_date
             FROM player_ratings FINAL
-            WHERE player_name = %(name)s
+            WHERE player_id = %(pid)s
             ORDER BY rating_system, rating DESC
             """,
-            {"name": player_name},
+            {"pid": player_id},
         )
 
         player_id = rows[0][0] if rows else None
@@ -1274,7 +1381,7 @@ class DataProvider:
         return [
             {
                 "player_id": r[0],
-                "name": r[1],
+                "name": canon,
                 "game": r[2] or "Combined",
                 "system": r[3],
                 "rating": round(r[4], 1),
@@ -1300,21 +1407,19 @@ class DataProvider:
         limit: int = 50,
     ) -> list[dict]:
         """Rating history for a player (most recent first)."""
-        player_name = self._resolve_name(player_name)
+        player_id = self._player_id(player_name)
+        if player_id is None:
+            return []
         rows = self.db.client.execute(
             """
             SELECT match_id, played_at, rating, rd, vol, wins, losses, matches_played
             FROM rating_history
-            WHERE player_id = (
-                SELECT player_id FROM player_ratings FINAL
-                WHERE player_name = %(name)s AND game_name = %(game)s AND rating_system = %(sys)s
-                LIMIT 1
-            )
+            WHERE player_id = %(pid)s
             AND rating_system = %(sys)s AND game_name = %(game)s
             ORDER BY played_at DESC, match_id DESC
             LIMIT %(lim)s
             """,
-            {"name": player_name, "game": game, "sys": system, "lim": limit},
+            {"pid": player_id, "game": game, "sys": system, "lim": limit},
         )
         return [
             {
@@ -1342,10 +1447,12 @@ class DataProvider:
         Uses ASOF join on the configured Glicko-2 period function so Glicko-2 ratings
         forward-fill onto every ELO match row within the same period.
         """
-        player_name = self._resolve_name(player_name)
+        player_id = self._player_id(player_name)
+        if player_id is None:
+            return []
         ch_fn = _glicko_period_ch_fn()
         since_clause = ""
-        params: dict = {"name": player_name, "game": game, "lim": limit}
+        params: dict = {"pid": player_id, "game": game, "lim": limit}
         if since:
             since_clause = "AND e.played_at >= %(since)s"
             params["since"] = since
@@ -1360,11 +1467,7 @@ class DataProvider:
                 AND e.game_name = g.game_name
                 AND g.rating_system = 'glicko2'
                 AND {ch_fn}(e.played_at) >= {ch_fn}(g.played_at)
-            WHERE e.player_id = (
-                SELECT player_id FROM player_ratings FINAL
-                WHERE player_name = %(name)s AND game_name = %(game)s AND rating_system = 'elo'
-                LIMIT 1
-            )
+            WHERE e.player_id = %(pid)s
             AND e.rating_system = 'elo' AND e.game_name = %(game)s
             {since_clause}
             ORDER BY e.played_at DESC, e.match_id DESC
@@ -1422,30 +1525,41 @@ class DataProvider:
                 return f"{col} ILIKE %({ph})s", f"%{pat}%"
             return f"{col} = %({ph})s", pat
 
-        # Build per-player conditions. For exact mode resolve to canonical name.
-        if match == "exact":
-            player1 = self._resolve_name(player1)
-        if match2 == "exact":
-            player2 = self._resolve_name(player2)
-        p1_cond, p1 = _cond("m.player1_name", match, player1, "p1")
-        p2_cond, p2 = _cond("m.player2_name", match2, player2, "p2")
-        p1_cond_r, _ = _cond("m.player1_name", match2, player2, "p2")
-        p2_cond_r, _ = _cond("m.player2_name", match, player1, "p1")
-        where = (
-            f"({p1_cond} AND {p2_cond})"
-            f" OR ({p1_cond_r} AND {p2_cond_r})"
-        )
-        params = {"p1": p1, "p2": p2}
-        if game:
-            where = f"m.game_name = %(game)s AND ({where})"
-            params["game"] = game
-
-        # Resolve the authoritative player_ids for the requested players so the
-        # scoreboard counts wins for the REQUESTED order (not the stored order).
-        # For partial/regex modes a single player_id can't be resolved, so wins
-        # are counted by name-pattern matching instead.
+        # Build per-player conditions. For exact mode resolve to player_id so
+        # the match is robust to name-spelling variations (canonical name).
         p1_id = self._player_id(player1) if match == "exact" else None
         p2_id = self._player_id(player2) if match2 == "exact" else None
+        if match == "exact" and match2 == "exact" and p1_id is not None and p2_id is not None:
+            # Both resolved to ids: match by player_id (handles any spelling).
+            where = (
+                f"(m.player1_id = %(p1id)s AND m.player2_id = %(p2id)s)"
+                f" OR (m.player1_id = %(p2id)s AND m.player2_id = %(p1id)s)"
+            )
+            params = {"p1id": p1_id, "p2id": p2_id}
+            if game:
+                where = f"m.game_name = %(game)s AND ({where})"
+                params["game"] = game
+        else:
+            # Fall back to name-based matching (partial/regex, or unresolved id).
+            if match == "exact":
+                player1 = self._resolve_name(player1)
+            if match2 == "exact":
+                player2 = self._resolve_name(player2)
+            p1_cond, p1 = _cond("m.player1_name", match, player1, "p1")
+            p2_cond, p2 = _cond("m.player2_name", match2, player2, "p2")
+            p1_cond_r, _ = _cond("m.player1_name", match2, player2, "p2")
+            p2_cond_r, _ = _cond("m.player2_name", match, player1, "p1")
+            where = (
+                f"({p1_cond} AND {p2_cond})"
+                f" OR ({p1_cond_r} AND {p2_cond_r})"
+            )
+            params = {"p1": p1, "p2": p2}
+            if game:
+                where = f"m.game_name = %(game)s AND ({where})"
+                params["game"] = game
+
+        # For partial/regex modes a single player_id can't be resolved, so wins
+        # are counted by name-pattern matching instead.
 
         # Full-record counts (not truncated by LIMIT).
         if match == "exact" and match2 == "exact":
@@ -1525,10 +1639,10 @@ class DataProvider:
                 w = None  # draw / unknown
             # Normalize to requested order: player1/player2 must match the
             # requested player1/player2, swapping stored names/scores as needed.
-            # For exact mode compare resolved names; for partial/regex compare
+            # For exact mode compare by player_id; for partial/regex compare
             # against the raw patterns.
             if match == "exact":
-                p1_matches = (p1n == player1)
+                p1_matches = (p1id == p1_id)
             elif match == "regex":
                 import re
                 p1_matches = bool(re.search(player1, p1n, re.IGNORECASE))
@@ -1538,10 +1652,16 @@ class DataProvider:
                 disp1, disp2, ds1, ds2 = p1n, p2n, s1, s2
             else:
                 disp1, disp2, ds1, ds2 = p2n, p1n, s2, s1
+            # Map display names to canonical (most-used) spelling per player_id.
+            canon = self._canonical_names([p1id, p2id])
+            disp1 = canon.get(p1id if p1_matches else p2id, disp1)
+            disp2 = canon.get(p2id if p1_matches else p1id, disp2)
             matches.append({
                 "match_id": mid,
                 "player1": disp1,
                 "player2": disp2,
+                "player1_id": p1id if p1_matches else p2id,
+                "player2_id": p2id if p1_matches else p1id,
                 "score": f"{ds1}-{ds2}",
                 "score1": ds1,
                 "score2": ds2,
@@ -1555,6 +1675,8 @@ class DataProvider:
         return {
             "player1": player1,
             "player2": player2,
+            "p1_id": p1_id,
+            "p2_id": p2_id,
             "p1_wins": p1_wins,
             "p2_wins": p2_wins,
             "total": total,
@@ -1569,6 +1691,7 @@ class DataProvider:
         limit: int = 20,
         player: str = "",
         tournament: str = "",
+        tier: str = "",
         offset: int = 0,
         sort_col: str = "",
         sort_dir: str = "desc",
@@ -1578,7 +1701,7 @@ class DataProvider:
     ) -> list[dict]:
         """Recent matches (newest first).
 
-        Optional filters: game, player (name), tournament (name).
+        Optional filters: game, player (name), tournament (name), tier.
         `match` controls how player/tournament filters match:
           - 'exact'   : case-insensitive exact name match (default)
           - 'partial' : case-insensitive substring match
@@ -1609,9 +1732,11 @@ class DataProvider:
                 where.append("(m.player1_name ILIKE %(player)s OR m.player2_name ILIKE %(player)s)")
                 params["player"] = f"%{player}%"
             else:
-                player = self._resolve_name(player)
-                where.append("(m.player1_name = %(player)s OR m.player2_name = %(player)s)")
-                params["player"] = player
+                pid = self._player_id(player)
+                if pid is None:
+                    return []
+                where.append("(m.player1_id = %(pid)s OR m.player2_id = %(pid)s)")
+                params["pid"] = pid
         if tournament:
             if tournament_match == "regex":
                 where.append("match(lowerUTF8(m.tournament_name), lowerUTF8(%(tournament)s))")
@@ -1622,6 +1747,9 @@ class DataProvider:
             else:
                 where.append("m.tournament_name = %(tournament)s")
                 params["tournament"] = tournament
+        if tier:
+            where.append("t.tier = %(tier)s")
+            params["tier"] = tier
         if where:
             query += " WHERE " + " AND ".join(where)
         if sort_col:
@@ -1631,15 +1759,19 @@ class DataProvider:
             query += " ORDER BY m.played_at DESC, m.match_id DESC LIMIT %(lim)s OFFSET %(off)s"
 
         rows = self.db.client.execute(query, params)
+        ids = {r[5] for r in rows} | {r[6] for r in rows}
+        canon = self._canonical_names(list(ids))
         matches = [
             {
                 "match_id": r[0],
-                "player1": r[1],
-                "player2": r[2],
+                "player1": canon.get(r[5], r[1]),
+                "player2": canon.get(r[6], r[2]),
+                "player1_id": r[5],
+                "player2_id": r[6],
                 "score": f"{r[3]}-{r[4]}",
                 "score1": r[3],
                 "score2": r[4],
-                "winner": _winner_from_ids(r[5], r[6], r[7], r[1], r[2]),
+                "winner": _winner_from_ids(r[5], r[6], r[7], canon.get(r[5], r[1]), canon.get(r[6], r[2])),
                 "game": r[8],
                 "tournament": r[9],
                 "stage": r[10],
@@ -1658,6 +1790,7 @@ class DataProvider:
         game: str = "",
         player: str = "",
         tournament: str = "",
+        tier: str = "",
         match: str = "exact",
         player_match: Optional[str] = None,
         tournament_match: Optional[str] = None,
@@ -1683,9 +1816,11 @@ class DataProvider:
                 where.append("(m.player1_name ILIKE %(player)s OR m.player2_name ILIKE %(player)s)")
                 params["player"] = f"%{player}%"
             else:
-                player = self._resolve_name(player)
-                where.append("(m.player1_name = %(player)s OR m.player2_name = %(player)s)")
-                params["player"] = player
+                pid = self._player_id(player)
+                if pid is None:
+                    return 0
+                where.append("(m.player1_id = %(pid)s OR m.player2_id = %(pid)s)")
+                params["pid"] = pid
         if tournament:
             if tournament_match == "regex":
                 where.append("match(lowerUTF8(m.tournament_name), lowerUTF8(%(tournament)s))")
@@ -1696,6 +1831,9 @@ class DataProvider:
             else:
                 where.append("m.tournament_name = %(tournament)s")
                 params["tournament"] = tournament
+        if tier:
+            where.append("t.tier = %(tier)s")
+            params["tier"] = tier
         if where:
             query += " WHERE " + " AND ".join(where)
         rows = self.db.client.execute(query, params)
@@ -1711,15 +1849,17 @@ class DataProvider:
         tournament: str = "",
     ) -> list[dict]:
         """Recent matches for a specific player."""
-        player_name = self._resolve_name(player_name)
+        player_id = self._player_id(player_name)
+        if player_id is None:
+            return []
         query = """
             SELECT m.match_id, m.player1_name, m.player2_name, m.player1_score, m.player2_score,
                    m.player1_id, m.player2_id, m.winner_id, m.game_name, m.tournament_name, m.stage_name, m.played_at, t.tier
             FROM matches m FINAL
             LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
-            WHERE (m.player1_name = %(name)s OR m.player2_name = %(name)s)
+            WHERE (m.player1_id = %(pid)s OR m.player2_id = %(pid)s)
         """
-        params = {"name": player_name, "lim": limit}
+        params = {"pid": player_id, "lim": limit}
         if game:
             query += " AND m.game_name = %(game)s"
             params["game"] = game
@@ -1729,15 +1869,21 @@ class DataProvider:
         query += " ORDER BY m.played_at DESC, m.match_id DESC LIMIT %(lim)s"
 
         rows = self.db.client.execute(query, params)
+        # Map both sides to canonical names so the same player always displays
+        # under one spelling.
+        ids = {r[5] for r in rows} | {r[6] for r in rows}
+        canon = self._canonical_names(list(ids))
         return [
             {
                 "match_id": r[0],
-                "player1": r[1],
-                "player2": r[2],
+                "player1": canon.get(r[5], r[1]),
+                "player2": canon.get(r[6], r[2]),
+                "player1_id": r[5],
+                "player2_id": r[6],
                 "score": f"{r[3]}-{r[4]}",
                 "score1": r[3],
                 "score2": r[4],
-                "winner": _winner_from_ids(r[5], r[6], r[7], r[1], r[2]),
+                "winner": _winner_from_ids(r[5], r[6], r[7], canon.get(r[5], r[1]), canon.get(r[6], r[2])),
                 "game": r[8],
                 "tournament": r[9],
                 "stage": r[10],
@@ -1757,16 +1903,19 @@ class DataProvider:
         min_matches: int = 0,
     ) -> Optional[dict]:
         """Rank position of a player in a specific game+system leaderboard."""
-        player_name = self._resolve_name(player_name)
+        player_id = self._player_id(player_name)
+        if player_id is None:
+            return None
+        canon = self._canonical_name(player_id)
         # Get the player's rating
         rating_row = self.db.client.execute(
             """
             SELECT rating, rd, wins, losses, matches_played
             FROM player_ratings FINAL
-            WHERE player_name = %(name)s AND game_name = %(game)s AND rating_system = %(sys)s
+            WHERE player_id = %(pid)s AND game_name = %(game)s AND rating_system = %(sys)s
             LIMIT 1
             """,
-            {"name": player_name, "game": game, "sys": system},
+            {"pid": player_id, "game": game, "sys": system},
         )
         if not rating_row:
             return None
@@ -1815,7 +1964,7 @@ class DataProvider:
         total = total_row[0][0]
 
         return {
-            "name": player_name,
+            "name": canon,
             "rank": rank,
             "total": total,
             "rating": round(rating, 1),
@@ -1923,10 +2072,11 @@ class DataProvider:
             """,
             {"lim": limit},
         )
+        canon = self._canonical_names([r[0] for r in rows])
         return [
             {
                 "player_id": r[0],
-                "name": r[1],
+                "name": canon.get(r[0], r[1]),
                 "matches": r[2],
                 "wins": r[3],
                 "losses": r[4],
@@ -2001,13 +2151,10 @@ class DataProvider:
         if not rows:
             return None
         pid, peak, peak_date, peak_game = rows[0]
-        # Fetch name
-        name_row = self.db.client.execute(
-            "SELECT player_name FROM player_ratings FINAL WHERE player_id = %(pid)s LIMIT 1",
-            {"pid": pid},
-        )
-        name = name_row[0][0] if name_row else f"player_{pid}"
+        # Fetch canonical name
+        name = self._canonical_name(pid)
         return {
+            "player_id": pid,
             "name": name,
             "peak": round(peak, 1),
             "peak_date": peak_date,
@@ -2027,6 +2174,7 @@ class DataProvider:
     def get_player_summary(self, player_name: str) -> dict | None:
         """Aggregated summary stats for a player."""
         player_name = self._resolve_name(player_name)
+        p_id = self._player_id(player_name)
         # Get all ratings
         ratings = self.get_player_ratings(player_name)
         if not ratings:
@@ -2103,32 +2251,33 @@ class DataProvider:
             """
             SELECT min(played_at) AS first_match, max(played_at) AS last_match
             FROM matches FINAL
-            WHERE player1_name = %(n)s OR player2_name = %(n)s
+            WHERE player1_id = %(pid)s OR player2_id = %(pid)s
             """,
-            {"n": player_name},
+            {"pid": p_id},
         )
         first_match = date_rows[0][0] if date_rows else None
         last_match = date_rows[0][1] if date_rows else None
 
-        # Rivals — top 5 most-faced opponents. Wins use the authoritative
+        # Rivals — top 10 most-faced opponents. Wins use the authoritative
         # winner_id (a player_id) so draws are handled correctly.
-        p_id = self._player_id(player_name)
         rival_rows = self.db.client.execute(
             """
             SELECT
-                CASE WHEN player1_name = %(n)s THEN player2_name ELSE player1_name END AS opponent,
+                CASE WHEN player1_id = %(pid)s THEN player2_id ELSE player1_id END AS opp_id,
                 count() AS matches,
                 sum(CASE WHEN winner_id = %(pid)s THEN 1 ELSE 0 END) AS wins
             FROM matches FINAL
-            WHERE player1_name = %(n)s OR player2_name = %(n)s
-            GROUP BY opponent
+            WHERE player1_id = %(pid)s OR player2_id = %(pid)s
+            GROUP BY opp_id
             ORDER BY matches DESC
-            LIMIT 5
+            LIMIT 10
             """,
-            {"n": player_name, "pid": p_id},
+            {"pid": p_id},
         )
+        opp_ids = [r[0] for r in rival_rows]
+        opp_canon = self._canonical_names(opp_ids)
         rivals = [
-            {"name": r[0], "matches": r[1], "wins": r[2], "losses": r[1] - r[2]}
+            {"name": opp_canon.get(r[0], f"player_{r[0]}"), "matches": r[1], "wins": r[2], "losses": r[1] - r[2]}
             for r in rival_rows
         ]
         # Sort rivals by least win rate first (hardest opponents on top).
@@ -2152,6 +2301,7 @@ class DataProvider:
             "last_match": last_match,
             "per_game": per_game,
             "rivals": rivals,
+            "aliases": self._aliases(p_id),
         }
 
     def get_tournament_top_players(self, tournament_name: str, limit: int = 10) -> list[dict]:
@@ -2162,25 +2312,26 @@ class DataProvider:
         """
         rows = self.db.client.execute(
             """
-            SELECT pname, count() AS matches, sum(is_win) AS wins
+            SELECT pid, count() AS matches, sum(is_win) AS wins
             FROM (
-                SELECT player1_name AS pname, player1_id AS pid, winner_id,
+                SELECT player1_id AS pid, winner_id,
                        if(winner_id = player1_id, 1, 0) AS is_win
                 FROM matches FINAL
-                WHERE tournament_name = %(t)s AND player1_name != ''
+                WHERE tournament_name = %(t)s AND player1_id != 0
                 UNION ALL
-                SELECT player2_name AS pname, player2_id AS pid, winner_id,
+                SELECT player2_id AS pid, winner_id,
                        if(winner_id = player2_id, 1, 0) AS is_win
                 FROM matches FINAL
-                WHERE tournament_name = %(t)s AND player2_name != ''
+                WHERE tournament_name = %(t)s AND player2_id != 0
             )
-            GROUP BY pname
+            GROUP BY pid
             ORDER BY wins DESC
             LIMIT %(lim)s
             """,
             {"t": tournament_name, "lim": limit},
         )
+        canon = self._canonical_names([r[0] for r in rows])
         return [
-            {"name": r[0], "wins": r[2], "matches": r[1]}
-            for r in rows if r[0]
+            {"name": canon.get(r[0], f"player_{r[0]}"), "wins": r[2], "matches": r[1]}
+            for r in rows
         ]

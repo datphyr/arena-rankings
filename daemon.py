@@ -19,6 +19,7 @@ Usage:
     python daemon.py --no-discord           # skip Discord bot (Twitch bot coming later)
     python daemon.py --workers 3            # download workers
     python daemon.py --delay 60             # restart delay for crashed components
+    python daemon.py --restart-delay 0      # override: instant restart (default 0)
     python daemon.py -v                     # verbose
 
 systemd unit (/etc/systemd/system/arena-pipeline.service):
@@ -298,6 +299,7 @@ def main():
     parser.add_argument("--no-web", action="store_true", help="Skip web site")
     parser.add_argument("--workers", "-w", type=int, default=1, help="Download workers (default: 1)")
     parser.add_argument("--delay", type=int, default=DAEMON_RESTART_DELAY, help=f"Restart delay for crashed components (default: {DAEMON_RESTART_DELAY})")
+    parser.add_argument("--restart-delay", type=int, default=0, help="Override restart delay for crashed components (default: 0 = instant restart). Takes precedence over --delay.")
     parser.add_argument("--verbose", "-v", action="store_true", help="Debug logging")
     args = parser.parse_args()
 
@@ -316,7 +318,7 @@ def main():
             default_args = [f"--workers={args.workers}"] + default_args
         components.append((name, script, default_args))
 
-    supervisor = Supervisor(components, restart_delay=args.delay, verbose=args.verbose)
+    supervisor = Supervisor(components, restart_delay=args.restart_delay, verbose=args.verbose)
 
     # Signal handling
     def handle_signal(signum, frame):

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Matches — Arena Rankings{% endblock %}
 {% block content %}
-<div class="section-head"><h2>Recent Matches</h2></div>
+<div class="section-head"><h2>Matches</h2></div>
 
 <form class="filters" method="get" action="/matches">
   <label>Game</label>
@@ -15,6 +15,13 @@
   <input type="text" name="player" value="{{ player }}" placeholder="Player name" style="width:140px" data-autocomplete="player">
   <label>Tournament</label>
   <input type="text" name="tournament" value="{{ tournament }}" placeholder="Tournament name" style="width:160px" data-autocomplete="tournament">
+  <label>Tier</label>
+  <select name="tier">
+    <option value="">All tiers</option>
+    <option value="premier" {{ 'selected' if tier == 'premier' }}>Premier</option>
+    <option value="major" {{ 'selected' if tier == 'major' }}>Major</option>
+    <option value="minor" {{ 'selected' if tier == 'minor' }}>Minor</option>
+  </select>
   <label>Limit</label>
   <select name="limit">
     <option value="100" {{ 'selected' if limit == '100' }}>100</option>

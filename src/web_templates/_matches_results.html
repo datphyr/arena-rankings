@@ -2,24 +2,24 @@
   <div class="table-wrap">
     <table class="matches-table">
       <thead><tr>
-        <th><a class="sort-link {{ 'active' if sort_col == 'date' }}" href="?{{ qs(game=game, player=player, tournament=tournament, limit=limit, sort_col='date', sort_dir='asc' if sort_col=='date' and sort_dir=='desc' else 'desc') }}">Date{% if sort_col == 'date' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
-        <th class="right"><a class="sort-link {{ 'active' if sort_col == 'player1' }}" href="?{{ qs(game=game, player=player, tournament=tournament, limit=limit, sort_col='player1', sort_dir='desc' if sort_col=='player1' and sort_dir=='asc' else 'asc') }}">Player 1{% if sort_col == 'player1' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
-        <th class="center"><a class="sort-link {{ 'active' if sort_col == 'score' }}" href="?{{ qs(game=game, player=player, tournament=tournament, limit=limit, sort_col='score', sort_dir='asc' if sort_col=='score' and sort_dir=='desc' else 'desc') }}">Score{% if sort_col == 'score' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
-        <th><a class="sort-link {{ 'active' if sort_col == 'player2' }}" href="?{{ qs(game=game, player=player, tournament=tournament, limit=limit, sort_col='player2', sort_dir='desc' if sort_col=='player2' and sort_dir=='asc' else 'asc') }}">Player 2{% if sort_col == 'player2' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
-        <th><a class="sort-link {{ 'active' if sort_col == 'game' }}" href="?{{ qs(game=game, player=player, tournament=tournament, limit=limit, sort_col='game', sort_dir='desc' if sort_col=='game' and sort_dir=='asc' else 'asc') }}">Game{% if sort_col == 'game' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
-        <th><a class="sort-link {{ 'active' if sort_col == 'tournament' }}" href="?{{ qs(game=game, player=player, tournament=tournament, limit=limit, sort_col='tournament', sort_dir='desc' if sort_col=='tournament' and sort_dir=='asc' else 'asc') }}">Tournament{% if sort_col == 'tournament' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
-        <th><a class="sort-link {{ 'active' if sort_col == 'tier' }}" href="?{{ qs(game=game, player=player, tournament=tournament, limit=limit, sort_col='tier', sort_dir='asc' if sort_col=='tier' and sort_dir=='desc' else 'desc') }}">Tier{% if sort_col == 'tier' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+        <th><a class="sort-link {{ 'active' if sort_col == 'date' }}" href="?{{ qs(game=game, player=player, tournament=tournament, tier=tier, limit=limit, sort_col='date', sort_dir='asc' if sort_col=='date' and sort_dir=='desc' else 'desc') }}">Date{% if sort_col == 'date' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+        <th class="right"><a class="sort-link {{ 'active' if sort_col == 'player1' }}" href="?{{ qs(game=game, player=player, tournament=tournament, tier=tier, limit=limit, sort_col='player1', sort_dir='desc' if sort_col=='player1' and sort_dir=='asc' else 'asc') }}">Player 1{% if sort_col == 'player1' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+        <th class="center"><a class="sort-link {{ 'active' if sort_col == 'score' }}" href="?{{ qs(game=game, player=player, tournament=tournament, tier=tier, limit=limit, sort_col='score', sort_dir='asc' if sort_col=='score' and sort_dir=='desc' else 'desc') }}">Score{% if sort_col == 'score' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+        <th><a class="sort-link {{ 'active' if sort_col == 'player2' }}" href="?{{ qs(game=game, player=player, tournament=tournament, tier=tier, limit=limit, sort_col='player2', sort_dir='desc' if sort_col=='player2' and sort_dir=='asc' else 'asc') }}">Player 2{% if sort_col == 'player2' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+        <th><a class="sort-link {{ 'active' if sort_col == 'game' }}" href="?{{ qs(game=game, player=player, tournament=tournament, tier=tier, limit=limit, sort_col='game', sort_dir='desc' if sort_col=='game' and sort_dir=='asc' else 'asc') }}">Game{% if sort_col == 'game' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+        <th><a class="sort-link {{ 'active' if sort_col == 'tournament' }}" href="?{{ qs(game=game, player=player, tournament=tournament, tier=tier, limit=limit, sort_col='tournament', sort_dir='desc' if sort_col=='tournament' and sort_dir=='asc' else 'asc') }}">Tournament{% if sort_col == 'tournament' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+        <th><a class="sort-link {{ 'active' if sort_col == 'tier' }}" href="?{{ qs(game=game, player=player, tournament=tournament, tier=tier, limit=limit, sort_col='tier', sort_dir='asc' if sort_col=='tier' and sort_dir=='desc' else 'desc') }}">Tier{% if sort_col == 'tier' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
       </tr></thead>
       <tbody>
         {% for m in matches %}
         <tr>
           <td>{{ m.played_at_str }}</td>
-          <td class="right"><a class="player-link" href="/player/{{ m.player1 }}">{{ m.player1 }}</a></td>
+          <td class="right"><a class="player-link" href="/player/{{ m.player1_id }}/{{ slug(m.player1) }}">{{ m.player1 }}</a></td>
           <td class="center"><a class="score-link" href="/h2h?p1={{ m.player1 }}&p2={{ m.player2 }}" title="Head-to-head"><span class="{{ 'win' if m.winner == m.player1 else 'loss' }}">{{ m.score1 }}</span> : <span class="{{ 'win' if m.winner == m.player2 else 'loss' }}">{{ m.score2 }}</span></a></td>
-          <td><a class="player-link" href="/player/{{ m.player2 }}">{{ m.player2 }}</a></td>
-          <td>{% if m.game %}<a class="game-link" href="/leaderboard?game={{ m.game }}">{{ m.game }}</a>{% else %}—{% endif %}</td>
+          <td><a class="player-link" href="/player/{{ m.player2_id }}/{{ slug(m.player2) }}">{{ m.player2 }}</a></td>
+          <td>{% if m.game %}<a class="game-link" href="/matches?{{ qs(game=m.game) }}">{{ m.game }}</a>{% else %}—{% endif %}</td>
           <td class="tournament-cell">{% if m.tournament %}<a class="tournament-link" href="/matches?{{ qs(tournament=m.tournament) }}">{{ m.tournament }}</a>{% else %}—{% endif %}</td>
-          <td>{% if m.tier %}<span class="tag tag-{{ m.tier }}">{{ m.tier }}</span>{% else %}—{% endif %}</td>
+          <td>{% if m.tier %}<a class="tier-link" href="/matches?{{ qs(tier=m.tier) }}"><span class="tag tag-{{ m.tier }}">{{ m.tier }}</span></a>{% else %}—{% endif %}</td>
         </tr>
         {% else %}
         <tr><td colspan="7" class="empty">No matches found.</td></tr>

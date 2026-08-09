@@ -61,10 +61,22 @@
     var self = this;
     this.list.innerHTML = "";
     if (!this.items.length) { this.hide(); return; }
-    this.items.forEach(function (name, i) {
+    this.items.forEach(function (item, i) {
       var div = document.createElement("div");
       div.className = "ac-item" + (i === self.active ? " active" : "");
-      div.textContent = name;
+      // Player entries are {name, id}; tournaments are plain strings.
+      var name = (typeof item === "string") ? item : item.name;
+      var id = (typeof item === "string") ? null : item.id;
+      var label = document.createElement("span");
+      label.className = "ac-name";
+      label.textContent = name;
+      div.appendChild(label);
+      if (id !== null && id !== undefined) {
+        var idSpan = document.createElement("span");
+        idSpan.className = "ac-id";
+        idSpan.textContent = "(" + id + ")";
+        div.appendChild(idSpan);
+      }
       div.addEventListener("mousedown", function () { self.pick(name); });
       div.addEventListener("mouseenter", function () {
         self.active = i;

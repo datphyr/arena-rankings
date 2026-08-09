@@ -3,7 +3,7 @@
 <div class="card">
   <div class="h2h-score">
     <div class="h2h-player">
-      <div class="name"><a class="player-link" href="/player/{{ result.player1 }}">{{ result.player1 }}</a></div>
+      <div class="name"><a class="player-link" href="/player/{{ result.p1_id }}/{{ slug(result.player1) }}">{{ result.player1 }}</a></div>
       {% if p1_ratings.get('elo') %}<div class="rating">Elo {{ "%.0f"|format(p1_ratings['elo'].rating) }}</div>{% endif %}
       {% if p1_ratings.get('glicko2') %}<div class="rating">Glicko {{ "%.0f"|format(p1_ratings['glicko2'].rating) }}</div>{% endif %}
       <div class="wins rating-elo">{{ result.p1_wins }}</div>
@@ -11,7 +11,7 @@
     </div>
     <div class="h2h-vs">VS</div>
     <div class="h2h-player">
-      <div class="name"><a class="player-link" href="/player/{{ result.player2 }}">{{ result.player2 }}</a></div>
+      <div class="name"><a class="player-link" href="/player/{{ result.p2_id }}/{{ slug(result.player2) }}">{{ result.player2 }}</a></div>
       {% if p2_ratings.get('elo') %}<div class="rating">Elo {{ "%.0f"|format(p2_ratings['elo'].rating) }}</div>{% endif %}
       {% if p2_ratings.get('glicko2') %}<div class="rating">Glicko {{ "%.0f"|format(p2_ratings['glicko2'].rating) }}</div>{% endif %}
       <div class="wins rating-glicko2">{{ result.p2_wins }}</div>
@@ -51,9 +51,9 @@
         {% for m in result.matches %}
         <tr>
           <td>{{ m.played_at_str }}</td>
-          <td class="right"><a class="player-link" href="/player/{{ m.player1 }}">{{ m.player1 }}</a></td>
+          <td class="right"><a class="player-link" href="/player/{{ m.player1_id }}/{{ slug(m.player1) }}">{{ m.player1 }}</a></td>
           <td class="center"><span class="{{ 'win' if m.winner == m.player1 else 'loss' }}">{{ m.score1 }}</span> : <span class="{{ 'win' if m.winner == m.player2 else 'loss' }}">{{ m.score2 }}</span></td>
-          <td><a class="player-link" href="/player/{{ m.player2 }}">{{ m.player2 }}</a></td>
+          <td><a class="player-link" href="/player/{{ m.player2_id }}/{{ slug(m.player2) }}">{{ m.player2 }}</a></td>
           <td>{% if m.game %}<a class="game-link" href="/leaderboard?game={{ m.game }}">{{ m.game }}</a>{% else %}—{% endif %}</td>
           <td class="tournament-cell">{{ m.tournament or '—' }}</td>
           <td>{% if m.tier %}<span class="tag tag-{{ m.tier }}">{{ m.tier }}</span>{% else %}—{% endif %}</td>

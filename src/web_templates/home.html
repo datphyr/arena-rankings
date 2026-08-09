@@ -3,7 +3,7 @@
 {% block content %}
 <section class="hero">
   <h1>Arena Rankings</h1>
-  <p>Player rankings across the arena FPS scene — Elo &amp; Glicko-2 ratings computed from {{ "{:,}".format(stats.total_matches) }} matches of plusforward.net data.</p>
+  <p>Player rankings across the arena FPS scene — Elo &amp; Glicko-2 ratings computed from plusforward.net data.</p>
 </section>
 
 <div class="stats-grid">
@@ -24,8 +24,8 @@
       {{ "%.0f"|format(peak_info.peak) }}
     </span>
     by
-    <a class="player-link" href="/player/{{ peak_info.name }}">{{ peak_info.name }}</a>
-    on {{ peak_info.peak_date.strftime('%Y-%m-%d') if peak_info.peak_date else '—' }}
+    <a class="player-link" href="/player/{{ peak_info.player_id }}/{{ slug(peak_info.name) }}">{{ peak_info.name }}</a>
+    on {{ peak_info.peak_date|dt if peak_info.peak_date else '—' }}
   </div>
   {% endif %}
   {% if peak_info_glicko %}
@@ -35,8 +35,8 @@
       {{ "%.0f"|format(peak_info_glicko.peak) }}
     </span>
     by
-    <a class="player-link" href="/player/{{ peak_info_glicko.name }}">{{ peak_info_glicko.name }}</a>
-    on {{ peak_info_glicko.peak_date.strftime('%Y-%m-%d') if peak_info_glicko.peak_date else '—' }}
+    <a class="player-link" href="/player/{{ peak_info_glicko.player_id }}/{{ slug(peak_info_glicko.name) }}">{{ peak_info_glicko.name }}</a>
+    on {{ peak_info_glicko.peak_date|dt if peak_info_glicko.peak_date else '—' }}
   </div>
   {% endif %}
 </div>
@@ -62,7 +62,7 @@
             {% for p in most_active %}
             <tr>
               <td><span class="rank-badge">{{ loop.index }}</span></td>
-              <td><a class="player-link" href="/player/{{ p.name }}">{{ p.name }}</a></td>
+              <td><a class="player-link" href="/player/{{ p.player_id }}/{{ slug(p.name) }}">{{ p.name }}</a></td>
               <td class="num">{{ "{:,}".format(p.matches) }}</td>
               <td class="num win">{{ p.wins }}</td>
               <td class="num loss">{{ p.losses }}</td>
@@ -103,10 +103,10 @@
       <tbody>
         {% for m in recent_matches %}
         <tr>
-          <td>{{ m.played_at.strftime("%Y-%m-%d") if m.played_at else "—" }}</td>
-          <td class="right"><a class="player-link" href="/player/{{ m.player1 }}">{{ m.player1 }}</a></td>
+          <td>{{ m.played_at|dt if m.played_at else "—" }}</td>
+          <td class="right"><a class="player-link" href="/player/{{ m.player1_id }}/{{ slug(m.player1) }}">{{ m.player1 }}</a></td>
           <td class="center"><a class="score-link" href="/h2h?p1={{ m.player1 }}&p2={{ m.player2 }}" title="Head-to-head"><span class="{{ 'win' if m.winner == m.player1 else 'loss' }}">{{ m.score1 }}</span> : <span class="{{ 'win' if m.winner == m.player2 else 'loss' }}">{{ m.score2 }}</span></a></td>
-          <td><a class="player-link" href="/player/{{ m.player2 }}">{{ m.player2 }}</a></td>
+          <td><a class="player-link" href="/player/{{ m.player2_id }}/{{ slug(m.player2) }}">{{ m.player2 }}</a></td>
           <td>{% if m.game %}<a class="game-link" href="/leaderboard?game={{ m.game }}">{{ m.game }}</a>{% else %}—{% endif %}</td>
           <td class="tournament-cell">{{ m.tournament or '—' }}</td>
           <td>{% if m.tier %}<span class="tag tag-{{ m.tier }}">{{ m.tier }}</span>{% else %}—{% endif %}</td>

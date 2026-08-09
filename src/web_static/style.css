@@ -479,6 +479,12 @@ a.tournament-link:hover { color: var(--accent-2); text-decoration: underline; }
   white-space: nowrap;
 }
 .ac-item:hover, .ac-item.active { background: var(--accent-2); color: #fff; }
+.ac-id {
+  margin-left: 8px;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+.ac-item:hover .ac-id, .ac-item.active .ac-id { color: rgba(255, 255, 255, 0.7); }
 
 /* ─── Pagination ──────────────────────────────────────── */
 .pagination {
@@ -534,6 +540,7 @@ a.page-link:hover {
   box-shadow: 0 8px 24px var(--glow-red);
 }
 .player-head h1 { font-size: 2rem; font-weight: 800; letter-spacing: -0.02em; }
+.player-aliases { color: var(--text-dim); font-weight: 500; font-size: 1.1rem; letter-spacing: 0; }
 .player-sub { color: var(--text-dim); font-size: 0.95rem; }
 
 .rank-pills { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }

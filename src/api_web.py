@@ -61,6 +61,36 @@ def _smart_match_mode(q: str, is_exact_name) -> str:
 
 templates.env.globals["qs"] = _qs
 
+
+def _slug(name: str) -> str:
+    """URL-safe readability slug for a player name (lowercase, spaces->dashes).
+    Used only for display in the URL; resolution is by player_id."""
+    import re
+    s = re.sub(r"[^\w\- ]", "", name or "").strip().lower()
+    s = re.sub(r"[\s_]+", "-", s)
+    return s or "player"
+
+
+templates.env.globals["slug"] = _slug
+
+
+def _fmt_dt(d) -> str:
+    """Format a datetime as 'YYYY-MM-DD, HH:MM' (comma between date and time).
+    Shared by all templates via the 'dt' Jinja filter."""
+    if d is None:
+        return "—"
+    if hasattr(d, "strftime"):
+        return d.strftime("%Y-%m-%d, %H:%M")
+    s = str(d)
+    # Accept ISO-ish strings like '2018-12-02T13:00:00' or '2018-12-02 13:00:00'
+    s = s.replace("T", " ")
+    if len(s) >= 16:
+        return s[:10] + ", " + s[11:16]
+    return s[:10]
+
+
+templates.env.filters["dt"] = _fmt_dt
+
 # Defaults
 DEFAULT_LIMIT = 20
 
@@ -237,27 +267,51 @@ def leaderboard(
     return templates.TemplateResponse(request, "leaderboard.html", ctx)
 
 
-@app.get("/player/{name}", response_class=HTMLResponse)
-def player(
+@app.get("/player/{player_id}/{name}", response_class=HTMLResponse)
+def player_by_id(
     request: Request,
+    player_id: int,
     name: str,
     game: str = Query("", description="Game name or alias (empty = combined)"),
     limit: int = Query(50, ge=1, le=200),
     period: str = Query("all", description="History period: 1m, 3m, 6m, 1y, all"),
 ):
+    # Two-segment path = id-based. The name segment is a readability slug only
+    # — resolution is by id, so it's always unambiguous even if the slug is
+    # stale or wrong. (Single-segment /player/{name} stays name-based.)
+    with DataProvider() as dx:
+        canonical = dx._canonical_name(player_id)
+    return _player_page(request, canonical, game=game, limit=limit, period=period)
+
+
+@app.get("/player/{player_id}", response_class=HTMLResponse)
+def player_by_id_short(
+    request: Request,
+    player_id: int,
+    game: str = Query("", description="Game name or alias (empty = combined)"),
+    limit: int = Query(50, ge=1, le=200),
+    period: str = Query("all", description="History period: 1m, 3m, 6m, 1y, all"),
+):
+    # Single numeric segment = id lookup (same page as /player/{id}/{slug}).
+    # Note: a player whose canonical name is purely numeric (e.g. "2", id 1077)
+    # is still reachable via its two-segment id URL /player/1077/2.
+    with DataProvider() as dx:
+        name = dx._canonical_name(player_id)
+    return _player_page(request, name, game=game, limit=limit, period=period)
+
+
+def _player_page(request: Request, name: str, game: str = "", limit: int = 50, period: str = "all"):
     game = _resolve_game(game)
-    # Map period to a 'since' date (ISO) for the rating history
+    # Rating history is always all-time (no period filter on the page).
     since = ""
-    period_map = {"1m": 30, "3m": 90, "6m": 180, "1y": 365}
-    if period in period_map:
-        since = (datetime.now() - timedelta(days=period_map[period])).strftime("%Y-%m-%d")
     with DataProvider() as dx:
         ctx = _base_context(request, dx)
         ctx["active"] = "player"
         ctx["game"] = game
         ctx["limit"] = limit
-        ctx["period"] = period
+        ctx["period"] = "all"
         ctx["player_name"] = name
+        ctx["player_id"] = dx._player_id(name)
         ctx["ratings"] = dx.get_player_ratings(name)
         # Games the player actually has ratings for (for the history game selector)
         ctx["player_games"] = sorted({r["game"] for r in ctx["ratings"] if r["game"] != "Combined"})
@@ -268,13 +322,14 @@ def player(
             rk = dx.get_player_rank(name, game=rank_game, system=r["system"], min_matches=_min_matches(r["system"]))
             r["rank"] = rk["rank"] if rk else None
             r["rank_total"] = rk["total"] if rk else None
-        # For 'all' period, show the full history (no truncation).
-        hist_limit = 100000 if period == "all" else limit
+        # Rating history is always all-time (no truncation).
+        hist_limit = 100000
         ctx["history"] = dx.get_player_history_both(name, game=game, limit=hist_limit, since=since)
         # Convert datetimes to ISO strings for JSON serialization in the chart
+        # (keep the full timestamp so same-day matches spread by time-of-day)
         for h in ctx["history"]:
             if h.get("played_at") is not None:
-                h["played_at"] = h["played_at"].strftime("%Y-%m-%d")
+                h["played_at"] = h["played_at"].isoformat()
         ctx["matches"] = dx.get_player_matches(name, game=game, limit=10)
         ctx["rank_elo"] = dx.get_player_rank(name, game=game, system="elo", min_matches=MIN_MATCHES_ELO)
         ctx["rank_glicko"] = dx.get_player_rank(name, game=game, system="glicko2", min_matches=MIN_MATCHES_GLICKO2)
@@ -284,10 +339,7 @@ def player(
             ctx["player_name"] = ctx["ratings"][0]["name"]
         # Convert match datetimes for template use
         for m in ctx["matches"]:
-            if m.get("played_at") is not None:
-                m["played_at_str"] = m["played_at"].strftime("%Y-%m-%d") if hasattr(m["played_at"], 'strftime') else str(m["played_at"])[:10]
-            else:
-                m["played_at_str"] = "—"
+            m["played_at_str"] = _fmt_dt(m.get("played_at"))
     return templates.TemplateResponse(request, "player.html", ctx)
 
 
@@ -297,6 +349,7 @@ def matches(
     game: str = Query("", description="Game name or alias (empty = all)"),
     player: str = Query("", description="Filter by player name"),
     tournament: str = Query("", description="Filter by tournament name"),
+    tier: str = Query("", pattern="^(|premier|major|minor)$", description="Filter by tournament tier"),
     limit: str = Query("100", pattern="^(100|1000|all)$", description="Rows to show"),
     clear: int = Query(0, ge=0, le=1),
     page: int = Query(1, ge=1, description="Page number"),
@@ -306,7 +359,7 @@ def matches(
 ):
     # "Clear filters" button resets all filters
     if clear:
-        game = player = tournament = ""
+        game = player = tournament = tier = ""
     game = _resolve_game(game)
     # Map limit: 'all' -> large number, else int
     limit_n = 100000 if limit == "all" else int(limit)
@@ -321,24 +374,22 @@ def matches(
         ctx["game"] = game
         ctx["player"] = player
         ctx["tournament"] = tournament
+        ctx["tier"] = tier
         ctx["limit"] = limit
         ctx["sort_col"] = sort_col
         ctx["sort_dir"] = sort_dir
-        ctx["matches"] = dx.get_recent_matches(game=game, limit=per_page, player=player, tournament=tournament, offset=offset, sort_col=sort_col, sort_dir=sort_dir, player_match=player_match, tournament_match=tournament_match)
-        total = dx.count_recent_matches(game=game, player=player, tournament=tournament, player_match=player_match, tournament_match=tournament_match)
+        ctx["matches"] = dx.get_recent_matches(game=game, limit=per_page, player=player, tournament=tournament, tier=tier, offset=offset, sort_col=sort_col, sort_dir=sort_dir, player_match=player_match, tournament_match=tournament_match)
+        total = dx.count_recent_matches(game=game, player=player, tournament=tournament, tier=tier, player_match=player_match, tournament_match=tournament_match)
         ctx["page"] = page
         ctx["total"] = total
         ctx["total_pages"] = max(1, (total + per_page - 1) // per_page) if limit != "all" else 1
         ctx["pagination_qs"] = {
-            "game": game, "player": player, "tournament": tournament, "limit": limit,
-            "system": "", "sort": "", "date": "", "sort_col": sort_col, "sort_dir": sort_dir, "tier": "",
+            "game": game, "player": player, "tournament": tournament, "tier": tier, "limit": limit,
+            "system": "", "sort": "", "date": "", "sort_col": sort_col, "sort_dir": sort_dir,
         }
         # Convert match datetimes for template use
         for m in ctx["matches"]:
-            if m.get("played_at") is not None:
-                m["played_at_str"] = m["played_at"].strftime("%Y-%m-%d") if hasattr(m["played_at"], 'strftime') else str(m["played_at"])[:10]
-            else:
-                m["played_at_str"] = "—"
+            m["played_at_str"] = _fmt_dt(m.get("played_at"))
     if partial:
         return templates.TemplateResponse(request, "_matches_results.html", ctx)
     return templates.TemplateResponse(request, "matches.html", ctx)
@@ -354,7 +405,9 @@ def autocomplete(
     """Return matching names for autocomplete dropdowns (AJAX).
 
     type is 'player' or 'tournament'. Matching is case-insensitive substring.
-    Returns a JSON list of distinct names.
+    For players, returns a JSON list of {"name", "id"} dicts (one per
+    player_id, so case-distinct players like 'pavel'/'Pavel' both appear).
+    For tournaments, returns a JSON list of plain name strings.
     """
     with DataProvider() as dx:
         names = dx.autocomplete(type, q, limit=limit)
@@ -436,10 +489,7 @@ def h2h(
             ctx["result"]["matches"] = _sort_matches(ctx["result"]["matches"], sort_col, sort_dir)
             # Convert match datetimes for template use
             for m in ctx["result"]["matches"]:
-                if m.get("played_at") is not None:
-                    m["played_at_str"] = m["played_at"].strftime("%Y-%m-%d") if hasattr(m["played_at"], 'strftime') else str(m["played_at"])[:10]
-                else:
-                    m["played_at_str"] = "—"
+                m["played_at_str"] = _fmt_dt(m.get("played_at"))
             # Current rating for each player (best rating across systems/games)
             ctx["p1_ratings"] = _ratings_by_system(dx.get_player_ratings(p1))
             ctx["p2_ratings"] = _ratings_by_system(dx.get_player_ratings(p2))
@@ -485,12 +535,29 @@ def api_leaderboard(
 def api_player(name: str, game: str = ""):
     game = _resolve_game(game)
     with DataProvider() as dx:
+        ratings = dx.get_player_ratings(name)
         return {
-            "name": name,
-            "ratings": dx.get_player_ratings(name),
+            "name": ratings[0]["name"] if ratings else name,
+            "ratings": ratings,
             "history": dx.get_player_history_both(name, game=game),
             "matches": dx.get_player_matches(name, game=game, limit=20),
         }
+
+
+@app.get("/api/player/{player_id}/history")
+def api_player_history(player_id: int, game: str = ""):
+    """Rating history for the player chart, filtered by game (always all-time).
+    Returns the same shape as the page's `history` JSON so the chart can be
+    re-rendered in place when the game filter changes."""
+    game = _resolve_game(game)
+    with DataProvider() as dx:
+        name = dx._canonical_name(player_id)
+        hist = dx.get_player_history_both(name, game=game, limit=100000)
+        # Convert datetimes to ISO strings for JSON serialization (matches page shape)
+        for h in hist:
+            if hasattr(h.get("played_at"), "isoformat"):
+                h["played_at"] = h["played_at"].isoformat()
+        return {"history": hist}
 
 
 @app.get("/api/matches")

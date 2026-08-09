@@ -4,14 +4,14 @@
 <div class="player-head">
   <div class="player-avatar">{{ player_name[0]|upper }}</div>
   <div>
-    <h1>{{ player_name }}</h1>
+    <h1>{{ player_name }}{% if summary and summary.aliases %}<span class="player-aliases"> ({{ summary.aliases|join(', ') }})</span>{% endif %}</h1>
     {% if summary and (summary.first_match or summary.last_match) %}
     <div class="rank-pills">
       {% if summary.first_match %}
-      <span class="rank-pill">First game: <strong>{{ summary.first_match.strftime('%Y-%m-%d') if summary.first_match.strftime else summary.first_match }}</strong></span>
+      <span class="rank-pill">First game: <strong>{{ summary.first_match|dt if summary.first_match else '—' }}</strong></span>
       {% endif %}
       {% if summary.last_match %}
-      <span class="rank-pill">Last game: <strong>{{ summary.last_match.strftime('%Y-%m-%d') if summary.last_match.strftime else summary.last_match }}</strong></span>
+      <span class="rank-pill">Last game: <strong>{{ summary.last_match|dt if summary.last_match else '—' }}</strong></span>
       {% endif %}
     </div>
     {% endif %}
@@ -60,7 +60,7 @@
           <td class="num">{% if r.rank %}<span class="rank-badge">#{{ r.rank }}</span>{% else %}—{% endif %}</td>
           <td>{% if r.game != 'Combined' %}<a class="game-link" href="/leaderboard?game={{ r.game }}">{{ r.game }}</a>{% else %}<a class="game-link" href="/leaderboard">{{ r.game }}</a>{% endif %}</td>
           <td class="num rating rating-elo">{{ "%.0f"|format(r.rating) }}</td>
-          <td class="num" style="color:var(--gold);">{{ "%.0f"|format(r.peak) if r.peak else '—' }}{% if r.peak_date %}<div class="peak-date">{{ r.peak_date.strftime('%Y-%m-%d') if r.peak_date.strftime else r.peak_date }}</div>{% endif %}</td>
+          <td class="num" style="color:var(--gold);">{{ "%.0f"|format(r.peak) if r.peak else '—' }}{% if r.peak_date %}<div class="peak-date">{{ r.peak_date|dt }}</div>{% endif %}</td>
           <td class="num win">{{ r.wins }}</td>
           <td class="num loss">{{ r.losses }}</td>
           <td class="num">{{ r.matches }}</td>
@@ -87,7 +87,7 @@
           <td class="num">{% if r.rank %}<span class="rank-badge">#{{ r.rank }}</span>{% else %}—{% endif %}</td>
           <td>{% if r.game != 'Combined' %}<a class="game-link" href="/leaderboard?game={{ r.game }}&system=glicko2">{{ r.game }}</a>{% else %}<a class="game-link" href="/leaderboard?system=glicko2">{{ r.game }}</a>{% endif %}</td>
           <td class="num rating rating-glicko2">{{ "%.0f"|format(r.rating) }}</td>
-          <td class="num" style="color:var(--gold);">{{ "%.0f"|format(r.peak) if r.peak else '—' }}{% if r.peak_date %}<div class="peak-date">{{ r.peak_date.strftime('%Y-%m-%d') if r.peak_date.strftime else r.peak_date }}</div>{% endif %}</td>
+          <td class="num" style="color:var(--gold);">{{ "%.0f"|format(r.peak) if r.peak else '—' }}{% if r.peak_date %}<div class="peak-date">{{ r.peak_date|dt }}</div>{% endif %}</td>
           <td class="num">{{ "%.0f"|format(r.rd) if r.rd is not none else '—' }}</td>
           <td class="num win">{{ r.wins }}</td>
           <td class="num loss">{{ r.losses }}</td>
@@ -103,21 +103,13 @@
 </div>
 
 <div class="section-head"><h2>Rating History</h2></div>
-<form class="filters" method="get" action="/player/{{ player_name }}">
+<form class="filters" method="get" action="/player/{{ player_id }}/{{ slug(player_name) }}">
   <label>Game</label>
   <select name="game">
     <option value="" {{ 'selected' if not game }}>Combined (all games)</option>
     {% for g in player_games %}
     <option value="{{ g }}" {{ 'selected' if game == g }}>{{ g }}</option>
     {% endfor %}
-  </select>
-  <label>Period</label>
-  <select name="period">
-    <option value="1m" {{ 'selected' if period == '1m' }}>1 month</option>
-    <option value="3m" {{ 'selected' if period == '3m' }}>3 months</option>
-    <option value="6m" {{ 'selected' if period == '6m' }}>6 months</option>
-    <option value="1y" {{ 'selected' if period == '1y' }}>1 year</option>
-    <option value="all" {{ 'selected' if period == 'all' }}>All time</option>
   </select>
 </form>
 <div class="card">
@@ -149,15 +141,15 @@
 <div class="section-head"><h2>Recent Matches</h2></div>
 <div class="card">
   <div class="table-wrap">
-    <table class="matches-table sortable">
+    <table class="matches-table">
       <thead><tr><th>Date</th><th class="right">Player 1</th><th class="center">Score</th><th>Player 2</th><th>Game</th><th>Tournament</th><th>Tier</th></tr></thead>
       <tbody>
         {% for m in matches %}
         <tr>
           <td>{{ m.played_at_str }}</td>
-          <td class="right"><a class="player-link" href="/player/{{ m.player1 }}">{{ m.player1 }}</a></td>
+          <td class="right"><a class="player-link" href="/player/{{ m.player1_id }}/{{ slug(m.player1) }}">{{ m.player1 }}</a></td>
           <td class="center"><a class="score-link" href="/h2h?p1={{ m.player1 }}&p2={{ m.player2 }}" title="Head-to-head"><span class="{{ 'win' if m.winner == m.player1 else 'loss' }}">{{ m.score1 }}</span> : <span class="{{ 'win' if m.winner == m.player2 else 'loss' }}">{{ m.score2 }}</span></a></td>
-          <td><a class="player-link" href="/player/{{ m.player2 }}">{{ m.player2 }}</a></td>
+          <td><a class="player-link" href="/player/{{ m.player2_id }}/{{ slug(m.player2) }}">{{ m.player2 }}</a></td>
           <td>{% if m.game %}<a class="game-link" href="/matches?player={{ player_name }}&game={{ m.game }}">{{ m.game }}</a>{% else %}—{% endif %}</td>
           <td class="tournament-cell">{% if m.tournament %}<a class="tournament-link" href="/matches?{{ qs(player=player_name, tournament=m.tournament) }}">{{ m.tournament }}</a>{% else %}—{% endif %}</td>
           <td>{% if m.tier %}<span class="tag tag-{{ m.tier }}">{{ m.tier }}</span>{% else %}—{% endif %}</td>
@@ -168,53 +160,238 @@
       </tbody>
     </table>
   </div>
+  <p style="margin-top:12px;text-align:right;"><a href="/matches?player={{ player_name }}" class="game-link">View all matches →</a></p>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
+const playerId = {{ player_id | tojson }};
 const hist = {{ history | tojson }};
-const labels = hist.map(h => (h.played_at || '').slice(0, 10)).reverse();
-const elo = hist.map(h => h.elo).reverse();
-const glicko = hist.map(h => h.glicko2).reverse();
-new Chart(document.getElementById('historyChart'), {
-  type: 'line',
-  data: {
-    labels,
-    datasets: [
-      {
-        label: 'Elo',
-        data: elo,
-        borderColor: '#ef4444',
-        backgroundColor: 'rgba(239,68,68,0.08)',
-        fill: true, tension: 0.3, pointRadius: 0, borderWidth: 2
-      },
-      {
-        label: 'Glicko-2',
-        data: glicko,
-        borderColor: '#fbbf24',
-        backgroundColor: 'rgba(251,191,36,0.06)',
-        fill: true, tension: 0.3, pointRadius: 0, borderWidth: 2
-      }
-    ]
-  },
-  options: {
-    responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
-    plugins: {
-      legend: { labels: { color: '#a3a3a3' } },
-      tooltip: {
-        backgroundColor: 'rgba(10,10,10,0.9)',
-        borderColor: '#2a2a2a',
-        borderWidth: 1,
-        titleColor: '#f5f5f5',
-        bodyColor: '#a3a3a3',
-      }
+const chartEl = document.getElementById('historyChart');
+let chart = null;
+
+// Shared date+time formatter: 'YYYY-MM-DD, HH:MM' (comma between date and time).
+// Mirrors the server-side 'dt' Jinja filter so all displays stay consistent.
+function fmtDT(ms) {
+  const s = new Date(ms).toISOString();
+  return s.slice(0, 10) + ', ' + s.slice(11, 16);
+}
+
+function buildChart(history) {
+  // Build data points with numeric x (epoch ms) so the x-axis is a LINEAR
+  // time scale: horizontal distance is proportional to real elapsed time.
+  // (A category scale would space every match equally, distorting gaps.)
+  const pts = history.map(h => ({
+    x: new Date(h.played_at || '').getTime(),
+    y: h.elo
+  })).reverse();
+  const ptsG = history.map(h => ({
+    x: new Date(h.played_at || '').getTime(),
+    y: h.glicko2
+  })).reverse();
+  if (chart) { chart.destroy(); chart = null; }
+
+  // Pick a clean x-axis delimiter unit based on the total period span.
+  function pickUnit() {
+    if (!pts.length) return { unit: 'day', fmt: d => d.toISOString().slice(0, 10) };
+    const first = pts[0].x, last = pts[pts.length - 1].x;
+    const days = (last - first) / 86400000;
+    if (days > 730) return { unit: 'year', fmt: d => String(d.getUTCFullYear()) };
+    if (days > 60) return { unit: 'month', fmt: d => d.toISOString().slice(0, 7) };
+    if (days > 14) return { unit: 'week', fmt: d => d.toISOString().slice(0, 10) };
+    return { unit: 'day', fmt: d => d.toISOString().slice(0, 10) };
+  }
+  const { unit, fmt } = pickUnit();
+
+  // Generate clean boundary timestamps across the whole span at an even
+  // cadence (step chosen so we get at most ~10 delimiters). These are real
+  // timestamps, so the gridlines land at true time positions.
+  function boundaryTicks() {
+    if (!pts.length) return [];
+    const first = pts[0].x, last = pts[pts.length - 1].x;
+    const totalDays = (last - first) / 86400000;
+    const max = 10;
+
+    let stepCount = 1;
+    if (unit === 'year') stepCount = Math.max(1, Math.ceil((totalDays / 365.25) / max));
+    else if (unit === 'month') stepCount = Math.max(1, Math.ceil((totalDays / 30.44) / max));
+    else if (unit === 'week') stepCount = Math.max(1, Math.ceil((totalDays / 7) / max));
+    else stepCount = Math.max(1, Math.ceil(totalDays / max));
+
+    const ticks = [];
+    const d = new Date(first);
+    if (unit === 'year') { d.setUTCMonth(0, 1); d.setUTCHours(0,0,0,0); }
+    else if (unit === 'month') { d.setUTCDate(1); d.setUTCHours(0,0,0,0); }
+    else if (unit === 'week') { d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); d.setUTCHours(0,0,0,0); }
+    else { d.setUTCHours(0,0,0,0); }
+
+    for (; d.getTime() <= last; ) {
+      ticks.push({ value: d.getTime(), label: fmt(d) });
+      if (unit === 'year') d.setUTCFullYear(d.getUTCFullYear() + stepCount);
+      else if (unit === 'month') d.setUTCMonth(d.getUTCMonth() + stepCount);
+      else if (unit === 'week') d.setUTCDate(d.getUTCDate() + 7 * stepCount);
+      else d.setUTCDate(d.getUTCDate() + stepCount);
+    }
+    return ticks;
+  }
+  const boundaryTicksList = boundaryTicks();
+
+  chart = new Chart(chartEl, {
+    type: 'line',
+    data: {
+      datasets: [
+        {
+          label: 'Elo',
+          data: pts,
+          borderColor: '#ef4444',
+          backgroundColor: 'rgba(239,68,68,0.08)',
+          fill: true, tension: 0, pointRadius: 0, borderWidth: 2
+        },
+        {
+          label: 'Glicko-2',
+          data: ptsG,
+          borderColor: '#fbbf24',
+          backgroundColor: 'rgba(251,191,36,0.06)',
+          fill: true, tension: 0, pointRadius: 0, borderWidth: 2
+        }
+      ]
     },
-    scales: {
-      x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#a3a3a3', maxTicksLimit: 10 } },
-      y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#a3a3a3' } }
+    options: {
+      responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          labels: {
+            color: '#a3a3a3',
+            generateLabels: function (chart) {
+              const items = Chart.defaults.plugins.legend.labels.generateLabels(chart);
+              return items.map(function (item) {
+                const ds = chart.data.datasets[item.datasetIndex];
+                if (ds && ds.data && ds.data.length) {
+                  let peakIdx = 0;
+                  for (let i = 1; i < ds.data.length; i++) {
+                    if (ds.data[i] && ds.data[i].y !== null && ds.data[i].y >= ds.data[peakIdx].y) peakIdx = i;
+                  }
+                  const val = ds.data[peakIdx].y;
+                  const date = fmtDT(ds.data[peakIdx].x);
+                  item.text = item.text + '  (peak ' + val + ' · ' + date + ')';
+                }
+                return item;
+              });
+            }
+          }
+        },
+        tooltip: {
+          backgroundColor: 'rgba(10,10,10,0.9)',
+          borderColor: '#2a2a2a',
+          borderWidth: 1,
+          titleColor: '#f5f5f5',
+          bodyColor: '#a3a3a3',
+          callbacks: {
+            title: function (items) {
+              if (!items.length) return '';
+              return fmtDT(items[0].parsed.x);
+            }
+          }
+        },
+        peakMarker: {}
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          // Pin the axis to the actual data range so the line starts at the
+          // left edge and ends at the right edge (no empty padding before/
+          // after the data from Chart.js "nice" rounding).
+          min: pts.length ? pts[0].x : undefined,
+          max: pts.length ? pts[pts.length - 1].x : undefined,
+          grid: { color: 'rgba(255,255,255,0.04)' },
+          ticks: {
+            color: '#a3a3a3',
+            maxTicksLimit: 10,
+            maxRotation: 0,
+            callback: function (value) {
+              const t = boundaryTicksList.find(function (b) { return b.value === value; });
+              return t ? t.label : '';
+            }
+          },
+          afterBuildTicks: function (axis) {
+            axis.ticks = boundaryTicksList.map(function (b) { return { value: b.value }; });
+          }
+        },
+        y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#a3a3a3' } }
+      }
+    }
+  });
+}
+
+// Custom plugin: highlight the peak of each rating series (Elo + Glicko-2)
+// with a colored ring + a vertical dashed guide line to the x-axis.
+// Peak values are shown in the legend (not on the chart) to avoid overlap.
+const peakMarker = {
+  id: 'peakMarker',
+  afterDatasetsDraw(chart) {
+    const ctx = chart.ctx;
+    const series = [
+      { idx: 0, color: '#ef4444' },  // Elo
+      { idx: 1, color: '#fbbf24' }   // Glicko-2
+    ];
+    const area = chart.chartArea;
+    for (const s of series) {
+      const ds = chart.data.datasets[s.idx];
+      if (!ds || !ds.data.length) continue;
+      let peakIdx = 0;
+      for (let i = 1; i < ds.data.length; i++) {
+        if (ds.data[i] && ds.data[i].y !== null && ds.data[i].y >= ds.data[peakIdx].y) peakIdx = i;
+      }
+      const meta = chart.getDatasetMeta(s.idx);
+      const pt = meta.data[peakIdx];
+      if (!pt) continue;
+      const x = pt.x, y = pt.y;
+      ctx.save();
+      // Vertical dashed guide line from the peak down to the x-axis.
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = s.color;
+      ctx.globalAlpha = 0.5;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x, area.bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      // Outer glow ring
+      ctx.beginPath();
+      ctx.arc(x, y, 7, 0, 2 * Math.PI);
+      ctx.fillStyle = s.color + '40';
+      ctx.fill();
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      // Inner dot
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, 2 * Math.PI);
+      ctx.fillStyle = s.color;
+      ctx.fill();
+      ctx.restore();
     }
   }
-});
+};
+Chart.register(peakMarker);
+
+buildChart(hist);
+
+// In-place update of the rating history chart when the game filter changes.
+// History is always all-time (no period filter).
+const histForm = document.querySelector('form.filters');
+if (histForm) {
+  histForm.addEventListener('change', function () {
+    const game = histForm.querySelector('select[name="game"]').value;
+    const url = '/api/player/' + playerId + '/history?game=' + encodeURIComponent(game);
+    fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (data) { buildChart(data.history || []); })
+      .catch(function (err) { console.error('History fetch failed:', err); });
+  });
+}
 </script>
 {% endblock %}
