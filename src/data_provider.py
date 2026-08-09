@@ -1,4 +1,4 @@
-"""Data exposure layer — common queries for all consumers (CLI, Discord, Twitch, Web API).
+"""Data provider — common queries for all consumers (CLI, Discord, Twitch, Web API).
 
 All bots and APIs use these functions. Keep return values simple (lists of dicts/tuples)
 so any consumer can format them however it wants.
@@ -280,7 +280,7 @@ def tier_stats_cols() -> list[Col]:
 
 
 class DataProvider:
-    """Common data access layer for all exposing consumers."""
+    """Common data access layer for all consumers."""
 
     def __init__(self, db: Optional[Database] = None):
         self.db = db or Database()

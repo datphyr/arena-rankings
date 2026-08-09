@@ -84,7 +84,7 @@ Detailed info for each step:
 - Rating history tracks peak rating + peak date per player per game.
 - Wrapper: rank.py (daemon mode, computes per-game + combined for both systems)
 
-4. DATA EXPOSURE
+4. DATA PROVIDER
 4.0 SHARED LAYER (implemented ✓) — src/data_provider.py
 - DataProvider class: common queries for all consumers.
 - Queries: get_top_players, get_top_players_by_peak, get_top_players_asof,
