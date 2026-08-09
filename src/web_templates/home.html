@@ -24,7 +24,7 @@
       {{ "%.0f"|format(peak_info.peak) }}
     </span>
     by
-    <a class="player-link" href="/player/{{ peak_info.player_id }}/{{ slug(peak_info.name) }}">{{ peak_info.name }}</a>
+    <span class="player-name">{% if peak_info.country %}<span class="flag" title="{{ peak_info.country|upper }}">{{ peak_info.country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ peak_info.player_id }}/{{ slug(peak_info.name) }}">{{ peak_info.name }}</a></span>
     on {{ peak_info.peak_date|dt if peak_info.peak_date else '—' }}
   </div>
   {% endif %}
@@ -35,7 +35,7 @@
       {{ "%.0f"|format(peak_info_glicko.peak) }}
     </span>
     by
-    <a class="player-link" href="/player/{{ peak_info_glicko.player_id }}/{{ slug(peak_info_glicko.name) }}">{{ peak_info_glicko.name }}</a>
+    <span class="player-name">{% if peak_info_glicko.country %}<span class="flag" title="{{ peak_info_glicko.country|upper }}">{{ peak_info_glicko.country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ peak_info_glicko.player_id }}/{{ slug(peak_info_glicko.name) }}">{{ peak_info_glicko.name }}</a></span>
     on {{ peak_info_glicko.peak_date|dt if peak_info_glicko.peak_date else '—' }}
   </div>
   {% endif %}
@@ -56,17 +56,17 @@
     <div class="section-head"><h2><a class="game-link" href="/leaderboard?sort_col=matches&sort_dir=desc">Most Active</a></h2></div>
     <div class="card">
       <div class="table-wrap">
-        <table>
-          <thead><tr><th>#</th><th>Player</th><th class="num">Matches</th><th class="num">W</th><th class="num">L</th><th class="num">WR</th></tr></thead>
+        <table class="auto-cols">
+          <thead><tr><th class="num col-num">#</th><th class="col-flex">Player</th><th class="num col-m">Matches</th><th class="num col-w">W</th><th class="num col-l">L</th><th class="num col-wr">WR</th></tr></thead>
           <tbody>
             {% for p in most_active %}
             <tr>
-              <td><span class="rank-badge">{{ loop.index }}</span></td>
-              <td><a class="player-link" href="/player/{{ p.player_id }}/{{ slug(p.name) }}">{{ p.name }}</a></td>
-              <td class="num">{{ "{:,}".format(p.matches) }}</td>
-              <td class="num win">{{ p.wins }}</td>
-              <td class="num loss">{{ p.losses }}</td>
-              <td class="num">{{ "%.0f%%"|format(p.wins / p.matches * 100) if p.matches > 0 else '—' }}</td>
+              <td class="num col-num"><span class="rank-badge">{{ loop.index }}</span></td>
+              <td class="col-flex"><span class="player-name">{% if p.country %}<span class="flag" title="{{ p.country|upper }}">{{ p.country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ p.player_id }}/{{ slug(p.name) }}">{{ p.name }}</a></span></td>
+              <td class="num col-m">{{ "{:,}".format(p.matches) }}</td>
+              <td class="num col-w win">{{ p.wins }}</td>
+              <td class="num col-l loss">{{ p.losses }}</td>
+              <td class="num col-wr">{{ "%.0f%%"|format(p.wins / p.matches * 100) if p.matches > 0 else '—' }}</td>
             </tr>
             {% endfor %}
           </tbody>
@@ -79,15 +79,15 @@
 <div class="section-head"><h2>Games</h2></div>
 <div class="card">
   <div class="table-wrap">
-    <table class="sortable games-table" data-default-sort="1" data-default-dir="desc">
-      <thead><tr><th>Game</th><th class="num" style="width:110px">Matches</th><th class="num" style="width:110px">Players</th><th class="num" style="width:130px">Tournaments</th></tr></thead>
+    <table class="sortable games-table auto-cols" data-default-sort="1" data-default-dir="desc">
+      <thead><tr><th class="col-flex">Game</th><th class="num col-m">Matches</th><th class="num col-m">Players</th><th class="num col-m">Tournaments</th></tr></thead>
       <tbody>
         {% for g in stats.games %}
         <tr>
-          <td><a class="game-link" href="/leaderboard?game={{ g }}">{{ g }}</a></td>
-          <td class="num">{{ "{:,}".format(stats.matches_per_game.get(g, 0)) }}</td>
-          <td class="num">{{ "{:,}".format(stats.players_per_game.get(g, 0)) }}</td>
-          <td class="num">{{ "{:,}".format(stats.tournaments_per_game.get(g, 0)) }}</td>
+          <td class="col-flex"><a class="game-link" href="/leaderboard?game={{ g }}">{{ g }}</a></td>
+          <td class="num col-m">{{ "{:,}".format(stats.matches_per_game.get(g, 0)) }}</td>
+          <td class="num col-m">{{ "{:,}".format(stats.players_per_game.get(g, 0)) }}</td>
+          <td class="num col-m">{{ "{:,}".format(stats.tournaments_per_game.get(g, 0)) }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -98,18 +98,18 @@
 <div class="section-head"><h2>Recent Matches</h2></div>
 <div class="card">
   <div class="table-wrap">
-    <table>
-      <thead><tr><th>Date</th><th class="right">Player 1</th><th class="center">Score</th><th>Player 2</th><th>Game</th><th>Tournament</th><th>Tier</th></tr></thead>
+    <table class="auto-cols">
+      <thead><tr><th class="col-date">Date</th><th class="right col-flex">Player 1</th><th class="center col-score">Score</th><th class="col-flex">Player 2</th><th class="col-game">Game</th><th class="col-tournament">Tournament</th><th class="col-tier">Tier</th></tr></thead>
       <tbody>
         {% for m in recent_matches %}
         <tr>
-          <td>{{ m.played_at|dt if m.played_at else "—" }}</td>
-          <td class="right"><a class="player-link" href="/player/{{ m.player1_id }}/{{ slug(m.player1) }}">{{ m.player1 }}</a></td>
-          <td class="center"><a class="score-link" href="/h2h?p1={{ m.player1 }}&p2={{ m.player2 }}" title="Head-to-head"><span class="{{ 'win' if m.winner == m.player1 else 'loss' }}">{{ m.score1 }}</span> : <span class="{{ 'win' if m.winner == m.player2 else 'loss' }}">{{ m.score2 }}</span></a></td>
-          <td><a class="player-link" href="/player/{{ m.player2_id }}/{{ slug(m.player2) }}">{{ m.player2 }}</a></td>
-          <td>{% if m.game %}<a class="game-link" href="/leaderboard?game={{ m.game }}">{{ m.game }}</a>{% else %}—{% endif %}</td>
-          <td class="tournament-cell">{{ m.tournament or '—' }}</td>
-          <td>{% if m.tier %}<span class="tag tag-{{ m.tier }}">{{ m.tier }}</span>{% else %}—{% endif %}</td>
+          <td class="col-date">{{ m.played_at|dt if m.played_at else "—" }}</td>
+          <td class="right col-flex"><span class="player-name"><a class="player-link" href="/player/{{ m.player1_id }}/{{ slug(m.player1) }}">{{ m.player1 }}</a>{% if m.player1_country %}<span class="flag" title="{{ m.player1_country|upper }}">{{ m.player1_country|flag }}</span>{% endif %}</span></td>
+          <td class="center col-score"><a class="score-link" href="/h2h?p1={{ m.player1 }}&p2={{ m.player2 }}" title="Head-to-head"><span class="{{ 'win' if m.winner == m.player1 else 'loss' }}">{{ m.score1 }}</span> : <span class="{{ 'win' if m.winner == m.player2 else 'loss' }}">{{ m.score2 }}</span></a></td>
+          <td class="col-flex"><span class="player-name">{% if m.player2_country %}<span class="flag" title="{{ m.player2_country|upper }}">{{ m.player2_country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ m.player2_id }}/{{ slug(m.player2) }}">{{ m.player2 }}</a></span></td>
+          <td class="col-game">{% if m.game %}<a class="game-link" href="/leaderboard?game={{ m.game }}">{{ m.game }}</a>{% else %}—{% endif %}</td>
+          <td class="col-tournament tournament-cell">{{ m.tournament or '—' }}</td>
+          <td class="col-tier">{% if m.tier %}<span class="tag tag-{{ m.tier }}">{{ m.tier }}</span>{% else %}—{% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>

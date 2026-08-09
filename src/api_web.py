@@ -15,6 +15,7 @@ from fastapi import FastAPI, Request, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup
 
 from .data_provider import DataProvider, _sort_matches
 from config import MIN_MATCHES_ELO, MIN_MATCHES_GLICKO2
@@ -137,6 +138,37 @@ def _avatar_gradient(player_id) -> str:
 
 
 templates.env.filters["avatar_gradient"] = _avatar_gradient
+
+# ISO 3166-1 alpha-2 country code -> flag IMAGE (flagcdn.com).
+# Emoji regional-indicator flags (U+1F1E6..) render as bare letters on many
+# systems/fonts, so we use real flag images instead. Non-country codes
+# (e.g. 'eu' = Europe, 'xx' = unknown) map to a neutral placeholder so the
+# layout stays aligned; unknown/empty -> '' (no flag).
+_FLAG_NEUTRAL = "🌐"
+_FLAG_NON_COUNTRY = {"eu", "xx"}
+
+
+def _flag(code: str) -> str:
+    """Return an <img> flag (flagcdn.com) for an ISO 3166-1 alpha-2 code.
+
+    Rendered as safe HTML (Markup) so the <img> isn't escaped. Non-country
+    codes fall back to a neutral emoji placeholder.
+    """
+    if not code:
+        return ""
+    code = code.strip().lower()
+    if len(code) != 2 or not code.isalpha():
+        return ""
+    if code in _FLAG_NON_COUNTRY:
+        return _FLAG_NEUTRAL
+    # Real flag image from flagcdn (SVG scales cleanly, no width variance).
+    return Markup(
+        f'<img class="flag-img" src="https://flagcdn.com/{code}.svg" '
+        f'alt="{code.upper()}" title="{code.upper()}" loading="lazy">'
+    )
+
+
+templates.env.filters["flag"] = _flag
 
 # Defaults
 DEFAULT_LIMIT = 20
@@ -427,6 +459,27 @@ def matches(
         ctx["sort_dir"] = sort_dir
         ctx["matches"] = dx.get_recent_matches(game=game, limit=per_page, player=player, tournament=tournament, tier=tier, offset=offset, sort_col=sort_col, sort_dir=sort_dir, player_match=player_match, tournament_match=tournament_match)
         total = dx.count_recent_matches(game=game, player=player, tournament=tournament, tier=tier, player_match=player_match, tournament_match=tournament_match)
+        # Stable column widths computed from the FULL (unfiltered) dataset so
+        # fixed-layout columns don't shift when sorting/paginating/filtering.
+        _cw = dx.matches_col_widths()
+        _CH = 7.8  # approx monospace char width (px) at 0.92rem JetBrains Mono (measured 7.75)
+        _PAD = 16  # cell padding + breathing room
+        # Tier cells render as .tag pills (padding 10px/side + 1px border +
+        # letter-spacing + uppercase). Char-width alone under-sizes them, which
+        # overflows the fixed column and creates a horizontal scrollbar.
+        _TIER_TAG_EXTRA = 24  # extra px beyond raw char width for the tag pill
+        # Cap the tournament column so a single very long tournament name
+        # doesn't blow out the layout and push the Tier column off-screen.
+        _MAX_TOURNAMENT = 300
+        ctx["col_widths"] = {
+            "date": 17 * _CH + _PAD,          # 'YYYY-MM-DD, HH:MM' = 17 chars
+            "player1": _cw.get("player1", 0) * _CH + _PAD,
+            "player2": _cw.get("player2", 0) * _CH + _PAD,
+            "score": 7 * _CH + _PAD,          # '999 : 999' worst case
+            "game": _cw.get("game", 0) * _CH + _PAD,
+            "tournament": min(_cw.get("tournament", 0) * _CH + _PAD, _MAX_TOURNAMENT),
+            "tier": _cw.get("tier", 0) * _CH + _PAD + _TIER_TAG_EXTRA,
+        }
         ctx["page"] = page
         ctx["total"] = total
         ctx["total_pages"] = max(1, (total + per_page - 1) // per_page) if limit != "all" else 1
@@ -477,6 +530,10 @@ def tournaments(
     if clear:
         tier = game = ""
     game = _resolve_game(game)
+    # Default sort: last match descending (matches the SQL ORDER BY default).
+    if not sort_col:
+        sort_col = "last_match"
+        sort_dir = "desc"
     # Map limit: 'all' -> large number, else int
     limit_n = 100000 if limit == "all" else int(limit)
     per_page = limit_n if limit != "all" else 100000
@@ -491,6 +548,21 @@ def tournaments(
         ctx["sort_dir"] = sort_dir
         ctx["tournaments"] = dx.get_tournaments(tier=tier, game=game, limit=per_page, offset=offset, sort_col=sort_col, sort_dir=sort_dir)
         total = dx.count_tournaments(tier=tier, game=game)
+        # Stable column widths computed from the FULL (unfiltered) dataset so
+        # fixed-layout columns don't shift when sorting/filtering/paginating.
+        _cw = dx.tournaments_col_widths()
+        _CH = 7.5  # approx monospace char width (px) at 0.92rem JetBrains Mono
+        _PAD = 16  # cell padding + breathing room
+        # Cap the tournament name column so a single very long name doesn't
+        # blow out the layout and push the last column off-screen.
+        _MAX_NAME = 300
+        ctx["col_widths"] = {
+            "name": min(_cw.get("name", 0) * _CH + _PAD, _MAX_NAME),
+            "tier": _cw.get("tier", 0) * _CH + _PAD,
+            "game": _cw.get("game", 0) * _CH + _PAD,
+            "matches": _cw.get("matches", 0) * _CH + _PAD,
+            "date": 10 * _CH + _PAD,  # 'YYYY-MM-DD' = 10 chars
+        }
         ctx["page"] = page
         ctx["total"] = total
         ctx["total_pages"] = max(1, (total + per_page - 1) // per_page) if limit != "all" else 1

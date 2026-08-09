@@ -4,35 +4,42 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}Arena Rankings{% endblock %}</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=20260810j">
   <script src="/static/chart.umd.min.js"></script>
-  <script src="/static/theme.js" defer></script>
-  <script src="/static/tables.js" defer></script>
-  <script src="/static/sort-scroll.js" defer></script>
-  <script src="/static/ajax-filters.js" defer></script>
-  <script src="/static/autocomplete.js" defer></script>
+  <script>
+    // Use the same monospace font for Chart.js as the rest of the site.
+    if (window.Chart) {
+      Chart.defaults.font.family = "'JetBrains Mono', 'Consolas', 'Menlo', 'DejaVu Sans Mono', 'Liberation Mono', ui-monospace, monospace";
+    }
+  </script>
+  <script src="/static/theme.js?v=20260809g" defer></script>
+  <script src="/static/tables.js?v=20260809g" defer></script>
+  <script src="/static/sort-scroll.js?v=20260809g" defer></script>
+  <script src="/static/ajax-filters.js?v=20260810b" defer></script>
+  <script src="/static/autocomplete.js?v=20260810c" defer></script>
   {% block head %}{% endblock %}
 </head>
 <body>
   <header class="site-header">
     <div class="container header-inner">
-      <a href="/" class="brand">
-        <span class="brand-mark">⚔</span>
-        <span class="brand-text">Arena<span class="brand-accent">Rankings</span></span>
-      </a>
-      <nav class="nav">
-        <a href="/" class="nav-link {{ 'active' if active == 'home' }}">Home</a>
-        <a href="/leaderboard" class="nav-link {{ 'active' if active == 'leaderboard' }}">Leaderboard</a>
-        <a href="/matches" class="nav-link {{ 'active' if active == 'matches' }}">Matches</a>
-        <a href="/tournaments" class="nav-link {{ 'active' if active == 'tournaments' }}">Tournaments</a>
-        <a href="/h2h" class="nav-link {{ 'active' if active == 'h2h' }}">Head-to-Head</a>
-      </nav>
-      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle color theme" title="Toggle light/dark theme">
-        <span class="theme-toggle-icon">🌙</span>
-      </button>
+      <div class="header-left">
+        <a href="/" class="brand">
+          <span class="brand-mark">⚔</span>
+          <span class="brand-text">Arena<span class="brand-accent">Rankings</span></span>
+        </a>
+        <nav class="nav">
+          <a href="/" class="nav-link {{ 'active' if active == 'home' }}">Home</a>
+          <a href="/leaderboard" class="nav-link {{ 'active' if active == 'leaderboard' }}">Leaderboard</a>
+          <a href="/matches" class="nav-link {{ 'active' if active == 'matches' }}">Matches</a>
+          <a href="/tournaments" class="nav-link {{ 'active' if active == 'tournaments' }}">Tournaments</a>
+          <a href="/h2h" class="nav-link {{ 'active' if active == 'h2h' }}">Head-to-Head</a>
+        </nav>
+      </div>
+      <div class="header-actions">
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle color theme" title="Toggle light/dark theme">
+          <span class="theme-toggle-icon">🌙</span>
+        </button>
+      </div>
     </div>
   </header>
 
@@ -41,7 +48,12 @@
   </main>
 
   <footer class="site-footer">
-    <div class="container">
+    <div class="container footer-inner">
+      <div class="noise-control" title="Film-grain noise strength">
+        <label for="noise-slider">Noise</label>
+        <input type="range" id="noise-slider" min="0" max="100" step="1" value="50">
+        <span class="noise-val" id="noise-val">50%</span>
+      </div>
       <p>Arena Rankings — Elo &amp; Glicko-2 ratings from plusforward.net match data.</p>
     </div>
   </footer>

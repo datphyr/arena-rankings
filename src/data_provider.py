@@ -490,6 +490,8 @@ class DataProvider:
         # Cache of canonical (most-used) display name per player_id.
         # Populated lazily by _canonical_name / _canonical_names.
         self._canonical_cache: dict[int, str] = {}
+        # Cache of country code per player_id (from the players table).
+        self._country_cache: dict[int, str] = {}
 
     def close(self):
         if self._owns_db:
@@ -546,6 +548,25 @@ class DataProvider:
     def _canonical_name(self, player_id: int) -> str:
         """Canonical (most-used) display name for a single player_id."""
         return self._canonical_names([player_id])[player_id]
+
+    def _countries(self, player_ids: list[int]) -> dict[int, str]:
+        """Return the ISO country code for each player_id (from the players
+        table). Missing/unknown players map to '' (no flag). Cached."""
+        missing = [pid for pid in player_ids if pid not in self._country_cache]
+        if missing:
+            rows = self.db.client.execute(
+                "SELECT player_id, country FROM players FINAL WHERE player_id IN %(ids)s",
+                {"ids": tuple(missing)},
+            )
+            for pid, country in rows:
+                self._country_cache[pid] = country or ""
+            for pid in missing:
+                self._country_cache.setdefault(pid, "")
+        return {pid: self._country_cache.get(pid, "") for pid in player_ids}
+
+    def _country(self, player_id: int) -> str:
+        """ISO country code for a single player_id ('' if unknown)."""
+        return self._countries([player_id])[player_id]
 
     def _aliases(self, player_id: int) -> list[str]:
         """All distinct name spellings for a player_id, most-used first,
@@ -916,6 +937,7 @@ class DataProvider:
             # Batch-fetch main game (most matches) for all player IDs
             player_ids = [r[0] for r in rows]
             canon = self._canonical_names(player_ids)
+            countries = self._countries(player_ids)
             main_games = {}
             peaks = {}
             if player_ids:
@@ -933,6 +955,7 @@ class DataProvider:
                 {
                     "player_id": r[0],
                     "name": canon.get(r[0], r[1]),
+                    "country": countries.get(r[0], ""),
                     "rating": round(r[2], 1),
                     "rd": round(r[3], 1) if r[3] else None,
                     "vol": round(r[4], 4) if r[4] else None,
@@ -968,11 +991,13 @@ class DataProvider:
             rows = self.db.client.execute(query, params)
             player_ids = [r[0] for r in rows]
             canon = self._canonical_names(player_ids)
+            countries = self._countries(player_ids)
             peaks = self._fetch_peaks(player_ids, system)
             results = [
                 {
                     "player_id": r[0],
                     "name": canon.get(r[0], r[1]),
+                    "country": countries.get(r[0], ""),
                     "rating": round(r[2], 1),
                     "rd": round(r[3], 1) if r[3] else None,
                     "vol": round(r[4], 4) if r[4] else None,
@@ -1077,6 +1102,7 @@ class DataProvider:
 
         player_ids = [r[0] for r in peak_rows]
         peak_map = {r[0]: (round(r[1], 1), r[2]) for r in peak_rows}
+        countries = self._countries(player_ids)
 
         # Step 2: Fetch current ratings from player_ratings for those player_ids
         rating_query = """
@@ -1115,6 +1141,7 @@ class DataProvider:
                 results.append({
                     "player_id": r[0],
                     "name": self._canonical_name(r[0]),
+                    "country": countries.get(r[0], ""),
                     "rating": round(r[2], 1),
                     "rd": round(r[3], 1) if r[3] else None,
                     "vol": round(r[4], 4) if r[4] else None,
@@ -1134,6 +1161,7 @@ class DataProvider:
                 results.append({
                     "player_id": pid,
                     "name": name,
+                    "country": countries.get(pid, ""),
                     "rating": None,
                     "rd": None,
                     "vol": None,
@@ -1258,6 +1286,7 @@ class DataProvider:
         names = {}
         first_dates = {}
         peaks = {}
+        countries = self._countries(player_ids)
         if player_ids:
             nr_rows = self.db.client.execute(
                 "SELECT player_id, argMax(player_name, last_match_date) AS name, "
@@ -1296,6 +1325,7 @@ class DataProvider:
             {
                 "player_id": r[0],
                 "name": names.get(r[0], f"player_{r[0]}"),
+                "country": countries.get(r[0], ""),
                 "rating": round(r[1], 1),
                 "rd": round(r[2], 1) if r[2] else None,
                 "vol": round(r[3], 4) if r[3] else None,
@@ -1416,6 +1446,7 @@ class DataProvider:
             {
                 "player_id": r[0],
                 "name": canon,
+                "country": self._country(r[0]),
                 "game": r[2] or "Combined",
                 "system": r[3],
                 "rating": round(r[4], 1),
@@ -1696,6 +1727,8 @@ class DataProvider:
                 "player2": disp2,
                 "player1_id": p1id if p1_matches else p2id,
                 "player2_id": p2id if p1_matches else p1id,
+                "player1_country": self._country(p1id if p1_matches else p2id),
+                "player2_country": self._country(p2id if p1_matches else p1id),
                 "score": f"{ds1}-{ds2}",
                 "score1": ds1,
                 "score2": ds2,
@@ -1711,6 +1744,8 @@ class DataProvider:
             "player2": player2,
             "p1_id": p1_id,
             "p2_id": p2_id,
+            "p1_country": self._country(p1_id) if p1_id else "",
+            "p2_country": self._country(p2_id) if p2_id else "",
             "p1_wins": p1_wins,
             "p2_wins": p2_wins,
             "total": total,
@@ -1795,6 +1830,7 @@ class DataProvider:
         rows = self.db.client.execute(query, params)
         ids = {r[5] for r in rows} | {r[6] for r in rows}
         canon = self._canonical_names(list(ids))
+        countries = self._countries(list(ids))
         matches = [
             {
                 "match_id": r[0],
@@ -1802,6 +1838,8 @@ class DataProvider:
                 "player2": canon.get(r[6], r[2]),
                 "player1_id": r[5],
                 "player2_id": r[6],
+                "player1_country": countries.get(r[5], ""),
+                "player2_country": countries.get(r[6], ""),
                 "score": f"{r[3]}-{r[4]}",
                 "score1": r[3],
                 "score2": r[4],
@@ -1873,6 +1911,114 @@ class DataProvider:
         rows = self.db.client.execute(query, params)
         return rows[0][0] if rows else 0
 
+    def matches_col_widths(
+        self,
+        game: str = "",
+        player: str = "",
+        tournament: str = "",
+        tier: str = "",
+        match: str = "exact",
+        player_match: Optional[str] = None,
+        tournament_match: Optional[str] = None,
+    ) -> dict:
+        """Max content length per column across the FULL filtered dataset.
+
+        Used to set stable min-widths on the matches table so column widths
+        don't shift when sorting/paginating (auto layout only sees the current
+        page's rows otherwise). Returns a dict of column -> max char length.
+        """
+        player_match = player_match or match
+        tournament_match = tournament_match or match
+        query = """
+            SELECT
+                max(length(m.player1_name)),
+                max(length(m.player2_name)),
+                max(length(m.game_name)),
+                max(length(m.tournament_name)),
+                max(length(t.tier))
+            FROM matches m FINAL
+            LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
+        """
+        params = {}
+        where = []
+        if game:
+            where.append("m.game_name = %(game)s")
+            params["game"] = game
+        if player:
+            if player_match == "regex":
+                where.append("(match(lowerUTF8(m.player1_name), lowerUTF8(%(player)s)) OR match(lowerUTF8(m.player2_name), lowerUTF8(%(player)s)))")
+                params["player"] = player
+            elif player_match == "partial":
+                where.append("(m.player1_name ILIKE %(player)s OR m.player2_name ILIKE %(player)s)")
+                params["player"] = f"%{player}%"
+            else:
+                pid = self._player_id(player)
+                if pid is None:
+                    return {}
+                where.append("(m.player1_id = %(pid)s OR m.player2_id = %(pid)s)")
+                params["pid"] = pid
+        if tournament:
+            if tournament_match == "regex":
+                where.append("match(lowerUTF8(m.tournament_name), lowerUTF8(%(tournament)s))")
+                params["tournament"] = tournament
+            elif tournament_match == "partial":
+                where.append("m.tournament_name ILIKE %(tournament)s")
+                params["tournament"] = f"%{tournament}%"
+            else:
+                where.append("m.tournament_name = %(tournament)s")
+                params["tournament"] = tournament
+        if tier:
+            where.append("t.tier = %(tier)s")
+            params["tier"] = tier
+        if where:
+            query += " WHERE " + " AND ".join(where)
+        rows = self.db.client.execute(query, params)
+        if not rows:
+            return {}
+        r = rows[0]
+        return {
+            "player1": r[0] or 0,
+            "player2": r[1] or 0,
+            "game": r[2] or 0,
+            "tournament": r[3] or 0,
+            "tier": r[4] or 0,
+        }
+
+    def tournaments_col_widths(self) -> dict:
+        """Max content length per column across the FULL tournaments dataset.
+
+        Used to set stable widths on the tournaments table so column widths
+        don't shift when sorting/filtering/paginating (auto layout only sees
+        the current page's rows otherwise). Returns dict of column -> max char
+        length. Ignores filters so widths are always identical.
+        """
+        query = """
+            SELECT
+                max(length(name)),
+                max(length(tier)),
+                max(length(game_name)),
+                max(length(toString(cnt)))
+            FROM (
+                SELECT t.tournament_id, t.name, t.tier,
+                       any(m.game_name) AS game_name,
+                       count(m.match_id) AS cnt
+                FROM tournaments t FINAL
+                LEFT JOIN matches m ON m.tournament_id = t.tournament_id
+                WHERE t.name != ''
+                GROUP BY t.tournament_id, t.name, t.tier
+            )
+        """
+        rows = self.db.client.execute(query)
+        if not rows:
+            return {}
+        r = rows[0]
+        return {
+            "name": r[0] or 0,
+            "tier": r[1] or 0,
+            "game": r[2] or 0,
+            "matches": r[3] or 0,
+        }
+
     # --- Player matches ---
 
     def get_player_matches(
@@ -1907,6 +2053,7 @@ class DataProvider:
         # under one spelling.
         ids = {r[5] for r in rows} | {r[6] for r in rows}
         canon = self._canonical_names(list(ids))
+        countries = self._countries(list(ids))
         return [
             {
                 "match_id": r[0],
@@ -1914,6 +2061,8 @@ class DataProvider:
                 "player2": canon.get(r[6], r[2]),
                 "player1_id": r[5],
                 "player2_id": r[6],
+                "player1_country": countries.get(r[5], ""),
+                "player2_country": countries.get(r[6], ""),
                 "score": f"{r[3]}-{r[4]}",
                 "score1": r[3],
                 "score2": r[4],
@@ -2107,10 +2256,12 @@ class DataProvider:
             {"lim": limit},
         )
         canon = self._canonical_names([r[0] for r in rows])
+        countries = self._countries([r[0] for r in rows])
         return [
             {
                 "player_id": r[0],
                 "name": canon.get(r[0], r[1]),
+                "country": countries.get(r[0], ""),
                 "matches": r[2],
                 "wins": r[3],
                 "losses": r[4],
@@ -2191,6 +2342,7 @@ class DataProvider:
         return {
             "player_id": pid,
             "name": name,
+            "country": self._country(pid),
             "peak": round(peak, 1),
             "peak_date": peak_date,
             "game": peak_game or "Combined",
@@ -2311,8 +2463,15 @@ class DataProvider:
         )
         opp_ids = [r[0] for r in rival_rows]
         opp_canon = self._canonical_names(opp_ids)
+        opp_countries = self._countries(opp_ids)
         rivals = [
-            {"name": opp_canon.get(r[0], f"player_{r[0]}"), "matches": r[1], "wins": r[2], "losses": r[1] - r[2]}
+            {
+                "name": opp_canon.get(r[0], f"player_{r[0]}"),
+                "country": opp_countries.get(r[0], ""),
+                "matches": r[1],
+                "wins": r[2],
+                "losses": r[1] - r[2],
+            }
             for r in rival_rows
         ]
         # Sort rivals by least win rate first (hardest opponents on top).

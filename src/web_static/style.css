@@ -32,8 +32,8 @@
   --radius: 14px;
   --radius-sm: 9px;
   --shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
-  --font: 'Inter', system-ui, -apple-system, sans-serif;
-  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  --font: 'JetBrains Mono', 'Consolas', 'Menlo', 'DejaVu Sans Mono', 'Liberation Mono', ui-monospace, monospace;
+  --mono: 'JetBrains Mono', 'Consolas', 'Menlo', 'DejaVu Sans Mono', 'Liberation Mono', ui-monospace, monospace;
   --glow-red: rgba(239, 68, 68, 0.55);
   --glow-orange: rgba(251, 191, 36, 0.45);
   --glow-yellow: rgba(251, 191, 36, 0.4);
@@ -171,15 +171,20 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Subtle noise overlay to break up gradient banding. Fixed, sits above the
-   background but below all content (z-index 0; content is z-index 1+). */
+/* Subtle noise overlay to break up gradient banding. Fixed, sits ABOVE all
+   content (z-index 9999) so the grain shows through translucent cards too.
+   pointer-events: none so it never blocks clicks/selection. Opacity is
+   controlled by --noise-opacity (default 0.08) via the header slider.
+   mix-blend-mode: overlay keeps the grain from washing out text — it darkens
+   darks and lightens lights, so contrast is preserved/enhanced, not reduced. */
 body::before {
   content: '';
   position: fixed;
   inset: 0;
-  z-index: 0;
+  z-index: 9999;
   pointer-events: none;
-  opacity: 0.05;
+  mix-blend-mode: overlay;
+  opacity: var(--noise-opacity, 0.08);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   background-size: 160px 160px;
 }
@@ -200,6 +205,11 @@ body::before {
   align-items: center;
   justify-content: space-between;
   height: 64px;
+}
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 24px;
 }
 .brand {
   display: flex;
@@ -245,7 +255,6 @@ body::before {
   justify-content: center;
   width: 38px;
   height: 38px;
-  margin-left: 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: linear-gradient(135deg, var(--bg-hover), var(--bg-card));
@@ -261,6 +270,41 @@ body::before {
   transform: translateY(-1px);
 }
 .theme-toggle-icon { line-height: 1; }
+
+/* ─── Header actions (noise slider + theme toggle) ───────── */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* ─── Noise strength slider ──────────────────────────────── */
+.noise-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--bg-hover), var(--bg-card));
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+.noise-control label { cursor: pointer; user-select: none; }
+.noise-control input[type="range"] {
+  width: 90px;
+  accent-color: var(--copper);
+  cursor: pointer;
+}
+.noise-control .noise-val {
+  min-width: 2.4em;
+  text-align: right;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.75rem;
+  color: var(--text);
+}
 
 /* ─── Hero ───────────────────────────────────────────────── */
 .hero {
@@ -446,38 +490,53 @@ body::before {
 /* ─── Tables ─────────────────────────────────────────────── */
 .table-wrap { overflow-x: auto; border-radius: var(--radius-sm); }
 table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
-/* Fixed layout for the home Top Players table so column widths don't jump
-   when the data is swapped in place (Elo <-> Glicko-2). */
-table.top-players-table { table-layout: fixed; }
-table.top-players-table th:nth-child(2) { width: 30%; }
-table.top-players-table th:nth-child(3) { width: 22%; }
-/* Games table: fixed layout so column widths don't jump on client-side sort. */
-table.games-table { table-layout: fixed; }
-/* Fixed layout + explicit column widths for all other sortable tables so
-   column widths don't jump when rows are re-sorted in place (AJAX or client-side). */
-table.lb-table { table-layout: fixed; }
-table.lb-table th:nth-child(1) { width: 48px; }  /* # rank */
-table.lb-table th:nth-child(2) { width: 24%; }   /* Player */
-table.lb-table th:nth-child(3) { width: 16%; }   /* Main Game */
-table.matches-table { table-layout: fixed; }
-table.matches-table th:nth-child(1) { width: 13%; } /* Date */
-table.matches-table th:nth-child(2) { width: 16%; } /* Player 1 */
-table.matches-table th:nth-child(3) { width: 8%; }  /* Score */
-table.matches-table th:nth-child(4) { width: 16%; } /* Player 2 */
-table.matches-table th:nth-child(5) { width: 14%; } /* Game */
-table.matches-table th:nth-child(6) { width: 25%; } /* Tournament */
-table.tournaments-table { table-layout: fixed; }
-table.tournaments-table th:nth-child(1) { width: 34%; } /* Tournament */
-table.tournaments-table th:nth-child(2) { width: 10%; } /* Tier */
-table.tournaments-table th:nth-child(3) { width: 16%; } /* Game */
-table.player-ratings-table { table-layout: fixed; }
-table.player-ratings-table th:nth-child(1) { width: 6%; }  /* # */
-table.player-ratings-table th:nth-child(2) { width: 24%; } /* Game */
-table.player-ratings-table th:nth-child(4) { width: 15%; } /* Peak — wide enough for the date on one line */
-table.rivals-table { table-layout: fixed; }
-table.rivals-table th:nth-child(1) { width: 34%; } /* Opponent */
-table.tier-table { table-layout: fixed; }
-table.tier-table th:nth-child(1) { width: 34%; } /* Tier */
+
+/* Global fixed layout: every table uses fixed column widths so the layout
+   never shifts when rows are re-sorted or data changes. The flexible column
+   (player/game/tournament name) is marked .col-flex and absorbs the remaining
+   space; every other column gets a narrow fixed width via a shared class. */
+table { table-layout: fixed; }
+
+/* Flexible name column — absorbs all remaining space. In table-layout: fixed,
+   a column with no explicit width receives the space left over after the
+   fixed-width columns. Long content is truncated with an ellipsis so it never
+   pushes the table wider than its container. */
+th.col-flex, td.col-flex { width: auto; }
+td.col-flex { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+td.col-flex .player-name { display: inline-flex; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+
+/* Shared narrow fixed widths for non-flex columns. */
+th.col-num, td.col-num { width: 48px; }        /* generic narrow number */
+th.col-rating, td.col-rating { width: 64px; }  /* rating / peak rating */
+th.col-peak, td.col-peak { width: 120px; }     /* peak rating + date under it */
+th.col-rd, td.col-rd { width: 48px; }          /* glicko RD */
+th.col-peak-date, td.col-peak-date { width: 130px; } /* peak date */
+th.col-w, td.col-w { width: 56px; }            /* wins */
+th.col-l, td.col-l { width: 56px; }            /* losses */
+th.col-m, td.col-m { width: 56px; }            /* matches */
+th.col-wr, td.col-wr { width: 56px; }          /* win rate % */
+th.col-date, td.col-date { width: 110px; }     /* date */
+th.col-score, td.col-score { width: 70px; }    /* match score */
+th.col-game, td.col-game { width: 120px; }     /* game name */
+th.col-tier, td.col-tier { width: 80px; }      /* tier tag */
+th.col-main-game, td.col-main-game { width: 150px; } /* main game */
+th.col-tournament, td.col-tournament { width: 200px; } /* tournament */
+
+/* Auto-sized tables (main page): switch off the global fixed layout so
+   columns size to their content. The col-* width classes are neutralized
+   here so they don't fight the natural sizing. */
+table.auto-cols { table-layout: auto; }
+table.auto-cols th, table.auto-cols td { width: auto !important; }
+table.auto-cols td.col-flex { overflow: visible; text-overflow: clip; white-space: normal; }
+table.auto-cols td.col-flex .player-name { max-width: none; overflow: visible; }
+/* Cap the tournament column in auto-layout tables so a single long name
+   doesn't blow out the layout and push the last column (Tier) off-screen. */
+table.auto-cols th.col-tournament, table.auto-cols td.col-tournament { max-width: 300px; }
+table.auto-cols td.col-tournament { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Back-compat: existing tables that already set widths via nth-child keep
+   working; these explicit rules just ensure the flexible column wins. */
+table.lb-table th:nth-child(2) { width: auto; }   /* Player — absorbs remaining space */
 thead th {
   text-align: left;
   color: var(--text-faint);
@@ -501,42 +560,79 @@ table.sortable thead th:hover {
   background-clip: text;
   -webkit-text-fill-color: transparent;
 }
-table.sortable thead th.sort-asc::after,
-table.sortable thead th.sort-desc::after {
+/* Unified sort-arrow reserved space: applies to EVERY table header across
+   the site (leaderboard, player page, matches, tournaments, h2h, home top
+   players). Every header reserves a fixed space on the right for the sort
+   triangle so text never shifts when a column is sorted. The triangle is
+   transparent by default and only colors in when the column is sorted
+   (sort-asc/sort-desc). */
+thead th::after {
   content: '';
   display: inline-block;
+  width: 0;
+  height: 0;
   margin-left: 6px;
   border-left: 4px solid transparent;
   border-right: 4px solid transparent;
   vertical-align: middle;
 }
-table.sortable thead th.sort-asc::after { border-bottom: 5px solid var(--copper); }
-table.sortable thead th.sort-desc::after { border-top: 5px solid var(--copper); }
+thead th.sort-asc::after { border-bottom: 5px solid var(--copper); }
+thead th.sort-desc::after { border-top: 5px solid var(--copper); }
 /* Server-side sort links (leaderboard) */
 thead th a.sort-link {
   color: inherit;
   text-decoration: none;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
 }
 thead th a.sort-link:hover { color: var(--copper); }
 thead th a.sort-link.active { color: var(--copper); }
-.sort-arrow { color: var(--orange); font-size: 0.7em; }
 tbody td {
   padding: 12px 14px;
   border-bottom: 1px solid var(--border-soft);
   white-space: nowrap;
+  /* Fixed-width font for ALL table data so numeric columns align
+     consistently regardless of which font actually loads. */
+  font-family: var(--mono);
 }
 /* Allow long tournament names to wrap so the table fits and the last
    column (e.g. Tier) isn't pushed off-screen / cropped by overflow-x. */
-td.tournament-cell { white-space: normal; min-width: 120px; }
+td.tournament-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 120px; }
 tbody tr { transition: background 0.12s ease; }
 tbody tr:hover { background: var(--bg-hover); }
 tbody tr:last-child td { border-bottom: none; }
 td.num, th.num { text-align: right; font-family: var(--mono); }
+/* Numeric cells need a wide enough content box for 4-digit values to
+   render right-aligned. The base tbody td padding (14px each side) leaves
+   only ~16px of content in a 44px cell, which overflows and makes the
+   numbers render left-aligned. Reduce horizontal padding on numeric cells. */
+td.num { padding-left: 4px; padding-right: 18px; }
+/* Rank badge cell: give the glow room so it isn't cropped by the cell edge.
+   The badge is 30px with a 16px box-shadow glow; the base td.num padding
+   (4px left) clips it. Add horizontal padding and widen the rank column. */
+table.lb-table td.num:first-child,
+table.lb-table th.num:first-child,
+table.player-ratings-table td.num:first-child,
+table.player-ratings-table th.num:first-child { padding-left: 10px; padding-right: 4px; }
+table.lb-table th:nth-child(1),
+table.player-ratings-table th:nth-child(1) { width: 56px; }
+/* Match header padding to data cells so header labels sit flush with the
+   numbers below (otherwise headers have extra free space on the right). */
+th.num { padding-left: 4px; padding-right: 4px; }
 td.center, th.center { text-align: center; }
 td.right, th.right { text-align: right; }
+
+/* Visually hidden but available to screen readers (used to keep a column
+   header label while hiding it visually, e.g. reserved RD column in Elo table). */
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 .rank-badge {
   display: inline-flex;
@@ -572,6 +668,40 @@ a.player-link {
 }
 a.player-link:hover { color: var(--copper); text-decoration: underline; }
 
+/* Player name + country flag. The flag sits inline before the name and is
+   sized to match the text; .flag-lg is the larger variant for page headers. */
+.player-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.flag {
+  font-size: 0.95em;
+  display: inline-flex;
+  align-items: center;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.25));
+}
+.flag-lg {
+  font-size: 1.1em;
+}
+/* Larger flag for page headers (player page h1) — the fixed 20px width is
+   too small next to a big heading, so bump it up here. */
+.flag-lg .flag-img {
+  width: 28px;
+}
+/* Real flag image (flagcdn SVG) — fixed PIXEL width so all flags are exactly
+   the same width regardless of aspect ratio (Switzerland 1:1, most 3:2, Qatar
+   1:2) or parent font-size. Height auto-scales to preserve natural shape. */
+.flag-img {
+  width: 20px;
+  height: auto;
+  border-radius: 2px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  vertical-align: -0.1em;
+  flex-shrink: 0;
+}
+
 a.game-link {
   color: var(--copper);
   text-decoration: none;
@@ -586,6 +716,9 @@ a.tournament-link {
   font-weight: 500;
 }
 a.tournament-link:hover { color: var(--copper); text-decoration: underline; }
+
+a.tier-link { text-decoration: none; }
+a.tier-link:hover .tag { filter: brightness(1.2); }
 
 .tag {
   display: inline-block;
@@ -650,6 +783,15 @@ a.tournament-link:hover { color: var(--copper); text-decoration: underline; }
   border-radius: var(--radius-sm);
   outline: none;
   transition: border-color 0.15s ease;
+}
+.filters select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 10px 6px;
 }
 .filters select:focus, .filters input:focus { border-color: var(--copper); }
 .filters button {
@@ -762,7 +904,11 @@ a.page-link:hover {
   font-size: 2rem; font-weight: 800; color: #fff;
   box-shadow: 0 8px 24px var(--glow-red);
 }
-.player-head h1 { font-size: 2rem; font-weight: 800; letter-spacing: -0.02em; }
+.player-head h1 {
+  font-size: 2rem; font-weight: 800; letter-spacing: -0.02em;
+  display: flex; align-items: center; gap: 8px;
+  line-height: 1.2;
+}
 .player-aliases { color: var(--text-dim); font-weight: 500; font-size: 1.1rem; letter-spacing: 0; }
 .player-sub { color: var(--text-dim); font-size: 0.95rem; }
 
@@ -894,6 +1040,15 @@ a.page-link:hover {
   height: 2px;
   background: linear-gradient(90deg, var(--accent), var(--orange), var(--gold), var(--plum), var(--blue), var(--magenta));
   opacity: 0.5;
+}
+.footer-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.site-footer .noise-control {
+  align-self: flex-end;
 }
 
 /* ─── Responsive ─────────────────────────────────────────── */

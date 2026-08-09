@@ -31,10 +31,7 @@
     <option value="1000" {{ 'selected' if limit == '1000' }}>1000</option>
     <option value="all" {{ 'selected' if limit == 'all' }}>All</option>
   </select>
-  <button type="submit">Apply</button>
 </form>
-
-{% if date %}<p style="padding:0 0 16px;color:var(--text-dim);font-size:0.9rem;">Leaderboard as of <strong style="color:var(--accent-2);">{{ date }}</strong> (reconstructed from rating history).</p>{% endif %}
 
 {% include "_leaderboard_results.html" %}
 {% endblock %}

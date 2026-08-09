@@ -98,6 +98,12 @@
     this.input.value = name;
     this.hide();
     this.input.focus();
+    // Auto-submit the parent filter form (matches the Enter/blur behavior in
+    // ajax-filters.js) so picking a suggestion filters immediately.
+    var form = this.input.closest("form.filters");
+    if (form) {
+      form.dispatchEvent(new Event("submit", { cancelable: true }));
+    }
   };
 
   Autocomplete.prototype.show = function () {

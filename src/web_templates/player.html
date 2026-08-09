@@ -4,7 +4,7 @@
 <div class="player-head">
   <div class="player-avatar" style="background: {{ player_id|avatar_gradient }};">{{ player_name[0]|upper }}</div>
   <div>
-    <h1>{{ player_name }}{% if summary and summary.aliases %}<span class="player-aliases"> ({{ summary.aliases|join(', ') }})</span>{% endif %}</h1>
+    <h1><span class="player-name">{% if ratings and ratings[0].country %}<span class="flag flag-lg" title="{{ ratings[0].country|upper }}">{{ ratings[0].country|flag }}</span>{% endif %}{{ player_name }}</span>{% if summary and summary.aliases %}<span class="player-aliases"> ({{ summary.aliases|join(', ') }})</span>{% endif %}</h1>
     {% if summary and (summary.first_match or summary.last_match) %}
     <div class="rank-pills">
       {% if summary.first_match %}
@@ -52,22 +52,24 @@
   <div class="table-wrap">
     <table class="player-ratings-table sortable" data-default-sort="2" data-default-dir="desc">
       <thead>
-        <tr><th class="num">#</th><th>Game</th><th class="num">Rating</th><th class="num">Peak</th><th class="num">W</th><th class="num">L</th><th class="num">Matches</th><th class="num">WR%</th></tr>
+        <tr><th class="num col-num">#</th><th class="col-flex">Game</th><th class="num col-rating">Rating</th><th class="num col-peak">Peak</th><th class="center col-peak-date">Peak Date</th><th class="num col-rd"><span class="visually-hidden">RD</span></th><th class="num col-m">M</th><th class="num col-w">W</th><th class="num col-l">L</th><th class="num col-wr">WR%</th></tr>
       </thead>
       <tbody>
         {% for r in ratings if r.system == 'elo' %}
         <tr>
-          <td class="num">{% if r.rank %}<span class="rank-badge">#{{ r.rank }}</span>{% else %}—{% endif %}</td>
-          <td>{% if r.game != 'Combined' %}<a class="game-link" href="/leaderboard?game={{ r.game }}">{{ r.game }}</a>{% else %}<a class="game-link" href="/leaderboard">{{ r.game }}</a>{% endif %}</td>
-          <td class="num rating rating-elo">{{ "%.0f"|format(r.rating) }}</td>
-          <td class="num" style="color:var(--gold);">{{ "%.0f"|format(r.peak) if r.peak else '—' }}{% if r.peak_date %}<div class="peak-date">{{ r.peak_date|dt }}</div>{% endif %}</td>
-          <td class="num win">{{ r.wins }}</td>
-          <td class="num loss">{{ r.losses }}</td>
-          <td class="num">{{ r.matches }}</td>
-          <td class="num">{{ "%.0f%%"|format(r.wins / r.matches * 100) if r.matches > 0 else '—' }}</td>
+          <td class="num col-num">{% if r.rank %}<span class="rank-badge {{ 'rank-1' if r.rank == 1 else 'rank-2' if r.rank == 2 else 'rank-3' if r.rank == 3 else 'rank-4' if r.rank == 4 else 'rank-5' if r.rank == 5 }}">#{{ r.rank }}</span>{% else %}—{% endif %}</td>
+          <td class="col-flex">{% if r.game != 'Combined' %}<a class="game-link" href="/leaderboard?game={{ r.game }}">{{ r.game }}</a>{% else %}<a class="game-link" href="/leaderboard">{{ r.game }}</a>{% endif %}</td>
+          <td class="num col-rating rating rating-elo">{{ "%.0f"|format(r.rating) }}</td>
+          <td class="num col-peak" style="color:var(--gold);">{{ "%.0f"|format(r.peak) if r.peak else '—' }}</td>
+          <td class="center col-peak-date" style="color:var(--text-faint);font-size:0.85rem;">{{ r.peak_date|dt if r.peak_date else '' }}</td>
+          <td class="num col-rd"></td>
+          <td class="num col-m">{{ r.matches }}</td>
+          <td class="num col-w win">{{ r.wins }}</td>
+          <td class="num col-l loss">{{ r.losses }}</td>
+          <td class="num col-wr">{{ "%.0f%%"|format(r.wins / r.matches * 100) if r.matches > 0 else '—' }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="8" class="empty">No Elo ratings found for this player.</td></tr>
+        <tr><td colspan="10" class="empty">No Elo ratings found for this player.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -79,23 +81,24 @@
   <div class="table-wrap">
     <table class="player-ratings-table sortable" data-default-sort="2" data-default-dir="desc">
       <thead>
-        <tr><th class="num">#</th><th>Game</th><th class="num">Rating</th><th class="num">Peak</th><th class="num">RD</th><th class="num">W</th><th class="num">L</th><th class="num">Matches</th><th class="num">WR%</th></tr>
+        <tr><th class="num col-num">#</th><th class="col-flex">Game</th><th class="num col-rating">Rating</th><th class="num col-peak">Peak</th><th class="center col-peak-date">Peak Date</th><th class="num col-rd">RD</th><th class="num col-m">M</th><th class="num col-w">W</th><th class="num col-l">L</th><th class="num col-wr">WR%</th></tr>
       </thead>
       <tbody>
         {% for r in ratings if r.system == 'glicko2' %}
         <tr>
-          <td class="num">{% if r.rank %}<span class="rank-badge">#{{ r.rank }}</span>{% else %}—{% endif %}</td>
-          <td>{% if r.game != 'Combined' %}<a class="game-link" href="/leaderboard?game={{ r.game }}&system=glicko2">{{ r.game }}</a>{% else %}<a class="game-link" href="/leaderboard?system=glicko2">{{ r.game }}</a>{% endif %}</td>
-          <td class="num rating rating-glicko2">{{ "%.0f"|format(r.rating) }}</td>
-          <td class="num" style="color:var(--gold);">{{ "%.0f"|format(r.peak) if r.peak else '—' }}{% if r.peak_date %}<div class="peak-date">{{ r.peak_date|dt }}</div>{% endif %}</td>
-          <td class="num">{{ "%.0f"|format(r.rd) if r.rd is not none else '—' }}</td>
-          <td class="num win">{{ r.wins }}</td>
-          <td class="num loss">{{ r.losses }}</td>
-          <td class="num">{{ r.matches }}</td>
-          <td class="num">{{ "%.0f%%"|format(r.wins / r.matches * 100) if r.matches > 0 else '—' }}</td>
+          <td class="num col-num">{% if r.rank %}<span class="rank-badge {{ 'rank-1' if r.rank == 1 else 'rank-2' if r.rank == 2 else 'rank-3' if r.rank == 3 else 'rank-4' if r.rank == 4 else 'rank-5' if r.rank == 5 }}">#{{ r.rank }}</span>{% else %}—{% endif %}</td>
+          <td class="col-flex">{% if r.game != 'Combined' %}<a class="game-link" href="/leaderboard?game={{ r.game }}&system=glicko2">{{ r.game }}</a>{% else %}<a class="game-link" href="/leaderboard?system=glicko2">{{ r.game }}</a>{% endif %}</td>
+          <td class="num col-rating rating rating-glicko2">{{ "%.0f"|format(r.rating) }}</td>
+          <td class="num col-peak" style="color:var(--gold);">{{ "%.0f"|format(r.peak) if r.peak else '—' }}</td>
+          <td class="center col-peak-date" style="color:var(--text-faint);font-size:0.85rem;">{{ r.peak_date|dt if r.peak_date else '' }}</td>
+          <td class="num col-rd">{{ "%.0f"|format(r.rd) if r.rd is not none else '—' }}</td>
+          <td class="num col-m">{{ r.matches }}</td>
+          <td class="num col-w win">{{ r.wins }}</td>
+          <td class="num col-l loss">{{ r.losses }}</td>
+          <td class="num col-wr">{{ "%.0f%%"|format(r.wins / r.matches * 100) if r.matches > 0 else '—' }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="9" class="empty">No Glicko-2 ratings found for this player.</td></tr>
+        <tr><td colspan="10" class="empty">No Glicko-2 ratings found for this player.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -112,6 +115,7 @@
     {% endfor %}
   </select>
 </form>
+<div class="highlight-row" id="peak-plaques"></div>
 <div class="card">
   <div class="chart-box tall"><canvas id="historyChart"></canvas></div>
 </div>
@@ -120,16 +124,16 @@
 <div class="section-head"><h2>Top Rivals</h2></div>
 <div class="card">
   <div class="table-wrap">
-    <table class="rivals-table sortable" data-default-sort="4" data-default-dir="asc">
-      <thead><tr><th>Opponent</th><th class="num">Matches</th><th class="num">Wins</th><th class="num">Losses</th><th class="num">WR%</th></tr></thead>
+    <table class="rivals-table sortable auto-cols" data-default-sort="4" data-default-dir="asc">
+      <thead><tr><th class="col-flex">Opponent</th><th class="num col-m">Matches</th><th class="num col-w">Wins</th><th class="num col-l">Losses</th><th class="num col-wr">WR%</th></tr></thead>
       <tbody>
         {% for r in summary.rivals %}
         <tr>
-          <td><a class="player-link" href="/h2h?p1={{ player_name }}&p2={{ r.name }}">{{ r.name }}</a></td>
-          <td class="num">{{ r.matches }}</td>
-          <td class="num win">{{ r.wins }}</td>
-          <td class="num loss">{{ r.losses }}</td>
-          <td class="num">{{ "%.0f%%"|format(r.wins / r.matches * 100) if r.matches > 0 else '—' }}</td>
+          <td class="col-flex"><span class="player-name">{% if r.country %}<span class="flag" title="{{ r.country|upper }}">{{ r.country|flag }}</span>{% endif %}<a class="player-link" href="/h2h?p1={{ player_name }}&p2={{ r.name }}">{{ r.name }}</a></span></td>
+          <td class="num col-m">{{ r.matches }}</td>
+          <td class="num col-w win">{{ r.wins }}</td>
+          <td class="num col-l loss">{{ r.losses }}</td>
+          <td class="num col-wr">{{ "%.0f%%"|format(r.wins / r.matches * 100) if r.matches > 0 else '—' }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -141,18 +145,18 @@
 <div class="section-head"><h2>Recent Matches</h2></div>
 <div class="card">
   <div class="table-wrap">
-    <table class="matches-table">
-      <thead><tr><th>Date</th><th class="right">Player 1</th><th class="center">Score</th><th>Player 2</th><th>Game</th><th>Tournament</th><th>Tier</th></tr></thead>
+    <table class="matches-table auto-cols">
+      <thead><tr><th class="col-date">Date</th><th class="right col-flex">Player 1</th><th class="center col-score">Score</th><th class="col-flex">Player 2</th><th class="col-game">Game</th><th class="col-tournament">Tournament</th><th class="col-tier">Tier</th></tr></thead>
       <tbody>
         {% for m in matches %}
         <tr>
-          <td>{{ m.played_at_str }}</td>
-          <td class="right"><a class="player-link" href="/player/{{ m.player1_id }}/{{ slug(m.player1) }}">{{ m.player1 }}</a></td>
-          <td class="center"><a class="score-link" href="/h2h?p1={{ m.player1 }}&p2={{ m.player2 }}" title="Head-to-head"><span class="{{ 'win' if m.winner == m.player1 else 'loss' }}">{{ m.score1 }}</span> : <span class="{{ 'win' if m.winner == m.player2 else 'loss' }}">{{ m.score2 }}</span></a></td>
-          <td><a class="player-link" href="/player/{{ m.player2_id }}/{{ slug(m.player2) }}">{{ m.player2 }}</a></td>
-          <td>{% if m.game %}<a class="game-link" href="/matches?player={{ player_name }}&game={{ m.game }}">{{ m.game }}</a>{% else %}—{% endif %}</td>
-          <td class="tournament-cell">{% if m.tournament %}<a class="tournament-link" href="/matches?{{ qs(player=player_name, tournament=m.tournament) }}">{{ m.tournament }}</a>{% else %}—{% endif %}</td>
-          <td>{% if m.tier %}<span class="tag tag-{{ m.tier }}">{{ m.tier }}</span>{% else %}—{% endif %}</td>
+          <td class="col-date">{{ m.played_at_str }}</td>
+          <td class="right col-flex"><span class="player-name"><a class="player-link" href="/player/{{ m.player1_id }}/{{ slug(m.player1) }}">{{ m.player1 }}</a>{% if m.player1_country %}<span class="flag" title="{{ m.player1_country|upper }}">{{ m.player1_country|flag }}</span>{% endif %}</span></td>
+          <td class="center col-score"><a class="score-link" href="/h2h?p1={{ m.player1 }}&p2={{ m.player2 }}" title="Head-to-head"><span class="{{ 'win' if m.winner == m.player1 else 'loss' }}">{{ m.score1 }}</span> : <span class="{{ 'win' if m.winner == m.player2 else 'loss' }}">{{ m.score2 }}</span></a></td>
+          <td class="col-flex"><span class="player-name">{% if m.player2_country %}<span class="flag" title="{{ m.player2_country|upper }}">{{ m.player2_country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ m.player2_id }}/{{ slug(m.player2) }}">{{ m.player2 }}</a></span></td>
+          <td class="col-game">{% if m.game %}<a class="game-link" href="/matches?player={{ player_name }}&game={{ m.game }}">{{ m.game }}</a>{% else %}—{% endif %}</td>
+          <td class="col-tournament tournament-cell">{% if m.tournament %}<a class="tournament-link" href="/matches?{{ qs(player=player_name, tournament=m.tournament) }}">{{ m.tournament }}</a>{% else %}—{% endif %}</td>
+          <td class="col-tier">{% if m.tier %}<span class="tag tag-{{ m.tier }}">{{ m.tier }}</span>{% else %}—{% endif %}</td>
         </tr>
         {% else %}
         <tr><td colspan="7" class="empty">No matches found.</td></tr>
@@ -268,23 +272,7 @@ function buildChart(history) {
       plugins: {
         legend: {
           labels: {
-            color: cssVar('--text-dim', '#a3a3a3'),
-            generateLabels: function (chart) {
-              const items = Chart.defaults.plugins.legend.labels.generateLabels(chart);
-              return items.map(function (item) {
-                const ds = chart.data.datasets[item.datasetIndex];
-                if (ds && ds.data && ds.data.length) {
-                  let peakIdx = 0;
-                  for (let i = 1; i < ds.data.length; i++) {
-                    if (ds.data[i] && ds.data[i].y !== null && ds.data[i].y >= ds.data[peakIdx].y) peakIdx = i;
-                  }
-                  const val = ds.data[peakIdx].y;
-                  const date = fmtDT(ds.data[peakIdx].x);
-                  item.text = item.text + '  (peak ' + val + ' · ' + date + ')';
-                }
-                return item;
-              });
-            }
+            color: cssVar('--text-dim', '#a3a3a3')
           }
         },
         tooltip: {
@@ -322,17 +310,53 @@ function buildChart(history) {
           },
           afterBuildTicks: function (axis) {
             axis.ticks = boundaryTicksList.map(function (b) { return { value: b.value }; });
+          },
+          // Chart.js _calculatePadding inflates paddingLeft to ~280px when the
+          // first boundary tick lands at the far-left canvas edge while the
+          // axis starts after the y-axis. That padding feeds back into the
+          // layout and shoves the y-axis ~230px to the right (circular bug).
+          // Zeroing the padding here breaks the loop and keeps the y-axis at
+          // the left edge.
+          afterFit: function (axis) {
+            axis.paddingLeft = 0;
+            axis.paddingRight = 0;
           }
         },
         y: { grid: { color: cssVar('--border-soft', 'rgba(255,255,255,0.04)') }, ticks: { color: cssVar('--text-dim', '#a3a3a3') } }
       }
     }
   });
+
+  renderPeakPlaques(pts, ptsG);
+}
+
+// Render the peak rating as a stat plaque (like the Total Matches / Win Rate
+// cards at the top) under the Rating History section. One plaque per series.
+function renderPeakPlaques(pts, ptsG) {
+  const wrap = document.getElementById('peak-plaques');
+  if (!wrap) return;
+  const series = [
+    { label: 'Elo Peak', pts: pts, color: 'var(--accent)' },
+    { label: 'Glicko-2 Peak', pts: ptsG, color: 'var(--plum)' }
+  ];
+  const html = series.map(function (s) {
+    let peak = null;
+    for (let i = 0; i < s.pts.length; i++) {
+      const p = s.pts[i];
+      if (p && p.y !== null && (!peak || p.y >= peak.y)) peak = p;
+    }
+    if (!peak) return '';
+    return '<div class="highlight-box">' +
+      '<div class="label">' + s.label + '</div>' +
+      '<div class="value" style="color:' + s.color + ';">' + Math.round(peak.y) +
+      '<span class="peak-date" style="display:block;font-size:0.75rem;color:var(--text-faint);">' + fmtDT(peak.x) + '</span></div>' +
+      '</div>';
+  }).join('');
+  wrap.innerHTML = html;
 }
 
 // Custom plugin: highlight the peak of each rating series (Elo + Glicko-2)
 // with a colored ring + a vertical dashed guide line to the x-axis.
-// Peak values are shown in the legend (not on the chart) to avoid overlap.
 const peakMarker = {
   id: 'peakMarker',
   afterDatasetsDraw(chart) {
@@ -385,6 +409,11 @@ const peakMarker = {
 Chart.register(peakMarker);
 
 buildChart(hist);
+
+// Rebuild the chart when the theme changes so grid/axis colors (read from
+// CSS vars at build time) match the new theme instead of staying stale
+// (e.g. dark grid lines left over on a light background).
+document.addEventListener('themechange', function () { buildChart(hist); });
 
 // In-place update of the rating history chart when the game filter changes.
 // History is always all-time (no period filter).

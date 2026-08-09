@@ -27,6 +27,9 @@
       root.removeAttribute('data-theme');
     }
     if (icon) icon.textContent = theme === 'dark' ? '🌙' : '☀️';
+    // Notify any theme-aware components (e.g. the rating chart) to re-read
+    // their colors, since Chart.js captures CSS vars at build time.
+    document.dispatchEvent(new CustomEvent('themechange', { detail: { theme: theme } }));
   }
 
   function init() {
@@ -55,6 +58,43 @@
       if (saved !== 'light' && saved !== 'dark') {
         apply(e.matches ? 'light' : 'dark');
       }
+    });
+  }
+
+  init();
+})();
+
+// Noise strength slider — controls the film-grain overlay opacity.
+// Slider value is a percent (0-100); maps to opacity 0-1.0. Persisted.
+(function () {
+  var STORAGE_KEY = 'arena-noise';
+  var DEFAULT_PCT = 50; // 0.50 opacity — user's chosen default
+  var slider = document.getElementById('noise-slider');
+  var valEl = document.getElementById('noise-val');
+  var root = document.documentElement;
+
+  function apply(pct) {
+    var opacity = (pct / 100).toFixed(3);
+    root.style.setProperty('--noise-opacity', opacity);
+    if (valEl) valEl.textContent = pct + '%';
+  }
+
+  function init() {
+    var saved = null;
+    try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+    var pct = DEFAULT_PCT;
+    if (saved !== null && !isNaN(parseInt(saved, 10))) {
+      pct = Math.max(0, Math.min(100, parseInt(saved, 10)));
+    }
+    if (slider) slider.value = pct;
+    apply(pct);
+  }
+
+  if (slider) {
+    slider.addEventListener('input', function () {
+      var pct = parseInt(slider.value, 10);
+      apply(pct);
+      try { localStorage.setItem(STORAGE_KEY, String(pct)); } catch (e) {}
     });
   }
 

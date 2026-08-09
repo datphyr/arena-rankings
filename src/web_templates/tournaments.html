@@ -24,66 +24,35 @@
     <option value="1000" {{ 'selected' if limit == '1000' }}>1000</option>
     <option value="all" {{ 'selected' if limit == 'all' }}>All</option>
   </select>
-  <button type="submit">Apply</button>
   <button type="submit" name="clear" value="1" class="btn-clear">Clear filters</button>
 </form>
 
-<div class="dash-grid">
-  <div>
-    <div class="card">
-      <div class="card-title"><span class="dot"></span>Tier Distribution</div>
-      <div class="chart-box small"><canvas id="tierChart"></canvas></div>
-    </div>
-  </div>
-  <div>
-    <div class="card">
-      <div class="card-title"><span class="dot"></span>Tier Breakdown</div>
-      <div class="table-wrap">
-        <table class="tier-table sortable">
-          <thead><tr><th>Tier</th><th class="num">Tournaments</th><th class="num">Matches</th></tr></thead>
-          <tbody>
-            {% for t in tier_stats.tiers %}
-            <tr>
-              <td>{% if t.tier %}<span class="tag tag-{{ t.tier }}">{{ t.tier }}</span>{% else %}—{% endif %}</td>
-              <td class="num">{{ t.tournaments }}</td>
-              <td class="num">{{ "{:,}".format(t.matches) }}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
+<div class="card">
+  <div class="card-title"><span class="dot"></span>Tier Breakdown</div>
+  <div class="table-wrap">
+    <table class="tier-table sortable auto-cols" data-default-sort="2" data-default-dir="desc">
+      <thead><tr><th class="col-flex">Tier</th><th class="num col-m">Tournaments</th><th class="num col-m">Matches</th></tr></thead>
+      <tbody>
+        {% for t in tier_stats.tiers %}
+        <tr>
+          <td class="col-flex">{% if t.tier %}<a class="tier-link" href="/matches?tier={{ t.tier }}"><span class="tag tag-{{ t.tier }}">{{ t.tier }}</span></a>{% else %}—{% endif %}</td>
+          <td class="num col-m">{{ t.tournaments }}</td>
+          <td class="num col-m">{{ "{:,}".format(t.matches) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
 </div>
 
-<div class="section-head"><h2>All Tournaments</h2></div>
 {% include "_tournaments_results.html" %}
 {% endblock %}
 
 {% block scripts %}
 <script>
-const tierData = {{ tier_stats.tiers | tojson }};
-function cssVar(name, fallback) {
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return v || fallback;
-}
-new Chart(document.getElementById('tierChart'), {
-  type: 'doughnut',
-  data: {
-    labels: tierData.map(t => t.tier || 'unknown'),
-    datasets: [{
-      data: tierData.map(t => t.tournaments),
-      backgroundColor: ['#fbbf24', '#ef4444', '#dc2626', '#6b6b6b'],
-      borderColor: cssVar('--bg-card', '#161616'),
-      borderWidth: 2,
-    }]
-  },
-  options: {
-    responsive: true, maintainAspectRatio: false,
-    plugins: {
-      legend: { position: 'bottom', labels: { color: cssVar('--text-dim', '#a3a3a3'), padding: 12 } }
-    }
-  }
+// Filters auto-submit on change (no Apply button).
+document.querySelectorAll('.filters select').forEach(sel => {
+  sel.addEventListener('change', () => sel.form.submit());
 });
 </script>
 {% endblock %}

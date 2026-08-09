@@ -147,6 +147,29 @@
           form.dispatchEvent(new Event("submit", { cancelable: true }));
         });
       });
+      // Date inputs auto-submit on change too (picking a date updates data).
+      form.querySelectorAll("input[type=date]").forEach(function (inp) {
+        if (inp.__ajaxBound) return;
+        inp.__ajaxBound = true;
+        inp.addEventListener("change", function () {
+          form.dispatchEvent(new Event("submit", { cancelable: true }));
+        });
+      });
+      // Text/search inputs auto-submit on Enter and on blur (clicking away),
+      // so no "Apply" button is needed. Typing alone does NOT submit.
+      form.querySelectorAll("input[type=text], input[type=search]").forEach(function (inp) {
+        if (inp.__ajaxBound) return;
+        inp.__ajaxBound = true;
+        inp.addEventListener("keydown", function (e) {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            form.dispatchEvent(new Event("submit", { cancelable: true }));
+          }
+        });
+        inp.addEventListener("blur", function () {
+          form.dispatchEvent(new Event("submit", { cancelable: true }));
+        });
+      });
       updateClearButton(form);
     });
 
