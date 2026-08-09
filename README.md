@@ -2,14 +2,14 @@
 
 Generates player rankings (Elo / Glicko-2) from [plusforward.net](https://www.plusforward.net) match data.
 
-**Status: partially implemented** — discovery, download, parsing, ranking, CLI, Discord bot, and Twitch bot are working. Web API is planned but not started.
+**Status: fully implemented** — discovery, download, parsing, ranking, CLI, Discord bot, Twitch bot, and a full-featured web app are all working.
 
-## Data (as of 2026-08-04)
+## Data (as of 2026-08-10)
 
-- 71,462 matches discovered, 54,390 parsed (1v1 duels only)
-- 5,443 players, 1,982 tournaments, 76 countries
-- Match data from 1999-08-08 to 2026-08-02
-- 12 games with match data (Quake Champions, Quake Live, Diabotical most active)
+- 71,544 matches discovered, 54,454 parsed (1v1 duels only)
+- 5,447 players, 12 games with match data
+- Match data from 1999-08-08 to 2026-08-09
+- Most active: Quake Champions (25,282), Quake Live (12,500), Diabotical (6,614)
 
 ## Pipeline
 
@@ -31,7 +31,28 @@ Generates player rankings (Elo / Glicko-2) from [plusforward.net](https://www.pl
 | CLI | ✅ | `cli.py` |
 | Discord bot | ✅ | `src/bot_discord.py` |
 | Twitch bot | ✅ | `src/bot_twitch.py` |
-| Web API | ⏳ planned | `src/api_web.py` |
+| Web app | ✅ | `src/api_web.py` + `src/web_templates/` + `src/web_static/` |
+
+## Web app
+
+A full-featured web UI (FastAPI + Jinja2 + vanilla JS + Chart.js) served on port 8080. All pages render server-side with AJAX filter/sort updates and a shared `DataProvider` query layer.
+
+**Pages:**
+- **Home** (`/`) — top players, most active, games, recent matches; auto-sized columns
+- **Leaderboard** (`/leaderboard`) — Elo/Glicko-2 rankings, game/system/date/limit filters, peak rating + date, RD column
+- **Player** (`/player/{id}/{name}`) — rating history chart, Elo + Glicko-2 rating tables, top rivals, recent matches
+- **Matches** (`/matches`) — filterable by game/player/tournament/tier, sortable, paginated
+- **Tournaments** (`/tournaments`) — tier breakdown summary + all-tournaments table; tier/tournament names link to filtered matches
+- **H2H** (`/h2h`) — head-to-head match history between two players
+- **JSON API** (`/api/*`) — stats, games, leaderboard, player, player history, matches, tournaments, h2h
+
+**Features:**
+- Single JetBrains Mono font site-wide (including Chart.js)
+- Day/night theme toggle with gradients and transparency
+- Auto column sizing on home/player/matches tables; stable fixed widths (full-dataset) on leaderboard/tournaments so columns don't jump across filters/sorts
+- AJAX auto-submit filters (selects + date input), autocomplete on player/tournament inputs
+- Sortable tables with reserved arrow space, rank plaques with glow, country flags, avatar gradients
+- Tier tags (premier/major/minor) as colored pills
 
 ## Rating systems
 
@@ -116,8 +137,14 @@ Note: `RETRY_BACKOFF` and `USER_AGENTS` are hardcoded in `config.py` (not env-co
     ├── data_provider.py    — shared query layer for all consumers
     ├── bot_discord.py      — discord bot (slash commands)
     ├── bot_twitch.py       — twitch bot (IRC over TLS, one-line output)
-    ├── api_web.py          — web API (planned)
-    └── cli.py              — CLI + shared fmt_* formatters (used by Discord bot)
+    ├── api_web.py          — FastAPI web app (pages + JSON API)
+    ├── cli.py              — CLI + shared fmt_* formatters (used by Discord bot)
+    │
+    ├── web_templates/      — Jinja2 templates (base, home, leaderboard, player,
+    │                        matches, tournaments, h2h + shared partials)
+    └── web_static/         — static assets (style.css, theme.js, tables.js,
+                             ajax-filters.js, autocomplete.js, sort-scroll.js,
+                             chart.umd.min.js)
 ```
 
 ## License
