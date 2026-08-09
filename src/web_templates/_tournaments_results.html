@@ -1,0 +1,29 @@
+<div class="card" id="results-container">
+  <div class="table-wrap">
+    <table class="tournaments-table">
+      <thead><tr>
+        <th><a class="sort-link {{ 'active' if sort_col == 'name' }}" href="?{{ qs(tier=tier, game=game, limit=limit, sort_col='name', sort_dir='desc' if sort_col=='name' and sort_dir=='asc' else 'asc') }}">Tournament{% if sort_col == 'name' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+        <th><a class="sort-link {{ 'active' if sort_col == 'tier' }}" href="?{{ qs(tier=tier, game=game, limit=limit, sort_col='tier', sort_dir='asc' if sort_col=='tier' and sort_dir=='desc' else 'desc') }}">Tier{% if sort_col == 'tier' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+        <th><a class="sort-link {{ 'active' if sort_col == 'game' }}" href="?{{ qs(tier=tier, game=game, limit=limit, sort_col='game', sort_dir='desc' if sort_col=='game' and sort_dir=='asc' else 'asc') }}">Game{% if sort_col == 'game' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+        <th class="num"><a class="sort-link {{ 'active' if sort_col == 'matches' }}" href="?{{ qs(tier=tier, game=game, limit=limit, sort_col='matches', sort_dir='asc' if sort_col=='matches' and sort_dir=='desc' else 'desc') }}">Matches{% if sort_col == 'matches' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+        <th><a class="sort-link {{ 'active' if sort_col == 'last_match' }}" href="?{{ qs(tier=tier, game=game, limit=limit, sort_col='last_match', sort_dir='desc' if sort_col=='last_match' and sort_dir=='asc' else 'asc') }}">Last Match{% if sort_col == 'last_match' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+        <th><a class="sort-link {{ 'active' if sort_col == 'first_match' }}" href="?{{ qs(tier=tier, game=game, limit=limit, sort_col='first_match', sort_dir='desc' if sort_col=='first_match' and sort_dir=='asc' else 'asc') }}">First Match{% if sort_col == 'first_match' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+      </tr></thead>
+      <tbody>
+        {% for t in tournaments %}
+        <tr>
+          <td><a class="tournament-link" href="/matches">{{ t.name }}</a></td>
+          <td>{% if t.tier %}<span class="tag tag-{{ t.tier }}">{{ t.tier }}</span>{% else %}—{% endif %}</td>
+          <td>{% if t.game %}<a class="game-link" href="/leaderboard?game={{ t.game }}">{{ t.game }}</a>{% else %}—{% endif %}</td>
+          <td class="num">{{ t.matches }}</td>
+          <td>{{ t.last_match.strftime("%Y-%m-%d") if t.last_match else "—" }}</td>
+          <td>{{ t.first_match.strftime("%Y-%m-%d") if t.first_match else "—" }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="empty">No tournaments found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% include "_pagination.html" %}
+</div>

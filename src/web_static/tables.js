@@ -16,8 +16,9 @@
   function cellValue(cell) {
     if (cell.dataset.sort !== undefined) return cell.dataset.sort;
     var text = (cell.textContent || '').trim();
-    var num = parseFloat(text.replace(/[^0-9.\-]/g, ''));
-    if (!isNaN(num) && /[0-9]/.test(text)) return num;
+    // Treat as numeric only if it's a plain number (no hyphens/dates).
+    // ISO dates like 2026-08-09 must stay strings so they sort lexicographically.
+    if (/^[0-9]+(\.[0-9]+)?$/.test(text)) return parseFloat(text);
     return text.toLowerCase();
   }
 
@@ -85,10 +86,8 @@
 
   document.querySelectorAll('table.sortable').forEach(initSortable);
 
-  // ── Auto-submit filters ─────────────────────────────────────────────────
-  document.querySelectorAll('form.filters').forEach(function (form) {
-    form.querySelectorAll('select').forEach(function (sel) {
-      sel.addEventListener('change', function () { form.submit(); });
-    });
-  });
+  // Expose for re-init after AJAX swaps.
+  window.initSortableTables = function (root) {
+    (root || document).querySelectorAll('table.sortable').forEach(initSortable);
+  };
 })();

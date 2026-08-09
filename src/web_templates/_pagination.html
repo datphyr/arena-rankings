@@ -1,0 +1,35 @@
+{% if total_pages and total_pages > 1 %}
+<div class="pagination">
+  {% if page > 1 %}
+  <a class="page-link" href="?{{ qs(game=pagination_qs.game, system=pagination_qs.system, sort=pagination_qs.sort, date=pagination_qs.date, limit=pagination_qs.limit, sort_col=pagination_qs.sort_col, sort_dir=pagination_qs.sort_dir, player=pagination_qs.player, tournament=pagination_qs.tournament, tier=pagination_qs.tier, page=page-1) }}">‹ Prev</a>
+  {% else %}
+  <span class="page-link disabled">‹ Prev</span>
+  {% endif %}
+
+  {% set start = [1, page - 2] | max %}
+  {% set end = [total_pages, page + 2] | min %}
+  {% if start > 1 %}
+  <a class="page-link" href="?{{ qs(game=pagination_qs.game, system=pagination_qs.system, sort=pagination_qs.sort, date=pagination_qs.date, limit=pagination_qs.limit, sort_col=pagination_qs.sort_col, sort_dir=pagination_qs.sort_dir, player=pagination_qs.player, tournament=pagination_qs.tournament, tier=pagination_qs.tier, page=1) }}">1</a>
+  {% if start > 2 %}<span class="page-ellipsis">…</span>{% endif %}
+  {% endif %}
+
+  {% for p in range(start, end + 1) %}
+    {% if p == page %}
+    <span class="page-link current">{{ p }}</span>
+    {% else %}
+    <a class="page-link" href="?{{ qs(game=pagination_qs.game, system=pagination_qs.system, sort=pagination_qs.sort, date=pagination_qs.date, limit=pagination_qs.limit, sort_col=pagination_qs.sort_col, sort_dir=pagination_qs.sort_dir, player=pagination_qs.player, tournament=pagination_qs.tournament, tier=pagination_qs.tier, page=p) }}">{{ p }}</a>
+    {% endif %}
+  {% endfor %}
+
+  {% if end < total_pages %}
+  {% if end < total_pages - 1 %}<span class="page-ellipsis">…</span>{% endif %}
+  <a class="page-link" href="?{{ qs(game=pagination_qs.game, system=pagination_qs.system, sort=pagination_qs.sort, date=pagination_qs.date, limit=pagination_qs.limit, sort_col=pagination_qs.sort_col, sort_dir=pagination_qs.sort_dir, player=pagination_qs.player, tournament=pagination_qs.tournament, tier=pagination_qs.tier, page=total_pages) }}">{{ total_pages }}</a>
+  {% endif %}
+
+  {% if page < total_pages %}
+  <a class="page-link" href="?{{ qs(game=pagination_qs.game, system=pagination_qs.system, sort=pagination_qs.sort, date=pagination_qs.date, limit=pagination_qs.limit, sort_col=pagination_qs.sort_col, sort_dir=pagination_qs.sort_dir, player=pagination_qs.player, tournament=pagination_qs.tournament, tier=pagination_qs.tier, page=page+1) }}">Next ›</a>
+  {% else %}
+  <span class="page-link disabled">Next ›</span>
+  {% endif %}
+</div>
+{% endif %}

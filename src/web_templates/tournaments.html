@@ -19,28 +19,67 @@
     {% endfor %}
   </select>
   <label>Limit</label>
-  <input type="number" name="limit" value="{{ limit }}" min="1" max="200" style="width:80px">
+  <select name="limit">
+    <option value="100" {{ 'selected' if limit == '100' }}>100</option>
+    <option value="1000" {{ 'selected' if limit == '1000' }}>1000</option>
+    <option value="all" {{ 'selected' if limit == 'all' }}>All</option>
+  </select>
   <button type="submit">Apply</button>
+  <button type="submit" name="clear" value="1" class="btn-clear">Clear filters</button>
 </form>
 
-<div class="card">
-  <div class="table-wrap">
-    <table class="sortable">
-      <thead><tr><th>Tournament</th><th>Tier</th><th>Game</th><th class="num">Matches</th><th>Last match</th></tr></thead>
-      <tbody>
-        {% for t in tournaments %}
-        <tr>
-          <td>{{ t.name }}</td>
-          <td>{% if t.tier %}<span class="tag tag-{{ t.tier }}">{{ t.tier }}</span>{% else %}—{% endif %}</td>
-          <td>{{ t.game or '—' }}</td>
-          <td class="num">{{ t.matches }}</td>
-          <td>{{ t.last_match.strftime("%Y-%m-%d") if t.last_match else "—" }}</td>
-        </tr>
-        {% else %}
-        <tr><td colspan="5" class="empty">No tournaments found.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
+<div class="dash-grid">
+  <div>
+    <div class="card">
+      <div class="card-title"><span class="dot"></span>Tier Distribution</div>
+      <div class="chart-box small"><canvas id="tierChart"></canvas></div>
+    </div>
+  </div>
+  <div>
+    <div class="card">
+      <div class="card-title"><span class="dot"></span>Tier Breakdown</div>
+      <div class="table-wrap">
+        <table class="tier-table sortable">
+          <thead><tr><th>Tier</th><th class="num">Tournaments</th><th class="num">Matches</th></tr></thead>
+          <tbody>
+            {% for t in tier_stats.tiers %}
+            <tr>
+              <td>{% if t.tier %}<span class="tag tag-{{ t.tier }}">{{ t.tier }}</span>{% else %}—{% endif %}</td>
+              <td class="num">{{ t.tournaments }}</td>
+              <td class="num">{{ "{:,}".format(t.matches) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </div>
+
+<div class="section-head"><h2>All Tournaments</h2></div>
+{% include "_tournaments_results.html" %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+const tierData = {{ tier_stats.tiers | tojson }};
+new Chart(document.getElementById('tierChart'), {
+  type: 'doughnut',
+  data: {
+    labels: tierData.map(t => t.tier || 'unknown'),
+    datasets: [{
+      data: tierData.map(t => t.tournaments),
+      backgroundColor: ['#fbbf24', '#ef4444', '#dc2626', '#6b6b6b'],
+      borderColor: '#161616',
+      borderWidth: 2,
+    }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: {
+      legend: { position: 'bottom', labels: { color: '#a3a3a3', padding: 12 } }
+    }
+  }
+});
+</script>
 {% endblock %}

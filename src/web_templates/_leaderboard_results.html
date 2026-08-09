@@ -1,0 +1,39 @@
+<div class="card" id="results-container">
+  <div class="table-wrap">
+    <table class="lb-table">
+      <thead>
+        <tr>
+          <th class="num"><a class="sort-link" href="?{{ qs(game=game, system=system, sort=sort, date=date, limit=limit, sort_col='rank', sort_dir='desc' if sort_col=='rank' and sort_dir=='asc' else 'asc') }}">#{% if sort_col == 'rank' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+          <th><a class="sort-link" href="?{{ qs(game=game, system=system, sort=sort, date=date, limit=limit, sort_col='name', sort_dir='desc' if sort_col=='name' and sort_dir=='asc' else 'asc') }}">Player{% if sort_col == 'name' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+          {% if not game %}<th><a class="sort-link" href="?{{ qs(game=game, system=system, sort=sort, date=date, limit=limit, sort_col='main_game', sort_dir='desc' if sort_col=='main_game' and sort_dir=='asc' else 'asc') }}">Main Game{% if sort_col == 'main_game' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>{% endif %}
+          <th class="num"><a class="sort-link" href="?{{ qs(game=game, system=system, sort=sort, date=date, limit=limit, sort_col='rating', sort_dir='asc' if sort_col=='rating' and sort_dir=='desc' else 'desc') }}">{% if sort == 'peak' %}Peak{% else %}Rating{% endif %}{% if sort_col == 'rating' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+          {% if sort == 'peak' %}<th class="num"><a class="sort-link" href="?{{ qs(game=game, system=system, sort=sort, date=date, limit=limit, sort_col='peak_date', sort_dir='desc' if sort_col=='peak_date' and sort_dir=='asc' else 'asc') }}">Peak Date{% if sort_col == 'peak_date' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>{% endif %}
+          {% if system == 'glicko2' and sort != 'peak' %}<th class="num"><a class="sort-link" href="?{{ qs(game=game, system=system, sort=sort, date=date, limit=limit, sort_col='rd', sort_dir='desc' if sort_col=='rd' and sort_dir=='asc' else 'asc') }}">RD{% if sort_col == 'rd' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>{% endif %}
+          <th class="num"><a class="sort-link" href="?{{ qs(game=game, system=system, sort=sort, date=date, limit=limit, sort_col='wins', sort_dir='asc' if sort_col=='wins' and sort_dir=='desc' else 'desc') }}">W{% if sort_col == 'wins' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+          <th class="num"><a class="sort-link" href="?{{ qs(game=game, system=system, sort=sort, date=date, limit=limit, sort_col='losses', sort_dir='asc' if sort_col=='losses' and sort_dir=='desc' else 'desc') }}">L{% if sort_col == 'losses' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+          <th class="num"><a class="sort-link" href="?{{ qs(game=game, system=system, sort=sort, date=date, limit=limit, sort_col='matches', sort_dir='asc' if sort_col=='matches' and sort_dir=='desc' else 'desc') }}">Matches{% if sort_col == 'matches' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+          <th class="num"><a class="sort-link" href="?{{ qs(game=game, system=system, sort=sort, date=date, limit=limit, sort_col='win_rate', sort_dir='asc' if sort_col=='win_rate' and sort_dir=='desc' else 'desc') }}">WR%{% if sort_col == 'win_rate' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in players %}
+        <tr>
+          <td class="num"><span class="rank-badge {{ 'rank-1' if p.rank == 1 else 'rank-2' if p.rank == 2 else 'rank-3' if p.rank == 3 }}">{{ p.rank }}</span></td>
+          <td><a class="player-link" href="/player/{{ p.name }}">{{ p.name }}</a></td>
+          {% if not game %}<td>{% if p.main_game %}<a class="game-link" href="/leaderboard?game={{ p.main_game }}">{{ p.main_game }}</a>{% else %}—{% endif %}</td>{% endif %}
+          <td class="num rating {{ 'rating-elo' if system == 'elo' else 'rating-glicko2' }}">{{ "%.0f"|format(p.peak if sort == 'peak' and p.peak else p.rating) if (p.peak if sort == 'peak' and p.peak else p.rating) else '—' }}</td>
+          {% if sort == 'peak' %}<td class="num" style="color:var(--text-faint);font-size:0.85rem;">{{ p.peak_date.strftime('%Y-%m-%d') if p.peak_date else '—' }}</td>{% endif %}
+          {% if system == 'glicko2' and sort != 'peak' %}<td class="num">{{ "%.0f"|format(p.rd) if p.rd else '—' }}</td>{% endif %}
+          <td class="num win">{{ p.wins if p.wins is not none else '—' }}</td>
+          <td class="num loss">{{ p.losses if p.losses is not none else '—' }}</td>
+          <td class="num">{{ p.matches if p.matches is not none else '—' }}</td>
+          <td class="num">{{ "%.0f%%"|format(p.wins / p.matches * 100) if p.wins is not none and p.matches and p.matches > 0 else '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="10" class="empty">No players found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% include "_pagination.html" %}
+</div>

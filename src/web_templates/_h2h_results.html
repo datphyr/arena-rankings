@@ -1,0 +1,73 @@
+<div id="results-container">
+{% if result %}
+<div class="card">
+  <div class="h2h-score">
+    <div class="h2h-player">
+      <div class="name"><a class="player-link" href="/player/{{ result.player1 }}">{{ result.player1 }}</a></div>
+      {% if p1_ratings.get('elo') %}<div class="rating">Elo {{ "%.0f"|format(p1_ratings['elo'].rating) }}</div>{% endif %}
+      {% if p1_ratings.get('glicko2') %}<div class="rating">Glicko {{ "%.0f"|format(p1_ratings['glicko2'].rating) }}</div>{% endif %}
+      <div class="wins rating-elo">{{ result.p1_wins }}</div>
+      <div style="color:var(--text-faint);font-size:0.8rem;">wins</div>
+    </div>
+    <div class="h2h-vs">VS</div>
+    <div class="h2h-player">
+      <div class="name"><a class="player-link" href="/player/{{ result.player2 }}">{{ result.player2 }}</a></div>
+      {% if p2_ratings.get('elo') %}<div class="rating">Elo {{ "%.0f"|format(p2_ratings['elo'].rating) }}</div>{% endif %}
+      {% if p2_ratings.get('glicko2') %}<div class="rating">Glicko {{ "%.0f"|format(p2_ratings['glicko2'].rating) }}</div>{% endif %}
+      <div class="wins rating-glicko2">{{ result.p2_wins }}</div>
+      <div style="color:var(--text-faint);font-size:0.8rem;">wins</div>
+    </div>
+  </div>
+  <div class="h2h-breakdown">
+    <div class="h2h-stat">
+      <div class="label">{{ result.player1 }} win rate</div>
+      <div class="value">{{ "%.0f%%"|format(result.p1_wins / result.total * 100) if result.total > 0 else '—' }}</div>
+    </div>
+    <div class="h2h-stat">
+      <div class="label">Total Matches</div>
+      <div class="value">{{ result.total }}</div>
+    </div>
+    <div class="h2h-stat">
+      <div class="label">{{ result.player2 }} win rate</div>
+      <div class="value">{{ "%.0f%%"|format(result.p2_wins / result.total * 100) if result.total > 0 else '—' }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title"><span class="dot"></span>Match History</div>
+  <div class="table-wrap">
+    <table class="matches-table">
+      <thead><tr>
+        <th><a class="sort-link {{ 'active' if sort_col == 'date' }}" href="?{{ qs(p1=p1, p2=p2, game=game, sort_col='date', sort_dir='asc' if sort_col=='date' and sort_dir=='desc' else 'desc') }}">Date{% if sort_col == 'date' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+        <th class="right">Player 1</th>
+        <th class="center"><a class="sort-link {{ 'active' if sort_col == 'score' }}" href="?{{ qs(p1=p1, p2=p2, game=game, sort_col='score', sort_dir='asc' if sort_col=='score' and sort_dir=='desc' else 'desc') }}">Score{% if sort_col == 'score' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+        <th>Player 2</th>
+        <th><a class="sort-link {{ 'active' if sort_col == 'game' }}" href="?{{ qs(p1=p1, p2=p2, game=game, sort_col='game', sort_dir='desc' if sort_col=='game' and sort_dir=='asc' else 'asc') }}">Game{% if sort_col == 'game' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+        <th><a class="sort-link {{ 'active' if sort_col == 'tournament' }}" href="?{{ qs(p1=p1, p2=p2, game=game, sort_col='tournament', sort_dir='desc' if sort_col=='tournament' and sort_dir=='asc' else 'asc') }}">Tournament{% if sort_col == 'tournament' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+        <th><a class="sort-link {{ 'active' if sort_col == 'tier' }}" href="?{{ qs(p1=p1, p2=p2, game=game, sort_col='tier', sort_dir='asc' if sort_col=='tier' and sort_dir=='desc' else 'desc') }}">Tier{% if sort_col == 'tier' %}<span class="sort-arrow">{{ '▲' if sort_dir == 'asc' else '▼' }}</span>{% endif %}</a></th>
+      </tr></thead>
+      <tbody>
+        {% for m in result.matches %}
+        <tr>
+          <td>{{ m.played_at_str }}</td>
+          <td class="right"><a class="player-link" href="/player/{{ m.player1 }}">{{ m.player1 }}</a></td>
+          <td class="center"><span class="{{ 'win' if m.winner == m.player1 else 'loss' }}">{{ m.score1 }}</span> : <span class="{{ 'win' if m.winner == m.player2 else 'loss' }}">{{ m.score2 }}</span></td>
+          <td><a class="player-link" href="/player/{{ m.player2 }}">{{ m.player2 }}</a></td>
+          <td>{% if m.game %}<a class="game-link" href="/leaderboard?game={{ m.game }}">{{ m.game }}</a>{% else %}—{% endif %}</td>
+          <td class="tournament-cell">{{ m.tournament or '—' }}</td>
+          <td>{% if m.tier %}<span class="tag tag-{{ m.tier }}">{{ m.tier }}</span>{% else %}—{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="empty">No matches between these players.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% elif p1 and p2 %}
+<div class="card"><div class="empty">No head-to-head data found for these players.</div></div>
+{% else %}
+<div class="card"><div class="empty"><div class="big">⚔</div>Enter two player names to compare their head-to-head record.</div></div>
+{% endif %}
+</div>

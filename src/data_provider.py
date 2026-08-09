@@ -21,6 +21,174 @@ from src.db_client import Database
 from src.table import Col, fmt_date, fmt_rating, fmt_wr, fmt_rd, fmt_vol, fmt_tier
 
 
+# Canonical tier ordering (premier > major > minor). Used so tier columns sort
+# by prestige rather than alphabetically, consistently across all pages.
+TIER_ORDER = {"premier": 0, "major": 1, "minor": 2}
+
+
+def _tier_key(tier: str):
+    """Sort key for a tier string: premier->major->minor, unknown tiers last."""
+    if not tier:
+        return (1, "")
+    return (0, TIER_ORDER.get(tier.lower(), 99))
+
+
+def _sort_tier(rows: list, desc: bool) -> list:
+    """Sort rows by tier prestige. Premier is the highest tier value, so the
+    DESCENDING direction shows premier->major->minor (premier first), and empty
+    tiers always sink to the bottom in BOTH directions."""
+    known = [r for r in rows if (r.get("tier") or "").strip()]
+    empty = [r for r in rows if not (r.get("tier") or "").strip()]
+    # desc=True -> premier first (ascending by TIER_ORDER); desc=False -> minor first.
+    known.sort(key=lambda r: TIER_ORDER.get((r.get("tier") or "").lower(), 99), reverse=not desc)
+    return known + empty
+
+
+def _winner_from_ids(p1_id, p2_id, winner_id, p1_name, p2_name):
+    """Derive the winner name from the authoritative winner_id (a player_id).
+
+    Returns p1_name if winner_id == p1_id, p2_name if winner_id == p2_id,
+    or None for draws/unknown. This is the ground truth and handles draws
+    correctly (unlike score comparison).
+    """
+    if winner_id is not None and p1_id is not None and winner_id == p1_id:
+        return p1_name
+    if winner_id is not None and p2_id is not None and winner_id == p2_id:
+        return p2_name
+    return None
+
+
+def _sort_players(rows: list, sort_col: str, sort_dir: str = "desc") -> list:
+    """Sort leaderboard rows in Python by an arbitrary column.
+
+    Used for server-side column sorting so the sort applies to ALL data,
+    not just the current page's rows. sort_col is one of:
+    rank, rating, peak, peak_date, rd, wins, losses, matches, win_rate, name, main_game.
+    """
+    if not sort_col:
+        return rows
+    reverse = sort_dir == "desc"
+
+    def key(r):
+        c = sort_col
+        if c == "rank":
+            return r.get("rank") or r.get("_rank") or 0
+        if c == "win_rate":
+            m = r.get("matches") or 0
+            return (r.get("wins") or 0) / m if m > 0 else -1
+        if c == "name":
+            return (r.get("name") or "").lower()
+        if c == "main_game":
+            return (r.get("main_game") or "").lower()
+        if c == "peak_date":
+            return r.get("peak_date") or None
+        # numeric columns
+        v = r.get(c)
+        return v if v is not None else (float("-inf") if not reverse else float("inf"))
+
+    # None-safe: for desc, None sorts last; for asc, None sorts last too
+    def sort_key(r):
+        k = key(r)
+        if k is None:
+            return (1, 0)  # always last
+        if isinstance(k, str):
+            return (0, k)
+        return (0, k)
+
+    return sorted(rows, key=sort_key, reverse=reverse)
+
+
+def _sort_tournaments(rows: list, sort_col: str, sort_dir: str = "desc") -> list:
+    """Sort tournament rows in Python by an arbitrary column.
+
+    Used for server-side column sorting so the sort applies to ALL data,
+    not just the current page's rows. sort_col is one of:
+    name, tier, game, matches, last_match, first_match.
+    """
+    if not sort_col:
+        return rows
+    reverse = sort_dir == "desc"
+
+    # Tier sorts by prestige (premier->major->minor) with empty tiers always last,
+    # regardless of direction — so handle it separately from the generic flip.
+    if sort_col == "tier":
+        return _sort_tier(rows, reverse)
+
+    def key(r):
+        c = sort_col
+        if c == "name":
+            return (r.get("name") or "").lower()
+        if c == "game":
+            return (r.get("game") or "").lower()
+        if c == "matches":
+            return r.get("matches") or 0
+        if c == "last_match":
+            return r.get("last_match") or None
+        if c == "first_match":
+            return r.get("first_match") or None
+        return r.get(c)
+
+    def sort_key(r):
+        k = key(r)
+        if k is None:
+            return (1, 0)  # always last
+        if isinstance(k, str):
+            return (0, k)
+        if isinstance(k, tuple):
+            return (0,) + k
+        return (0, k)
+
+    return sorted(rows, key=sort_key, reverse=reverse)
+
+
+def _sort_matches(rows: list, sort_col: str, sort_dir: str = "desc") -> list:
+    """Sort match rows in Python by an arbitrary column.
+
+    Used for server-side column sorting so the sort applies to ALL data,
+    not just the current page's rows. sort_col is one of:
+    date, player1, player2, score, game, tournament, tier.
+    """
+    if not sort_col:
+        return rows
+    reverse = sort_dir == "desc"
+
+    # Tier sorts by prestige (premier->major->minor) with empty tiers always last,
+    # regardless of direction — so handle it separately from the generic flip.
+    if sort_col == "tier":
+        return _sort_tier(rows, reverse)
+
+    def key(r):
+        c = sort_col
+        if c == "date":
+            return r.get("played_at") or None
+        if c == "player1":
+            return (r.get("player1") or "").lower()
+        if c == "player2":
+            return (r.get("player2") or "").lower()
+        if c == "game":
+            return (r.get("game") or "").lower()
+        if c == "tournament":
+            return (r.get("tournament") or "").lower()
+        if c == "score":
+            # Sort by total score, then by score1 (winner's score) as tiebreak.
+            s1 = r.get("score1") or 0
+            s2 = r.get("score2") or 0
+            return (s1 + s2, s1)
+        return r.get(c)
+
+    def sort_key(r):
+        k = key(r)
+        if k is None:
+            return (1, 0)  # always last
+        if isinstance(k, str):
+            return (0, k)
+        if isinstance(k, tuple):
+            return (0,) + k
+        return (0, k)
+
+    return sorted(rows, key=sort_key, reverse=reverse)
+
+
 def _glicko_period_ch_fn() -> str:
     """ClickHouse truncation function matching the configured Glicko-2 period.
 
@@ -319,6 +487,41 @@ class DataProvider:
             return row[0][0]
         return name
 
+    def name_exists(self, name: str) -> bool:
+        """True if `name` matches an exact known player name (case-insensitive)."""
+        return self._resolve_name(name).lower() == name.lower() and bool(
+            self.db.client.execute(
+                "SELECT 1 FROM player_ratings FINAL WHERE lowerUTF8(player_name) = lowerUTF8(%(n)s) LIMIT 1",
+                {"n": name},
+            )
+            or self.db.client.execute(
+                "SELECT 1 FROM matches FINAL WHERE lowerUTF8(player1_name) = lowerUTF8(%(n)s) OR lowerUTF8(player2_name) = lowerUTF8(%(n)s) LIMIT 1",
+                {"n": name},
+            )
+        )
+
+    def _player_id(self, name: str) -> Optional[int]:
+        """Resolve the player_id for a canonical player name, or None."""
+        row = self.db.client.execute(
+            "SELECT player_id FROM player_ratings FINAL WHERE player_name = %(n)s LIMIT 1",
+            {"n": name},
+        )
+        if row:
+            return row[0][0]
+        row = self.db.client.execute(
+            "SELECT player1_id FROM matches FINAL WHERE player1_name = %(n)s LIMIT 1",
+            {"n": name},
+        )
+        if row:
+            return row[0][0]
+        row = self.db.client.execute(
+            "SELECT player2_id FROM matches FINAL WHERE player2_name = %(n)s LIMIT 1",
+            {"n": name},
+        )
+        if row:
+            return row[0][0]
+        return None
+
     # --- Games ---
 
     def get_games(self) -> list[str]:
@@ -328,53 +531,105 @@ class DataProvider:
         )
         return [r[0] for r in rows]
 
+    def autocomplete(self, kind: str, q: str, limit: int = 20) -> list[str]:
+        """Return matching names for autocomplete dropdowns.
+
+        kind is 'player' or 'tournament'. Matching is case-insensitive and
+        partial (substring), so typing 'ra' matches 'rapha'. Returns up to
+        `limit` distinct names ordered alphabetically.
+        """
+        q = (q or "").strip()
+        if not q:
+            return []
+        like = f"%{q}%"
+        if kind == "player":
+            rows = self.db.client.execute(
+                """
+                SELECT DISTINCT player_name FROM player_ratings FINAL
+                WHERE lowerUTF8(player_name) LIKE lowerUTF8(%(q)s)
+                ORDER BY player_name LIMIT %(lim)s
+                """,
+                {"q": like, "lim": limit},
+            )
+            if len(rows) < limit:
+                # Also include players that only appear in matches (no ratings yet).
+                extra = self.db.client.execute(
+                    """
+                    SELECT DISTINCT player1_name FROM matches FINAL
+                    WHERE lowerUTF8(player1_name) LIKE lowerUTF8(%(q)s)
+                      AND player1_name NOT IN (SELECT player_name FROM player_ratings FINAL)
+                    ORDER BY player1_name LIMIT %(lim)s
+                    """,
+                    {"q": like, "lim": limit},
+                )
+                seen = {r[0] for r in rows}
+                for r in extra:
+                    if r[0] not in seen:
+                        rows.append(r)
+                        seen.add(r[0])
+                        if len(rows) >= limit:
+                            break
+            return [r[0] for r in rows]
+        if kind == "tournament":
+            rows = self.db.client.execute(
+                """
+                SELECT DISTINCT tournament_name FROM matches FINAL
+                WHERE tournament_name != '' AND lowerUTF8(tournament_name) LIKE lowerUTF8(%(q)s)
+                ORDER BY tournament_name LIMIT %(lim)s
+                """,
+                {"q": like, "lim": limit},
+            )
+            return [r[0] for r in rows]
+        return []
+
     # --- Tournaments ---
 
-    def get_tournaments(self, tier: str = "", limit: int = 50) -> list[dict]:
-        """List tournaments, optionally filtered by tier."""
-        params = {"lim": limit}
+    def get_tournaments(self, tier: str = "", game: str = "", limit: int = 50, offset: int = 0, sort_col: str = "", sort_dir: str = "desc") -> list[dict]:
+        """List tournaments, optionally filtered by tier and/or game.
+
+        When sort_col is set, ALL matching rows are fetched and sorted in
+        Python so the sort applies to the full dataset, not just the page.
+        """
+        params = {"lim": limit, "off": offset}
+        conds = ["t.name != ''"]
         if tier:
             params["tier"] = tier
-            rows = self.db.client.execute(
-                """
-                SELECT t.tournament_id, t.name, t.tier,
-                       min(m.played_at) AS first_match, max(m.played_at) AS last_match,
-                       any(m.game_name) AS game
-                FROM tournaments t FINAL
-                LEFT JOIN matches m ON m.tournament_id = t.tournament_id
-                WHERE t.tier = %(tier)s AND t.name != ''
-                GROUP BY t.tournament_id, t.name, t.tier
-                ORDER BY last_match DESC
-                LIMIT %(lim)s
-                """,
-                params,
-            )
-        else:
-            rows = self.db.client.execute(
-                """
-                SELECT t.tournament_id, t.name, t.tier,
-                       min(m.played_at) AS first_match, max(m.played_at) AS last_match,
-                       any(m.game_name) AS game
-                FROM tournaments t FINAL
-                LEFT JOIN matches m ON m.tournament_id = t.tournament_id
-                WHERE t.name != ''
-                GROUP BY t.tournament_id, t.name, t.tier
-                ORDER BY last_match DESC
-                LIMIT %(lim)s
-                """,
-                params,
-            )
+            conds.append("t.tier = %(tier)s")
+        if game:
+            params["game"] = game
+            conds.append("m.game_name = %(game)s")
+        where = " AND ".join(conds)
+        fetch_limit = 100000 if sort_col else "%(lim)s"
+        rows = self.db.client.execute(
+            f"""
+            SELECT t.tournament_id, t.name, t.tier,
+                   min(m.played_at) AS first_match, max(m.played_at) AS last_match,
+                   any(m.game_name) AS game
+            FROM tournaments t FINAL
+            LEFT JOIN matches m ON m.tournament_id = t.tournament_id
+            WHERE {where}
+            GROUP BY t.tournament_id, t.name, t.tier
+            ORDER BY last_match DESC
+            LIMIT {fetch_limit} OFFSET %(off)s
+            """,
+            params,
+        )
         # Count matches per tournament
         t_ids = [r[0] for r in rows]
         match_counts = {}
         if t_ids:
-            mc_rows = self.db.client.execute(
+            mc_params = {"ids": tuple(t_ids)}
+            mc_query = (
                 "SELECT tournament_id, count() FROM matches FINAL "
-                "WHERE tournament_id IN %(ids)s GROUP BY tournament_id",
-                {"ids": tuple(t_ids)},
+                "WHERE tournament_id IN %(ids)s"
             )
+            if game:
+                mc_params["game"] = game
+                mc_query += " AND game_name = %(game)s"
+            mc_query += " GROUP BY tournament_id"
+            mc_rows = self.db.client.execute(mc_query, mc_params)
             match_counts = {r[0]: r[1] for r in mc_rows}
-        return [
+        tournaments = [
             {
                 "tournament_id": r[0],
                 "name": r[1],
@@ -386,6 +641,36 @@ class DataProvider:
             }
             for r in rows
         ]
+        if sort_col:
+            tournaments = _sort_tournaments(tournaments, sort_col, sort_dir)
+            tournaments = tournaments[offset:offset + limit]
+        return tournaments
+
+    def count_tournaments(self, tier: str = "", game: str = "") -> int:
+        """Total number of tournaments matching the given filters (for pagination)."""
+        params = {}
+        conds = ["t.name != ''"]
+        if tier:
+            params["tier"] = tier
+            conds.append("t.tier = %(tier)s")
+        if game:
+            params["game"] = game
+            conds.append("m.game_name = %(game)s")
+        where = " AND ".join(conds)
+        rows = self.db.client.execute(
+            f"""
+            SELECT count()
+            FROM (
+                SELECT t.tournament_id
+                FROM tournaments t FINAL
+                LEFT JOIN matches m ON m.tournament_id = t.tournament_id
+                WHERE {where}
+                GROUP BY t.tournament_id
+            )
+            """,
+            params,
+        )
+        return rows[0][0] if rows else 0
 
     def get_tournament_stats(self) -> dict:
         """Tier distribution stats."""
@@ -439,6 +724,9 @@ class DataProvider:
         limit: int = 20,
         min_matches: int = 0,
         sort_by: str = "rating",
+        sort_col: str = "",
+        sort_dir: str = "desc",
+        offset: int = 0,
     ) -> list[dict]:
         """Top players by rating or peak.
 
@@ -448,13 +736,22 @@ class DataProvider:
             limit: max results
             min_matches: minimum matches played to qualify
             sort_by: "rating" (current rating) or "peak" (all-time peak)
+            sort_col: optional column to sort by (server-side, ALL data).
+                When set, fetches all qualifying players and sorts in Python.
+            sort_dir: "asc" or "desc" (used with sort_col).
+            offset: row offset for pagination.
         """
-        if sort_by == "peak":
+        if sort_by == "peak" and not sort_col:
             return self._get_top_players_by_peak(
-                game=game, system=system, limit=limit, min_matches=min_matches
+                game=game, system=system, limit=limit, min_matches=min_matches, offset=offset
             )
 
-        params = {"sys": system, "game": game, "lim": limit}
+        # When sorting by an arbitrary column, fetch ALL qualifying players
+        # (no LIMIT) so the sort applies to the full dataset, then slice.
+        # Otherwise, fetch offset+limit rows and slice in Python (rank = offset+i+1).
+        fetch_limit = 100000 if sort_col else (offset + limit)
+
+        params = {"sys": system, "game": game, "lim": fetch_limit}
         if min_matches > 0:
             params["mm"] = min_matches
 
@@ -490,7 +787,7 @@ class DataProvider:
                 main_games = {r[0]: r[1] for r in mg_rows}
                 peaks = self._fetch_peaks(player_ids, system)
 
-            return [
+            results = [
                 {
                     "player_id": r[0],
                     "name": r[1],
@@ -505,9 +802,13 @@ class DataProvider:
                     "main_game": main_games.get(r[0], ""),
                     "peak": peaks.get((r[0], ""), (None, None))[0],
                     "peak_date": peaks.get((r[0], ""), (None, None))[1],
+                    "rank": i + 1,
                 }
-                for r in rows
+                for i, r in enumerate(rows)
             ]
+            if sort_col:
+                results = _sort_players(results, sort_col, sort_dir)
+            return results[offset:offset + limit]
         else:
             query = """
                 SELECT player_id, player_name, rating, rd, vol, wins, losses, matches_played,
@@ -525,7 +826,7 @@ class DataProvider:
             rows = self.db.client.execute(query, params)
             player_ids = [r[0] for r in rows]
             peaks = self._fetch_peaks(player_ids, system)
-            return [
+            results = [
                 {
                     "player_id": r[0],
                     "name": r[1],
@@ -540,9 +841,13 @@ class DataProvider:
                     "main_game": "",
                     "peak": peaks.get((r[0], game), (None, None))[0],
                     "peak_date": peaks.get((r[0], game), (None, None))[1],
+                    "rank": i + 1,
                 }
-                for r in rows
+                for i, r in enumerate(rows)
             ]
+            if sort_col:
+                results = _sort_players(results, sort_col, sort_dir)
+            return results[offset:offset + limit]
 
     def get_ratings_for_players(
         self, player_ids: list, system: str = "glicko2", game: str = ""
@@ -570,9 +875,10 @@ class DataProvider:
         system: str = "elo",
         limit: int = 20,
         min_matches: int = 0,
+        offset: int = 0,
     ) -> list[dict]:
         """Top players by all-time peak rating (from rating_history)."""
-        params = {"rs": system, "game": game, "lim": limit}
+        params = {"rs": system, "game": game, "lim": offset + limit}
         if min_matches > 0:
             params["mm"] = min_matches
 
@@ -659,7 +965,7 @@ class DataProvider:
 
         # Step 4: Merge — order by peak (from step 1), fill in current rating data
         results = []
-        for pid in player_ids:
+        for rank, pid in enumerate(player_ids, start=1):
             r = rating_map.get(pid)
             pk, pkd = peak_map[pid]
             if r:
@@ -677,6 +983,7 @@ class DataProvider:
                     "main_game": main_games.get(r[0], ""),
                     "peak": pk,
                     "peak_date": pkd,
+                    "rank": rank,
                 })
             else:
                 # Player has history but no current rating (e.g. retired)
@@ -700,8 +1007,9 @@ class DataProvider:
                     "main_game": main_games.get(pid, ""),
                     "peak": pk,
                     "peak_date": pkd,
+                    "rank": rank,
                 })
-        return results
+        return results[offset:offset + limit]
 
     def get_top_players_asof(
         self,
@@ -711,6 +1019,9 @@ class DataProvider:
         limit: int = 20,
         min_matches: int = 0,
         sort_by: str = "rating",
+        sort_col: str = "",
+        sort_dir: str = "desc",
+        offset: int = 0,
     ) -> list[dict]:
         """Top players by rating as of a specific date.
 
@@ -724,8 +1035,15 @@ class DataProvider:
             limit: max results.
             min_matches: minimum matches played to qualify.
             sort_by: "rating" or "peak".
+            sort_col: optional column to sort by (server-side, ALL data).
+                When set, fetches all qualifying players and sorts in Python.
+            sort_dir: "asc" or "desc" (used with sort_col).
         """
-        params = {"rs": system, "game": game, "lim": limit, "date": f"{date} 00:00:00"}
+        # When sorting by an arbitrary column, fetch ALL qualifying players
+        # (no LIMIT) so the sort applies to the full dataset, then slice.
+        # Otherwise, fetch offset+limit rows and slice in Python (rank = offset+i+1).
+        fetch_limit = 100000 if sort_col else (offset + limit)
+        params = {"rs": system, "game": game, "lim": fetch_limit, "date": f"{date} 00:00:00"}
         if min_matches > 0:
             params["mm"] = min_matches
 
@@ -836,7 +1154,7 @@ class DataProvider:
             )
             main_games = {r[0]: r[1] for r in mg_rows}
 
-        return [
+        results = [
             {
                 "player_id": r[0],
                 "name": names.get(r[0], f"player_{r[0]}"),
@@ -851,9 +1169,74 @@ class DataProvider:
                 "main_game": main_games.get(r[0], ""),
                 "peak": peaks.get((r[0], game), (None, None))[0],
                 "peak_date": peaks.get((r[0], game), (None, None))[1],
+                "rank": i + 1,
             }
-            for r in rows
+            for i, r in enumerate(rows)
         ]
+        if sort_col:
+            results = _sort_players(results, sort_col, sort_dir)
+        return results[offset:offset + limit]
+
+    def count_top_players(
+        self,
+        game: str = "",
+        system: str = "elo",
+        min_matches: int = 0,
+    ) -> int:
+        """Total number of qualifying players (for pagination)."""
+        params = {"sys": system, "game": game}
+        conds = ["rating_system = %(sys)s"]
+        if game:
+            conds.append("game_name = %(game)s")
+        else:
+            conds.append("game_name = ''")
+        if min_matches > 0:
+            params["mm"] = min_matches
+            conds.append("matches_played >= %(mm)s")
+        query = (
+            "SELECT count() FROM player_ratings FINAL WHERE " + " AND ".join(conds)
+        )
+        rows = self.db.client.execute(query, params)
+        return rows[0][0] if rows else 0
+
+    def count_top_players_asof(
+        self,
+        date: str,
+        game: str = "",
+        system: str = "elo",
+        min_matches: int = 0,
+    ) -> int:
+        """Total number of qualifying players as of a date (for pagination)."""
+        params = {"rs": system, "game": game, "date": f"{date} 00:00:00"}
+        if game:
+            game_filter = "game_name = %(game)s"
+        else:
+            game_filter = "game_name = ''"
+        query = f"""
+            SELECT count()
+            FROM (
+                SELECT player_id,
+                       argMax(matches_played, played_at) AS matches
+                FROM rating_history
+                WHERE rating_system = %(rs)s AND {game_filter} AND played_at <= toDateTime(%(date)s)
+                GROUP BY player_id
+            )
+        """
+        if min_matches > 0:
+            params["mm"] = min_matches
+            query = f"""
+                SELECT count()
+                FROM (
+                    SELECT player_id,
+                           argMax(matches_played, played_at) AS matches
+                    FROM rating_history
+                    WHERE rating_system = %(rs)s AND {game_filter} AND played_at <= toDateTime(%(date)s)
+                    GROUP BY player_id
+                    HAVING matches >= %(mm)s
+                )
+            """
+        rows = self.db.client.execute(query, params)
+        return rows[0][0] if rows else 0
 
     # --- Player lookup ---
 
@@ -1011,59 +1394,157 @@ class DataProvider:
         player1: str,
         player2: str,
         game: str = "",
-        limit: int = 20,
+        limit: int = 100000,
+        match: str = "exact",
+        match2: Optional[str] = None,
     ) -> dict:
-        """Head-to-head record between two players."""
-        player1 = self._resolve_name(player1)
-        player2 = self._resolve_name(player2)
+        """Head-to-head record between two players.
+
+        The scoreboard (p1_wins/p2_wins/total) reflects the FULL head-to-head
+        record, and the returned match list includes ALL matches (no practical
+        limit). Winner determination uses the authoritative
+        `winner_id` (a player_id) rather than score comparison, which also
+        handles draws correctly. Each match is normalized so that
+        player1/player2 always correspond to the requested order.
+
+        `match`/`match2` control how player1/player2 match names (each may
+        differ, e.g. for smart auto-detection):
+          - 'exact'   : case-insensitive exact name match (default)
+          - 'partial' : case-insensitive substring match
+          - 'regex'   : case-insensitive regular expression match
+        """
+        match2 = match2 or match
+
+        def _cond(col, mode, pat, ph):
+            if mode == "regex":
+                return f"match(lowerUTF8({col}), lowerUTF8(%({ph})s))", pat
+            if mode == "partial":
+                return f"{col} ILIKE %({ph})s", f"%{pat}%"
+            return f"{col} = %({ph})s", pat
+
+        # Build per-player conditions. For exact mode resolve to canonical name.
+        if match == "exact":
+            player1 = self._resolve_name(player1)
+        if match2 == "exact":
+            player2 = self._resolve_name(player2)
+        p1_cond, p1 = _cond("m.player1_name", match, player1, "p1")
+        p2_cond, p2 = _cond("m.player2_name", match2, player2, "p2")
+        p1_cond_r, _ = _cond("m.player1_name", match2, player2, "p2")
+        p2_cond_r, _ = _cond("m.player2_name", match, player1, "p1")
+        where = (
+            f"({p1_cond} AND {p2_cond})"
+            f" OR ({p1_cond_r} AND {p2_cond_r})"
+        )
+        params = {"p1": p1, "p2": p2}
         if game:
-            rows = self.db.client.execute(
-                """
-                SELECT m.match_id, m.player1_name, m.player2_name, m.player1_score, m.player2_score,
-                       m.winner_id, m.game_name, m.tournament_name, m.stage_name, m.played_at, t.tier
+            where = f"m.game_name = %(game)s AND ({where})"
+            params["game"] = game
+
+        # Resolve the authoritative player_ids for the requested players so the
+        # scoreboard counts wins for the REQUESTED order (not the stored order).
+        # For partial/regex modes a single player_id can't be resolved, so wins
+        # are counted by name-pattern matching instead.
+        p1_id = self._player_id(player1) if match == "exact" else None
+        p2_id = self._player_id(player2) if match2 == "exact" else None
+
+        # Full-record counts (not truncated by LIMIT).
+        if match == "exact" and match2 == "exact":
+            count_row = self.db.client.execute(
+                f"""
+                SELECT
+                    countIf(m.winner_id = %(p1id)s),
+                    countIf(m.winner_id = %(p2id)s),
+                    count()
                 FROM matches m FINAL
-                LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
-                WHERE m.game_name = %(game)s
-                AND ((m.player1_name = %(p1)s AND m.player2_name = %(p2)s)
-                  OR (m.player1_name = %(p2)s AND m.player2_name = %(p1)s))
-                ORDER BY m.played_at DESC
-                LIMIT %(lim)s
+                WHERE {where}
                 """,
-                {"p1": player1, "p2": player2, "game": game, "lim": limit},
+                {**params, "p1id": p1_id, "p2id": p2_id},
             )
         else:
-            rows = self.db.client.execute(
-                """
-                SELECT m.match_id, m.player1_name, m.player2_name, m.player1_score, m.player2_score,
-                       m.winner_id, m.game_name, m.tournament_name, m.stage_name, m.played_at, t.tier
-                FROM matches m FINAL
-                LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
-                WHERE (m.player1_name = %(p1)s AND m.player2_name = %(p2)s)
-                   OR (m.player1_name = %(p2)s AND m.player2_name = %(p1)s)
-                ORDER BY m.played_at DESC
-                LIMIT %(lim)s
+            # Count wins by name pattern: a match is a p1-win if the winner's
+            # name matches the p1 pattern (and the loser matches p2), etc.
+            if match == "regex":
+                w1 = "match(lowerUTF8(winner_name), lowerUTF8(%(p1)s))"
+            elif match == "partial":
+                w1 = "winner_name ILIKE %(p1)s"
+            else:
+                w1 = "winner_name = %(p1)s"
+            if match2 == "regex":
+                w2 = "match(lowerUTF8(winner_name), lowerUTF8(%(p2)s))"
+            elif match2 == "partial":
+                w2 = "winner_name ILIKE %(p2)s"
+            else:
+                w2 = "winner_name = %(p2)s"
+            count_row = self.db.client.execute(
+                f"""
+                SELECT
+                    countIf({w1}),
+                    countIf({w2}),
+                    count()
+                FROM (
+                    SELECT
+                        m.match_id,
+                        CASE
+                            WHEN m.winner_id = m.player1_id THEN m.player1_name
+                            WHEN m.winner_id = m.player2_id THEN m.player2_name
+                            ELSE NULL
+                        END AS winner_name
+                    FROM matches m FINAL
+                    WHERE {where}
+                )
                 """,
-                {"p1": player1, "p2": player2, "lim": limit},
+                params,
             )
+        p1_wins = count_row[0][0] if count_row else 0
+        p2_wins = count_row[0][1] if count_row else 0
+        total = count_row[0][2] if count_row else 0
+
+        # Most recent matches, limited for display.
+        rows = self.db.client.execute(
+            f"""
+            SELECT m.match_id, m.player1_name, m.player2_name, m.player1_score, m.player2_score,
+                   m.player1_id, m.player2_id, m.winner_id, m.game_name, m.tournament_name,
+                   m.stage_name, m.played_at, t.tier
+            FROM matches m FINAL
+            LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
+            WHERE {where}
+            ORDER BY m.played_at DESC
+            LIMIT %(lim)s
+            """,
+            {**params, "lim": limit},
+        )
         matches = []
-        p1_wins = 0
-        p2_wins = 0
         for r in rows:
-            mid, p1n, p2n, s1, s2, wid, gn, tn, st, pa, tier = r
-            # Determine winner from scores
-            if p1n == player1:
-                w = player1 if s1 > s2 else player2
+            (mid, p1n, p2n, s1, s2, p1id, p2id, wid, gn, tn, st, pa, tier) = r
+            # Authoritative winner from winner_id (a player_id).
+            if wid is not None and wid == p1id:
+                w = p1n
+            elif wid is not None and wid == p2id:
+                w = p2n
             else:
-                w = player2 if s2 > s1 else player1
-            if w == player1:
-                p1_wins += 1
+                w = None  # draw / unknown
+            # Normalize to requested order: player1/player2 must match the
+            # requested player1/player2, swapping stored names/scores as needed.
+            # For exact mode compare resolved names; for partial/regex compare
+            # against the raw patterns.
+            if match == "exact":
+                p1_matches = (p1n == player1)
+            elif match == "regex":
+                import re
+                p1_matches = bool(re.search(player1, p1n, re.IGNORECASE))
             else:
-                p2_wins += 1
+                p1_matches = (player1.lower() in p1n.lower())
+            if p1_matches:
+                disp1, disp2, ds1, ds2 = p1n, p2n, s1, s2
+            else:
+                disp1, disp2, ds1, ds2 = p2n, p1n, s2, s1
             matches.append({
                 "match_id": mid,
-                "player1": p1n,
-                "player2": p2n,
-                "score": f"{s1}-{s2}",
+                "player1": disp1,
+                "player2": disp2,
+                "score": f"{ds1}-{ds2}",
+                "score1": ds1,
+                "score2": ds2,
                 "winner": w,
                 "game": gn,
                 "tournament": tn,
@@ -1076,7 +1557,7 @@ class DataProvider:
             "player2": player2,
             "p1_wins": p1_wins,
             "p2_wins": p2_wins,
-            "total": len(matches),
+            "total": total,
             "matches": matches,
         }
 
@@ -1086,36 +1567,139 @@ class DataProvider:
         self,
         game: str = "",
         limit: int = 20,
+        player: str = "",
+        tournament: str = "",
+        offset: int = 0,
+        sort_col: str = "",
+        sort_dir: str = "desc",
+        match: str = "exact",
+        player_match: Optional[str] = None,
+        tournament_match: Optional[str] = None,
     ) -> list[dict]:
-        """Recent matches (newest first)."""
+        """Recent matches (newest first).
+
+        Optional filters: game, player (name), tournament (name).
+        `match` controls how player/tournament filters match:
+          - 'exact'   : case-insensitive exact name match (default)
+          - 'partial' : case-insensitive substring match
+          - 'regex'   : case-insensitive regular expression match
+        `player_match`/`tournament_match` override `match` per-field (used for
+        smart auto-detection where player and tournament may need different
+        modes). When sort_col is set, ALL matching rows are fetched and sorted
+        in Python so the sort applies to the full dataset, not just the page.
+        """
+        player_match = player_match or match
+        tournament_match = tournament_match or match
         query = """
             SELECT m.match_id, m.player1_name, m.player2_name, m.player1_score, m.player2_score,
-                   m.winner_id, m.game_name, m.tournament_name, m.stage_name, m.played_at, t.tier
+                   m.player1_id, m.player2_id, m.winner_id, m.game_name, m.tournament_name, m.stage_name, m.played_at, t.tier
             FROM matches m FINAL
             LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
         """
-        params = {"lim": limit}
+        params = {"lim": limit, "off": offset}
+        where = []
         if game:
-            query += " WHERE m.game_name = %(game)s"
+            where.append("m.game_name = %(game)s")
             params["game"] = game
-        query += " ORDER BY m.played_at DESC, m.match_id DESC LIMIT %(lim)s"
+        if player:
+            if player_match == "regex":
+                where.append("(match(lowerUTF8(m.player1_name), lowerUTF8(%(player)s)) OR match(lowerUTF8(m.player2_name), lowerUTF8(%(player)s)))")
+                params["player"] = player
+            elif player_match == "partial":
+                where.append("(m.player1_name ILIKE %(player)s OR m.player2_name ILIKE %(player)s)")
+                params["player"] = f"%{player}%"
+            else:
+                player = self._resolve_name(player)
+                where.append("(m.player1_name = %(player)s OR m.player2_name = %(player)s)")
+                params["player"] = player
+        if tournament:
+            if tournament_match == "regex":
+                where.append("match(lowerUTF8(m.tournament_name), lowerUTF8(%(tournament)s))")
+                params["tournament"] = tournament
+            elif tournament_match == "partial":
+                where.append("m.tournament_name ILIKE %(tournament)s")
+                params["tournament"] = f"%{tournament}%"
+            else:
+                where.append("m.tournament_name = %(tournament)s")
+                params["tournament"] = tournament
+        if where:
+            query += " WHERE " + " AND ".join(where)
+        if sort_col:
+            # Fetch ALL matching rows, sort in Python, then slice the page.
+            query += " ORDER BY m.played_at DESC, m.match_id DESC LIMIT 100000"
+        else:
+            query += " ORDER BY m.played_at DESC, m.match_id DESC LIMIT %(lim)s OFFSET %(off)s"
 
         rows = self.db.client.execute(query, params)
-        return [
+        matches = [
             {
                 "match_id": r[0],
                 "player1": r[1],
                 "player2": r[2],
                 "score": f"{r[3]}-{r[4]}",
-                "winner": r[1] if r[3] > r[4] else r[2],
-                "game": r[6],
-                "tournament": r[7],
-                "stage": r[8],
-                "played_at": r[9],
-                "tier": r[10],
+                "score1": r[3],
+                "score2": r[4],
+                "winner": _winner_from_ids(r[5], r[6], r[7], r[1], r[2]),
+                "game": r[8],
+                "tournament": r[9],
+                "stage": r[10],
+                "played_at": r[11],
+                "tier": r[12],
             }
             for r in rows
         ]
+        if sort_col:
+            matches = _sort_matches(matches, sort_col, sort_dir)
+            matches = matches[offset:offset + limit]
+        return matches
+
+    def count_recent_matches(
+        self,
+        game: str = "",
+        player: str = "",
+        tournament: str = "",
+        match: str = "exact",
+        player_match: Optional[str] = None,
+        tournament_match: Optional[str] = None,
+    ) -> int:
+        """Total number of matches matching the given filters (for pagination)."""
+        player_match = player_match or match
+        tournament_match = tournament_match or match
+        query = """
+            SELECT count()
+            FROM matches m FINAL
+            LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
+        """
+        params = {}
+        where = []
+        if game:
+            where.append("m.game_name = %(game)s")
+            params["game"] = game
+        if player:
+            if player_match == "regex":
+                where.append("(match(lowerUTF8(m.player1_name), lowerUTF8(%(player)s)) OR match(lowerUTF8(m.player2_name), lowerUTF8(%(player)s)))")
+                params["player"] = player
+            elif player_match == "partial":
+                where.append("(m.player1_name ILIKE %(player)s OR m.player2_name ILIKE %(player)s)")
+                params["player"] = f"%{player}%"
+            else:
+                player = self._resolve_name(player)
+                where.append("(m.player1_name = %(player)s OR m.player2_name = %(player)s)")
+                params["player"] = player
+        if tournament:
+            if tournament_match == "regex":
+                where.append("match(lowerUTF8(m.tournament_name), lowerUTF8(%(tournament)s))")
+                params["tournament"] = tournament
+            elif tournament_match == "partial":
+                where.append("m.tournament_name ILIKE %(tournament)s")
+                params["tournament"] = f"%{tournament}%"
+            else:
+                where.append("m.tournament_name = %(tournament)s")
+                params["tournament"] = tournament
+        if where:
+            query += " WHERE " + " AND ".join(where)
+        rows = self.db.client.execute(query, params)
+        return rows[0][0] if rows else 0
 
     # --- Player matches ---
 
@@ -1124,12 +1708,13 @@ class DataProvider:
         player_name: str,
         game: str = "",
         limit: int = 20,
+        tournament: str = "",
     ) -> list[dict]:
         """Recent matches for a specific player."""
         player_name = self._resolve_name(player_name)
         query = """
             SELECT m.match_id, m.player1_name, m.player2_name, m.player1_score, m.player2_score,
-                   m.winner_id, m.game_name, m.tournament_name, m.stage_name, m.played_at, t.tier
+                   m.player1_id, m.player2_id, m.winner_id, m.game_name, m.tournament_name, m.stage_name, m.played_at, t.tier
             FROM matches m FINAL
             LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
             WHERE (m.player1_name = %(name)s OR m.player2_name = %(name)s)
@@ -1138,6 +1723,9 @@ class DataProvider:
         if game:
             query += " AND m.game_name = %(game)s"
             params["game"] = game
+        if tournament:
+            query += " AND m.tournament_name = %(tournament)s"
+            params["tournament"] = tournament
         query += " ORDER BY m.played_at DESC, m.match_id DESC LIMIT %(lim)s"
 
         rows = self.db.client.execute(query, params)
@@ -1147,12 +1735,14 @@ class DataProvider:
                 "player1": r[1],
                 "player2": r[2],
                 "score": f"{r[3]}-{r[4]}",
-                "winner": r[1] if r[3] > r[4] else r[2],
-                "game": r[6],
-                "tournament": r[7],
-                "stage": r[8],
-                "played_at": r[9],
-                "tier": r[10],
+                "score1": r[3],
+                "score2": r[4],
+                "winner": _winner_from_ids(r[5], r[6], r[7], r[1], r[2]),
+                "game": r[8],
+                "tournament": r[9],
+                "stage": r[10],
+                "played_at": r[11],
+                "tier": r[12],
             }
             for r in rows
         ]
@@ -1171,7 +1761,7 @@ class DataProvider:
         # Get the player's rating
         rating_row = self.db.client.execute(
             """
-            SELECT rating, wins, losses, matches_played
+            SELECT rating, rd, wins, losses, matches_played
             FROM player_ratings FINAL
             WHERE player_name = %(name)s AND game_name = %(game)s AND rating_system = %(sys)s
             LIMIT 1
@@ -1181,20 +1771,35 @@ class DataProvider:
         if not rating_row:
             return None
 
-        rating, wins, losses, matches = rating_row[0]
+        rating, rd, wins, losses, matches = rating_row[0]
+
+        # If the player doesn't meet the min-matches threshold, they're not on the
+        # leaderboard, so they have no rank (consistent with get_top_players).
+        if min_matches > 0 and matches < min_matches:
+            return None
 
         mm_clause = "AND matches_played >= %(mm)s" if min_matches > 0 else ""
         params = {"game": game, "sys": system, "r": rating, "mm": min_matches}
 
-        # Count how many players are rated higher
+        # Glicko-2 ranks by rating - RD (conservative lower bound), matching the
+        # leaderboard sort. Elo ranks by raw rating.
+        if system == "glicko2":
+            rank_expr = "rating - rd"
+            player_val = rating - (rd if rd is not None else 0)
+        else:
+            rank_expr = "rating"
+            player_val = rating
+
+        # Dense rank: count distinct values strictly higher than the player's,
+        # so players with identical values share the same rank.
         rank_row = self.db.client.execute(
             f"""
-            SELECT count()
+            SELECT count(DISTINCT {rank_expr})
             FROM player_ratings FINAL
-            WHERE game_name = %(game)s AND rating_system = %(sys)s AND rating > %(r)s
+            WHERE game_name = %(game)s AND rating_system = %(sys)s AND {rank_expr} > %(r)s
             {mm_clause}
             """,
-            params,
+            {**params, "r": player_val},
         )
         rank = rank_row[0][0] + 1
 
@@ -1281,9 +1886,13 @@ class DataProvider:
             "SELECT count(DISTINCT tournament_id) FROM matches"
         )[0][0]
 
-        # Countries
+        # Countries (union of player1 and player2 countries)
         countries = self.db.client.execute(
-            "SELECT count(DISTINCT player1_country) FROM matches WHERE player1_country != ''"
+            "SELECT count(DISTINCT country) FROM ("
+            "SELECT player1_country AS country FROM matches WHERE player1_country != '' "
+            "UNION ALL "
+            "SELECT player2_country AS country FROM matches WHERE player2_country != ''"
+            ")"
         )[0][0]
 
         return {
@@ -1301,3 +1910,277 @@ class DataProvider:
             "tournaments": tournaments,
             "countries": countries,
         }
+
+    def get_most_active_players(self, limit: int = 10) -> list[dict]:
+        """Players with the most matches (combined, any system)."""
+        rows = self.db.client.execute(
+            """
+            SELECT player_id, player_name, matches_played, wins, losses
+            FROM player_ratings FINAL
+            WHERE rating_system = 'elo' AND game_name = ''
+            ORDER BY matches_played DESC
+            LIMIT %(lim)s
+            """,
+            {"lim": limit},
+        )
+        return [
+            {
+                "player_id": r[0],
+                "name": r[1],
+                "matches": r[2],
+                "wins": r[3],
+                "losses": r[4],
+            }
+            for r in rows
+        ]
+
+    def get_peak_rating_overall(self, system: str = "elo", min_matches: int = 0) -> dict | None:
+        """The single highest peak rating across all players and games.
+
+        For glicko2, the peak is computed with RD removed (rating - rd, the
+        conservative lower bound), matching the leaderboard sort behavior.
+        If min_matches > 0, only players with at least that many matches are
+        considered (matching the leaderboard's min-matches filter).
+        """
+        if system == "glicko2":
+            if min_matches > 0:
+                rows = self.db.client.execute(
+                    """
+                    SELECT h.player_id, max(h.rating - h.rd) AS peak,
+                           argMax(h.played_at, h.rating - h.rd) AS peak_date,
+                           argMax(h.game_name, h.rating - h.rd) AS peak_game
+                    FROM rating_history h
+                    WHERE h.rating_system = %(rs)s AND h.matches_played >= %(mm)s
+                    GROUP BY h.player_id
+                    ORDER BY peak DESC
+                    LIMIT 1
+                    """,
+                    {"rs": system, "mm": min_matches},
+                )
+            else:
+                rows = self.db.client.execute(
+                    """
+                    SELECT h.player_id, max(h.rating - h.rd) AS peak,
+                           argMax(h.played_at, h.rating - h.rd) AS peak_date,
+                           argMax(h.game_name, h.rating - h.rd) AS peak_game
+                    FROM rating_history h
+                    WHERE h.rating_system = %(rs)s
+                    GROUP BY h.player_id
+                    ORDER BY peak DESC
+                    LIMIT 1
+                    """,
+                    {"rs": system},
+                )
+        else:
+            if min_matches > 0:
+                rows = self.db.client.execute(
+                    """
+                    SELECT h.player_id, max(h.rating) AS peak, argMax(h.played_at, h.rating) AS peak_date,
+                           argMax(h.game_name, h.rating) AS peak_game
+                    FROM rating_history h
+                    WHERE h.rating_system = %(rs)s AND h.matches_played >= %(mm)s
+                    GROUP BY h.player_id
+                    ORDER BY peak DESC
+                    LIMIT 1
+                    """,
+                    {"rs": system, "mm": min_matches},
+                )
+            else:
+                rows = self.db.client.execute(
+                    """
+                    SELECT h.player_id, max(h.rating) AS peak, argMax(h.played_at, h.rating) AS peak_date,
+                           argMax(h.game_name, h.rating) AS peak_game
+                    FROM rating_history h
+                    WHERE h.rating_system = %(rs)s
+                    GROUP BY h.player_id
+                    ORDER BY peak DESC
+                    LIMIT 1
+                    """,
+                    {"rs": system},
+                )
+        if not rows:
+            return None
+        pid, peak, peak_date, peak_game = rows[0]
+        # Fetch name
+        name_row = self.db.client.execute(
+            "SELECT player_name FROM player_ratings FINAL WHERE player_id = %(pid)s LIMIT 1",
+            {"pid": pid},
+        )
+        name = name_row[0][0] if name_row else f"player_{pid}"
+        return {
+            "name": name,
+            "peak": round(peak, 1),
+            "peak_date": peak_date,
+            "game": peak_game or "Combined",
+        }
+
+    def get_top_players_by_game(self, system: str = "elo", limit: int = 5) -> list[dict]:
+        """Top player per game (for dashboard mini-lists)."""
+        games = self.get_games()
+        result = []
+        for g in games:
+            top = self.get_top_players(game=g, system=system, limit=limit, min_matches=0)
+            if top:
+                result.append({"game": g, "players": top})
+        return result
+
+    def get_player_summary(self, player_name: str) -> dict | None:
+        """Aggregated summary stats for a player."""
+        player_name = self._resolve_name(player_name)
+        # Get all ratings
+        ratings = self.get_player_ratings(player_name)
+        if not ratings:
+            return None
+
+        # Find best game (highest rating) and worst game (lowest rating)
+        best_game = None
+        worst_game = None
+        best_rating = -999999
+        worst_rating = 999999
+        peak_rating = 0
+        peak_date = None
+        peak_glicko = 0
+        peak_glicko_date = None
+        total_wins = 0
+        total_losses = 0
+        total_matches = 0
+        for r in ratings:
+            if r["system"] == "elo" and r["game"] == "Combined":
+                total_wins = r["wins"]
+                total_losses = r["losses"]
+                total_matches = r["matches"]
+                if r["peak"]:
+                    peak_rating = r["peak"]
+                    peak_date = r["peak_date"]
+            if r["system"] == "glicko2" and r["game"] == "Combined":
+                if r["peak"]:
+                    peak_glicko = r["peak"]
+                    peak_glicko_date = r["peak_date"]
+            if r["system"] == "elo" and r["game"] != "Combined":
+                if r["rating"] > best_rating:
+                    best_rating = r["rating"]
+                    best_game = r
+                if r["rating"] < worst_rating:
+                    worst_rating = r["rating"]
+                    worst_game = r
+
+        # Current streak from recent matches (scan enough to catch long streaks)
+        recent = self.get_player_matches(player_name, limit=100)
+        streak = 0
+        streak_type = ""
+        for m in recent:
+            if m["winner"] == player_name:
+                if streak_type == "" or streak_type == "W":
+                    streak_type = "W"
+                    streak += 1
+                else:
+                    break
+            else:
+                if streak_type == "" or streak_type == "L":
+                    streak_type = "L"
+                    streak += 1
+                else:
+                    break
+
+        # Per-game breakdown
+        per_game = {}
+        for r in ratings:
+            if r["system"] == "elo" and r["game"] != "Combined":
+                g = r["game"]
+                per_game[g] = {
+                    "rating": r["rating"],
+                    "peak": r["peak"],
+                    "wins": r["wins"],
+                    "losses": r["losses"],
+                    "matches": r["matches"],
+                    "win_rate": round(r["wins"] / r["matches"] * 100, 1) if r["matches"] > 0 else 0,
+                }
+
+        win_rate = round(total_wins / total_matches * 100, 1) if total_matches > 0 else 0
+
+        # First / last match dates (when the player started and stopped playing)
+        date_rows = self.db.client.execute(
+            """
+            SELECT min(played_at) AS first_match, max(played_at) AS last_match
+            FROM matches FINAL
+            WHERE player1_name = %(n)s OR player2_name = %(n)s
+            """,
+            {"n": player_name},
+        )
+        first_match = date_rows[0][0] if date_rows else None
+        last_match = date_rows[0][1] if date_rows else None
+
+        # Rivals — top 5 most-faced opponents. Wins use the authoritative
+        # winner_id (a player_id) so draws are handled correctly.
+        p_id = self._player_id(player_name)
+        rival_rows = self.db.client.execute(
+            """
+            SELECT
+                CASE WHEN player1_name = %(n)s THEN player2_name ELSE player1_name END AS opponent,
+                count() AS matches,
+                sum(CASE WHEN winner_id = %(pid)s THEN 1 ELSE 0 END) AS wins
+            FROM matches FINAL
+            WHERE player1_name = %(n)s OR player2_name = %(n)s
+            GROUP BY opponent
+            ORDER BY matches DESC
+            LIMIT 5
+            """,
+            {"n": player_name, "pid": p_id},
+        )
+        rivals = [
+            {"name": r[0], "matches": r[1], "wins": r[2], "losses": r[1] - r[2]}
+            for r in rival_rows
+        ]
+        # Sort rivals by least win rate first (hardest opponents on top).
+        rivals.sort(key=lambda r: (r["wins"] / r["matches"] if r["matches"] > 0 else 0))
+
+        return {
+            "name": ratings[0]["name"],
+            "total_wins": total_wins,
+            "total_losses": total_losses,
+            "total_matches": total_matches,
+            "win_rate": win_rate,
+            "peak_rating": peak_rating,
+            "peak_date": peak_date,
+            "peak_glicko": peak_glicko,
+            "peak_glicko_date": peak_glicko_date,
+            "best_game": best_game,
+            "worst_game": worst_game,
+            "streak": streak,
+            "streak_type": streak_type,
+            "first_match": first_match,
+            "last_match": last_match,
+            "per_game": per_game,
+            "rivals": rivals,
+        }
+
+    def get_tournament_top_players(self, tournament_name: str, limit: int = 10) -> list[dict]:
+        """Top players by wins in a specific tournament.
+
+        Each match contributes one row per participant; a win is attributed to
+        the player whose player_id matches the authoritative winner_id.
+        """
+        rows = self.db.client.execute(
+            """
+            SELECT pname, count() AS matches, sum(is_win) AS wins
+            FROM (
+                SELECT player1_name AS pname, player1_id AS pid, winner_id,
+                       if(winner_id = player1_id, 1, 0) AS is_win
+                FROM matches FINAL
+                WHERE tournament_name = %(t)s AND player1_name != ''
+                UNION ALL
+                SELECT player2_name AS pname, player2_id AS pid, winner_id,
+                       if(winner_id = player2_id, 1, 0) AS is_win
+                FROM matches FINAL
+                WHERE tournament_name = %(t)s AND player2_name != ''
+            )
+            GROUP BY pname
+            ORDER BY wins DESC
+            LIMIT %(lim)s
+            """,
+            {"t": tournament_name, "lim": limit},
+        )
+        return [
+            {"name": r[0], "wins": r[2], "matches": r[1]}
+            for r in rows if r[0]
+        ]

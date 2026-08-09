@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Matches — Arena Rankings{% endblock %}
 {% block content %}
-<div class="section-head"><h2>Recent matches</h2></div>
+<div class="section-head"><h2>Recent Matches</h2></div>
 
 <form class="filters" method="get" action="/matches">
   <label>Game</label>
@@ -11,31 +11,19 @@
     <option value="{{ g }}" {{ 'selected' if game == g }}>{{ g }}</option>
     {% endfor %}
   </select>
+  <label>Player</label>
+  <input type="text" name="player" value="{{ player }}" placeholder="Player name" style="width:140px" data-autocomplete="player">
+  <label>Tournament</label>
+  <input type="text" name="tournament" value="{{ tournament }}" placeholder="Tournament name" style="width:160px" data-autocomplete="tournament">
   <label>Limit</label>
-  <input type="number" name="limit" value="{{ limit }}" min="1" max="200" style="width:80px">
+  <select name="limit">
+    <option value="100" {{ 'selected' if limit == '100' }}>100</option>
+    <option value="1000" {{ 'selected' if limit == '1000' }}>1000</option>
+    <option value="all" {{ 'selected' if limit == 'all' }}>All</option>
+  </select>
   <button type="submit">Apply</button>
+  <button type="submit" name="clear" value="1" class="btn-clear">Clear filters</button>
 </form>
 
-<div class="card">
-  <div class="table-wrap">
-    <table class="sortable">
-      <thead><tr><th>Date</th><th>Player 1</th><th class="center">Score</th><th>Player 2</th><th>Game</th><th>Tournament</th><th>Tier</th></tr></thead>
-      <tbody>
-        {% for m in matches %}
-        <tr>
-          <td>{{ m.played_at.strftime("%Y-%m-%d") }}</td>
-          <td><a class="player-link" href="/player/{{ m.player1 }}">{{ m.player1 }}</a></td>
-          <td class="center"><a class="score-link" href="/h2h?p1={{ m.player1 }}&p2={{ m.player2 }}" title="Head-to-head"><span class="{{ 'win' if m.winner == m.player1 else 'loss' }}">{{ m.score.split('-')[0] }}</span> : <span class="{{ 'win' if m.winner == m.player2 else 'loss' }}">{{ m.score.split('-')[1] }}</span></a></td>
-          <td><a class="player-link" href="/player/{{ m.player2 }}">{{ m.player2 }}</a></td>
-          <td>{{ m.game }}</td>
-          <td>{{ m.tournament or '—' }}</td>
-          <td>{% if m.tier %}<span class="tag tag-{{ m.tier }}">{{ m.tier }}</span>{% else %}—{% endif %}</td>
-        </tr>
-        {% else %}
-        <tr><td colspan="7" class="empty">No matches found.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
+{% include "_matches_results.html" %}
 {% endblock %}

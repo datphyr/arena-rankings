@@ -12,38 +12,79 @@
   <a class="stat-card" href="/tournaments"><div class="stat-value">{{ "{:,}".format(stats.tournaments) }}</div><div class="stat-label">Tournaments</div></a>
   <div class="stat-card"><div class="stat-value">{{ "{:,}".format(stats.countries) }}</div><div class="stat-label">Countries</div></div>
   <div class="stat-card"><div class="stat-value">{{ stats.games|length }}</div><div class="stat-label">Games</div></div>
-  <div class="stat-card"><div class="stat-value">{{ stats.date_range[0].strftime('%Y') }}–{{ stats.date_range[1].strftime('%Y') }}</div><div class="stat-label">Date Range</div></div>
+  <div class="stat-card"><div class="stat-value">{{ stats.active_players }}</div><div class="stat-label">Active (30d)</div></div>
 </div>
 
-<div class="section-head"><h2>Top players</h2></div>
-<div class="card">
-  <div class="table-wrap">
-    <table class="sortable">
-      <thead><tr><th data-sort="rank">#</th><th>Player</th><th>Main game</th><th class="num">Elo</th><th class="num">Glicko-2</th></tr></thead>
-      <tbody>
-        {% for p in top_elo %}
-        <tr>
-          <td><span class="rank-badge {{ 'rank-1' if loop.index == 1 else 'rank-2' if loop.index == 2 else 'rank-3' if loop.index == 3 }}">{{ loop.index }}</span></td>
-          <td><a class="player-link" href="/player/{{ p.name }}">{{ p.name }}</a></td>
-          <td>{{ p.main_game or '—' }}</td>
-          <td class="num rating rating-elo">{{ "%.0f"|format(p.rating) }}</td>
-          <td class="num rating rating-glicko2">{{ "%.0f"|format(p.glicko) if p.glicko else '—' }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+{% if peak_info or peak_info_glicko %}
+<div class="peak-row">
+  {% if peak_info %}
+  <div class="card" style="text-align:center;padding:18px 24px;flex:1;">
+    <span style="color:var(--text-faint);font-size:0.8rem;text-transform:uppercase;letter-spacing:0.08em;">All-time peak Elo</span><br>
+    <span style="font-family:var(--mono);font-size:1.8rem;font-weight:800;color:var(--gold);">
+      {{ "%.0f"|format(peak_info.peak) }}
+    </span>
+    by
+    <a class="player-link" href="/player/{{ peak_info.name }}">{{ peak_info.name }}</a>
+    on {{ peak_info.peak_date.strftime('%Y-%m-%d') if peak_info.peak_date else '—' }}
+  </div>
+  {% endif %}
+  {% if peak_info_glicko %}
+  <div class="card" style="text-align:center;padding:18px 24px;flex:1;">
+    <span style="color:var(--text-faint);font-size:0.8rem;text-transform:uppercase;letter-spacing:0.08em;">All-time peak Glicko-2</span><br>
+    <span style="font-family:var(--mono);font-size:1.8rem;font-weight:800;color:var(--gold);">
+      {{ "%.0f"|format(peak_info_glicko.peak) }}
+    </span>
+    by
+    <a class="player-link" href="/player/{{ peak_info_glicko.name }}">{{ peak_info_glicko.name }}</a>
+    on {{ peak_info_glicko.peak_date.strftime('%Y-%m-%d') if peak_info_glicko.peak_date else '—' }}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="dash-grid">
+  <div>
+    <div class="section-head"><h2><a class="game-link" href="/leaderboard">Top Players</a></h2></div>
+    <div class="card">
+      <div class="table-wrap">
+        {% include "_top_players.html" %}
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="section-head"><h2><a class="game-link" href="/leaderboard?sort_col=matches&sort_dir=desc">Most Active</a></h2></div>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>#</th><th>Player</th><th class="num">Matches</th><th class="num">W</th><th class="num">L</th><th class="num">WR</th></tr></thead>
+          <tbody>
+            {% for p in most_active %}
+            <tr>
+              <td><span class="rank-badge">{{ loop.index }}</span></td>
+              <td><a class="player-link" href="/player/{{ p.name }}">{{ p.name }}</a></td>
+              <td class="num">{{ "{:,}".format(p.matches) }}</td>
+              <td class="num win">{{ p.wins }}</td>
+              <td class="num loss">{{ p.losses }}</td>
+              <td class="num">{{ "%.0f%%"|format(p.wins / p.matches * 100) if p.matches > 0 else '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </div>
 
 <div class="section-head"><h2>Games</h2></div>
 <div class="card">
   <div class="table-wrap">
-    <table class="sortable" data-default-sort="1" data-default-dir="desc">
-      <thead><tr><th>Game</th><th class="num">Matches</th><th class="num">Players</th><th class="num">Tournaments</th></tr></thead>
+    <table class="sortable games-table" data-default-sort="1" data-default-dir="desc">
+      <thead><tr><th>Game</th><th class="num" style="width:110px">Matches</th><th class="num" style="width:110px">Players</th><th class="num" style="width:130px">Tournaments</th></tr></thead>
       <tbody>
         {% for g in stats.games %}
         <tr>
-          <td><a class="player-link" href="/leaderboard?game={{ g }}">{{ g }}</a></td>
+          <td><a class="game-link" href="/leaderboard?game={{ g }}">{{ g }}</a></td>
           <td class="num">{{ "{:,}".format(stats.matches_per_game.get(g, 0)) }}</td>
           <td class="num">{{ "{:,}".format(stats.players_per_game.get(g, 0)) }}</td>
           <td class="num">{{ "{:,}".format(stats.tournaments_per_game.get(g, 0)) }}</td>
@@ -54,34 +95,26 @@
   </div>
 </div>
 
-<div class="section-head"><h2>Tournament tiers</h2></div>
+<div class="section-head"><h2>Recent Matches</h2></div>
 <div class="card">
-  <div class="chart-box"><canvas id="tierChart"></canvas></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Date</th><th class="right">Player 1</th><th class="center">Score</th><th>Player 2</th><th>Game</th><th>Tournament</th><th>Tier</th></tr></thead>
+      <tbody>
+        {% for m in recent_matches %}
+        <tr>
+          <td>{{ m.played_at.strftime("%Y-%m-%d") if m.played_at else "—" }}</td>
+          <td class="right"><a class="player-link" href="/player/{{ m.player1 }}">{{ m.player1 }}</a></td>
+          <td class="center"><a class="score-link" href="/h2h?p1={{ m.player1 }}&p2={{ m.player2 }}" title="Head-to-head"><span class="{{ 'win' if m.winner == m.player1 else 'loss' }}">{{ m.score1 }}</span> : <span class="{{ 'win' if m.winner == m.player2 else 'loss' }}">{{ m.score2 }}</span></a></td>
+          <td><a class="player-link" href="/player/{{ m.player2 }}">{{ m.player2 }}</a></td>
+          <td>{% if m.game %}<a class="game-link" href="/leaderboard?game={{ m.game }}">{{ m.game }}</a>{% else %}—{% endif %}</td>
+          <td class="tournament-cell">{{ m.tournament or '—' }}</td>
+          <td>{% if m.tier %}<span class="tag tag-{{ m.tier }}">{{ m.tier }}</span>{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p style="margin-top:12px;text-align:right;"><a href="/matches" class="game-link">View all matches →</a></p>
 </div>
-{% endblock %}
-
-{% block scripts %}
-<script>
-const tierData = {{ tier_stats.tiers | tojson }};
-new Chart(document.getElementById('tierChart'), {
-  type: 'bar',
-  data: {
-    labels: tierData.map(t => t.tier || 'unknown'),
-    datasets: [{
-      label: 'Tournaments',
-      data: tierData.map(t => t.tournaments),
-      backgroundColor: ['#f5c542', '#7c5cff', '#22d3ee', '#6b7488'],
-      borderRadius: 8,
-    }]
-  },
-  options: {
-    responsive: true, maintainAspectRatio: false,
-    plugins: { legend: { display: false } },
-    scales: {
-      x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#9aa3b5' } },
-      y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#9aa3b5' } }
-    }
-  }
-});
-</script>
 {% endblock %}
