@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Arena Rankings{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/chart.umd.min.js"></script>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a href="/" class="brand">
+        <span class="brand-mark">⚔</span>
+        <span class="brand-text">Arena<span class="brand-accent">Rankings</span></span>
+      </a>
+      <nav class="nav">
+        <a href="/" class="nav-link {{ 'active' if active == 'home' }}">Home</a>
+        <a href="/leaderboard" class="nav-link {{ 'active' if active == 'leaderboard' }}">Leaderboard</a>
+        <a href="/matches" class="nav-link {{ 'active' if active == 'matches' }}">Matches</a>
+        <a href="/tournaments" class="nav-link {{ 'active' if active == 'tournaments' }}">Tournaments</a>
+        <a href="/h2h" class="nav-link {{ 'active' if active == 'h2h' }}">Head-to-Head</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>Arena Rankings — Elo &amp; Glicko-2 ratings from plusforward.net match data.</p>
+    </div>
+  </footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

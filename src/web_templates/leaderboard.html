@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Leaderboard — Arena Rankings{% endblock %}
+{% block content %}
+<div class="section-head">
+  <h2>Leaderboard</h2>
+</div>
+
+<form class="filters" method="get" action="/leaderboard">
+  <label>Game</label>
+  <select name="game">
+    <option value="">All games</option>
+    {% for g in games %}
+    <option value="{{ g }}" {{ 'selected' if game == g }}>{{ g }}</option>
+    {% endfor %}
+  </select>
+  <label>System</label>
+  <select name="system">
+    <option value="elo" {{ 'selected' if system == 'elo' }}>Elo</option>
+    <option value="glicko2" {{ 'selected' if system == 'glicko2' }}>Glicko-2</option>
+  </select>
+  <label>Sort</label>
+  <select name="sort">
+    <option value="rating" {{ 'selected' if sort == 'rating' }}>Current rating</option>
+    <option value="peak" {{ 'selected' if sort == 'peak' }}>All-time peak</option>
+  </select>
+  <label>As of</label>
+  <input type="date" name="date" value="{{ date or '' }}">
+  <label>Limit</label>
+  <input type="number" name="limit" value="{{ limit }}" min="1" max="500" style="width:80px">
+  <button type="submit">Apply</button>
+</form>
+
+{% if date %}<p class="empty" style="padding:0 0 16px;text-align:left">Leaderboard as of <strong>{{ date }}</strong> (reconstructed from rating history).</p>{% endif %}
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Player</th>
+          {% if not game %}<th>Main game</th>{% endif %}
+          <th class="num">Rating</th>
+          {% if system == 'glicko2' %}<th class="num">RD</th>{% endif %}
+          <th class="num">W</th>
+          <th class="num">L</th>
+          <th class="num">Matches</th>
+          {% if sort == 'peak' %}<th class="num">Peak</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in players %}
+        <tr>
+          <td><span class="rank-badge {{ 'rank-1' if loop.index == 1 else 'rank-2' if loop.index == 2 else 'rank-3' if loop.index == 3 }}">{{ loop.index }}</span></td>
+          <td><a class="player-link" href="/player/{{ p.name }}">{{ p.name }}</a></td>
+          {% if not game %}<td>{{ p.main_game or '—' }}</td>{% endif %}
+          <td class="num rating {{ 'rating-elo' if system == 'elo' else 'rating-glicko2' }}">{{ "%.0f"|format(p.rating) }}</td>
+          {% if system == 'glicko2' %}<td class="num">{{ "%.0f"|format(p.rd) if p.rd else '—' }}</td>{% endif %}
+          <td class="num win">{{ p.wins }}</td>
+          <td class="num loss">{{ p.losses }}</td>
+          <td class="num">{{ p.matches }}</td>
+          {% if sort == 'peak' %}<td class="num">{{ "%.0f"|format(p.peak) if p.peak else '—' }}</td>{% endif %}
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="empty">No players found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

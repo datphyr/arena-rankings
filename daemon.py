@@ -63,6 +63,7 @@ COMPONENTS = [
     ("rank",      "rank.py",      ["--daemon"]),
     ("discord",   "bot_discord.py", ["--daemon"]),
     ("twitch",    "bot_twitch.py",  ["--daemon"]),
+    ("web",       "api_web.py",     ["--daemon"]),
 ]
 
 # Align component names to fixed width
@@ -86,6 +87,10 @@ LOGGER_NAME_MAP = {
     "bot_twitch": "twitch",
     "src.bot_twitch": "twitch",
     "twitch": "twitch",
+    "api_web": "web",
+    "src.api_web": "web",
+    "web": "web",
+    "uvicorn": "web",
     "fetcher": "fetch",
     "src.fetcher": "fetch",
     "tier_resolver": "parse",
@@ -290,6 +295,7 @@ def main():
     parser = argparse.ArgumentParser(description="Arena Rankings pipeline supervisor")
     parser.add_argument("--no-discord", action="store_true", help="Skip Discord bot")
     parser.add_argument("--no-twitch", action="store_true", help="Skip Twitch bot")
+    parser.add_argument("--no-web", action="store_true", help="Skip web site")
     parser.add_argument("--workers", "-w", type=int, default=1, help="Download workers (default: 1)")
     parser.add_argument("--delay", type=int, default=DAEMON_RESTART_DELAY, help=f"Restart delay for crashed components (default: {DAEMON_RESTART_DELAY})")
     parser.add_argument("--verbose", "-v", action="store_true", help="Debug logging")
@@ -303,6 +309,8 @@ def main():
         if name == "discord" and args.no_discord:
             continue
         if name == "twitch" and args.no_twitch:
+            continue
+        if name == "web" and args.no_web:
             continue
         if name == "download":
             default_args = [f"--workers={args.workers}"] + default_args

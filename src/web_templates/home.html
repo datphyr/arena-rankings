@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Arena Rankings — Home{% endblock %}
+{% block content %}
+<section class="hero">
+  <h1>Arena Rankings</h1>
+  <p>Player rankings across the arena FPS scene — Elo &amp; Glicko-2 ratings computed from {{ "{:,}".format(stats.total_matches) }} matches of plusforward.net data.</p>
+</section>
+
+<div class="stats-grid">
+  <div class="stat-card"><div class="stat-value">{{ "{:,}".format(stats.total_matches) }}</div><div class="stat-label">Matches</div></div>
+  <div class="stat-card"><div class="stat-value">{{ "{:,}".format(stats.total_players) }}</div><div class="stat-label">Players</div></div>
+  <div class="stat-card"><div class="stat-value">{{ "{:,}".format(stats.tournaments) }}</div><div class="stat-label">Tournaments</div></div>
+  <div class="stat-card"><div class="stat-value">{{ "{:,}".format(stats.countries) }}</div><div class="stat-label">Countries</div></div>
+  <div class="stat-card"><div class="stat-value">{{ stats.games|length }}</div><div class="stat-label">Games</div></div>
+  <div class="stat-card"><div class="stat-value">{{ stats.date_range[0].strftime('%Y') }}–{{ stats.date_range[1].strftime('%Y') }}</div><div class="stat-label">Date Range</div></div>
+</div>
+
+<div class="section-head">
+  <h2>Games</h2>
+  <a class="nav-link" href="/leaderboard">View leaderboard →</a>
+</div>
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Game</th><th class="num">Matches</th><th class="num">Players</th><th class="num">Tournaments</th></tr></thead>
+      <tbody>
+        {% for g in stats.games %}
+        <tr>
+          <td><a class="player-link" href="/leaderboard?game={{ g }}">{{ g }}</a></td>
+          <td class="num">{{ "{:,}".format(stats.matches_per_game.get(g, 0)) }}</td>
+          <td class="num">—</td>
+          <td class="num">{{ "{:,}".format(stats.tournaments_per_game.get(g, 0)) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="section-head"><h2>Tournament tiers</h2></div>
+<div class="card">
+  <div class="chart-box"><canvas id="tierChart"></canvas></div>
+</div>
+
+<div class="section-head"><h2>Top players</h2></div>
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>Player</th><th class="num">Elo</th><th class="num">Matches</th></tr></thead>
+      <tbody>
+        {% for p in top_elo %}
+        <tr>
+          <td><span class="rank-badge {{ 'rank-1' if loop.index == 1 else 'rank-2' if loop.index == 2 else 'rank-3' if loop.index == 3 }}">{{ loop.index }}</span></td>
+          <td><a class="player-link" href="/player/{{ p.player_name }}">{{ p.player_name }}</a></td>
+          <td class="num rating rating-elo">{{ "%.0f"|format(p.rating) }}</td>
+          <td class="num">{{ p.matches_played }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const tierData = {{ tier_stats.tiers | tojson }};
+new Chart(document.getElementById('tierChart'), {
+  type: 'bar',
+  data: {
+    labels: tierData.map(t => t.tier || 'unknown'),
+    datasets: [{
+      label: 'Tournaments',
+      data: tierData.map(t => t.tournaments),
+      backgroundColor: ['#f5c542', '#7c5cff', '#22d3ee', '#6b7488'],
+      borderRadius: 8,
+    }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#9aa3b5' } },
+      y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#9aa3b5' } }
+    }
+  }
+});
+</script>
+{% endblock %}

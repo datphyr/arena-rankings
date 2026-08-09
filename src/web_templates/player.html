@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}{{ player_name }} — Arena Rankings{% endblock %}
+{% block content %}
+<div class="player-head">
+  <div class="player-avatar">{{ player_name[0]|upper }}</div>
+  <div>
+    <h1>{{ player_name }}</h1>
+    <div class="player-sub">Player profile · {{ game or 'all games' }}</div>
+    <div class="rank-pills">
+      {% if rank_elo %}<span class="rank-pill">Elo rank <strong>#{{ rank_elo.rank }}</strong></span>{% endif %}
+      {% if rank_glicko %}<span class="rank-pill">Glicko-2 rank <strong>#{{ rank_glicko.rank }}</strong></span>{% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="section-head"><h2>Ratings</h2></div>
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Game</th><th>System</th><th class="num">Rating</th><th class="num">RD</th><th class="num">W</th><th class="num">L</th><th class="num">Matches</th><th class="num">Peak</th></tr>
+      </thead>
+      <tbody>
+        {% for r in ratings %}
+        <tr>
+          <td>{{ r.game }}</td>
+          <td><span class="tag {{ 'tag-minor' if r.system == 'elo' else 'tag-premier' }}">{{ r.system }}</span></td>
+          <td class="num rating {{ 'rating-elo' if r.system == 'elo' else 'rating-glicko2' }}">{{ "%.0f"|format(r.rating) }}</td>
+          <td class="num">{{ "%.0f"|format(r.rd) if r.rd else '—' }}</td>
+          <td class="num win">{{ r.wins }}</td>
+          <td class="num loss">{{ r.losses }}</td>
+          <td class="num">{{ r.matches }}</td>
+          <td class="num">{{ "%.0f"|format(r.peak) if r.peak else '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="empty">No ratings found for this player.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="section-head"><h2>Rating history</h2></div>
+<div class="card">
+  <div class="chart-box tall"><canvas id="historyChart"></canvas></div>
+</div>
+
+<div class="section-head"><h2>Recent matches</h2></div>
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Date</th><th>Player 1</th><th class="center">Score</th><th>Player 2</th><th>Game</th><th>Tournament</th></tr></thead>
+      <tbody>
+        {% for m in matches %}
+        <tr>
+          <td>{{ m.played_at.strftime("%Y-%m-%d") }}</td>
+          <td><a class="player-link" href="/player/{{ m.player1 }}">{{ m.player1 }}</a></td>
+          <td class="center"><span class="{{ 'win' if m.winner == m.player1 else 'loss' }}">{{ m.score.split('-')[0] }}</span> : <span class="{{ 'win' if m.winner == m.player2 else 'loss' }}">{{ m.score.split('-')[1] }}</span></td>
+          <td><a class="player-link" href="/player/{{ m.player2 }}">{{ m.player2 }}</a></td>
+          <td>{{ m.game }}</td>
+          <td>{{ m.tournament or '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="empty">No matches found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const hist = {{ history | tojson }};
+const labels = hist.map(h => (h.played_at || '').slice(0, 10)).reverse();
+const elo = hist.map(h => h.elo).reverse();
+const glicko = hist.map(h => h.glicko2).reverse();
+new Chart(document.getElementById('historyChart'), {
+  type: 'line',
+  data: {
+    labels,
+    datasets: [
+      { label: 'Elo', data: elo, borderColor: '#22d3ee', backgroundColor: 'rgba(34,211,238,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 2 },
+      { label: 'Glicko-2', data: glicko, borderColor: '#f472b6', backgroundColor: 'rgba(244,114,182,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 2 }
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+    plugins: { legend: { labels: { color: '#9aa3b5' } } },
+    scales: {
+      x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#9aa3b5', maxTicksLimit: 10 } },
+      y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#9aa3b5' } }
+    }
+  }
+});
+</script>
+{% endblock %}

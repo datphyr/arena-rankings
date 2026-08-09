@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Tournaments — Arena Rankings{% endblock %}
+{% block content %}
+<div class="section-head"><h2>Tournaments</h2></div>
+
+<form class="filters" method="get" action="/tournaments">
+  <label>Tier</label>
+  <select name="tier">
+    <option value="">All tiers</option>
+    <option value="premier" {{ 'selected' if tier == 'premier' }}>Premier</option>
+    <option value="major" {{ 'selected' if tier == 'major' }}>Major</option>
+    <option value="minor" {{ 'selected' if tier == 'minor' }}>Minor</option>
+  </select>
+  <label>Game</label>
+  <select name="game">
+    <option value="">All games</option>
+    {% for g in games %}
+    <option value="{{ g }}" {{ 'selected' if game == g }}>{{ g }}</option>
+    {% endfor %}
+  </select>
+  <label>Limit</label>
+  <input type="number" name="limit" value="{{ limit }}" min="1" max="200" style="width:80px">
+  <button type="submit">Apply</button>
+</form>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Tournament</th><th>Tier</th><th>Game</th><th class="num">Matches</th><th>Last match</th></tr></thead>
+      <tbody>
+        {% for t in tournaments %}
+        <tr>
+          <td>{{ t.name }}</td>
+          <td>{% if t.tier %}<span class="tag tag-{{ t.tier }}">{{ t.tier }}</span>{% else %}—{% endif %}</td>
+          <td>{{ t.game or '—' }}</td>
+          <td class="num">{{ t.matches }}</td>
+          <td>{{ t.last_match.strftime("%Y-%m-%d") if t.last_match else "—" }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="empty">No tournaments found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
