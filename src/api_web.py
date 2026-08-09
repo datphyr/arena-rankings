@@ -6,6 +6,7 @@ Runs standalone (uvicorn) or as a daemon component via api_web.py wrapper.
 from __future__ import annotations
 
 import os
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -85,6 +86,10 @@ def home(request: Request):
         ctx["stats"] = dx.get_stats()
         ctx["tier_stats"] = dx.get_tournament_stats()
         ctx["top_elo"] = dx.get_top_players(game="", system="elo", limit=10, min_matches=MIN_MATCHES_ELO)
+        # Batch-fetch glicko2 ratings for the top Elo players (combined)
+        glicko = dx.get_ratings_for_players([p["player_id"] for p in ctx["top_elo"]], system="glicko2", game="")
+        for p in ctx["top_elo"]:
+            p["glicko"] = glicko.get(p["player_id"])
         ctx["top_glicko"] = dx.get_top_players(game="", system="glicko2", limit=10, min_matches=MIN_MATCHES_GLICKO2)
     return templates.TemplateResponse(request, "home.html", ctx)
 
@@ -128,16 +133,23 @@ def player(
     name: str,
     game: str = Query("", description="Game name or alias (empty = combined)"),
     limit: int = Query(50, ge=1, le=200),
+    period: str = Query("all", description="History period: 1m, 3m, 6m, 1y, all"),
 ):
     game = _resolve_game(game)
+    # Map period to a 'since' date (ISO) for the rating history
+    since = ""
+    period_map = {"1m": 30, "3m": 90, "6m": 180, "1y": 365}
+    if period in period_map:
+        since = (datetime.now() - timedelta(days=period_map[period])).strftime("%Y-%m-%d")
     with DataProvider() as dx:
         ctx = _base_context(request, dx)
         ctx["active"] = "player"
         ctx["game"] = game
         ctx["limit"] = limit
+        ctx["period"] = period
         ctx["player_name"] = name
         ctx["ratings"] = dx.get_player_ratings(name)
-        ctx["history"] = dx.get_player_history_both(name, game=game, limit=limit)
+        ctx["history"] = dx.get_player_history_both(name, game=game, limit=limit, since=since)
         # Convert datetimes to ISO strings for JSON serialization in the chart
         for h in ctx["history"]:
             if h.get("played_at") is not None:

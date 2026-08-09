@@ -15,10 +15,27 @@
   <div class="stat-card"><div class="stat-value">{{ stats.date_range[0].strftime('%Y') }}–{{ stats.date_range[1].strftime('%Y') }}</div><div class="stat-label">Date Range</div></div>
 </div>
 
-<div class="section-head">
-  <h2>Games</h2>
-  <a class="nav-link" href="/leaderboard">View leaderboard →</a>
+<div class="section-head"><h2>Top players</h2></div>
+<div class="card">
+  <div class="table-wrap">
+    <table class="sortable">
+      <thead><tr><th data-sort="rank">#</th><th>Player</th><th>Main game</th><th class="num">Elo</th><th class="num">Glicko-2</th></tr></thead>
+      <tbody>
+        {% for p in top_elo %}
+        <tr>
+          <td><span class="rank-badge {{ 'rank-1' if loop.index == 1 else 'rank-2' if loop.index == 2 else 'rank-3' if loop.index == 3 }}">{{ loop.index }}</span></td>
+          <td><a class="player-link" href="/player/{{ p.name }}">{{ p.name }}</a></td>
+          <td>{{ p.main_game or '—' }}</td>
+          <td class="num rating rating-elo">{{ "%.0f"|format(p.rating) }}</td>
+          <td class="num rating rating-glicko2">{{ "%.0f"|format(p.glicko) if p.glicko else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
+
+<div class="section-head"><h2>Games</h2></div>
 <div class="card">
   <div class="table-wrap">
     <table class="sortable" data-default-sort="1" data-default-dir="desc">
@@ -28,7 +45,7 @@
         <tr>
           <td><a class="player-link" href="/leaderboard?game={{ g }}">{{ g }}</a></td>
           <td class="num">{{ "{:,}".format(stats.matches_per_game.get(g, 0)) }}</td>
-          <td class="num">—</td>
+          <td class="num">{{ "{:,}".format(stats.players_per_game.get(g, 0)) }}</td>
           <td class="num">{{ "{:,}".format(stats.tournaments_per_game.get(g, 0)) }}</td>
         </tr>
         {% endfor %}
@@ -40,25 +57,6 @@
 <div class="section-head"><h2>Tournament tiers</h2></div>
 <div class="card">
   <div class="chart-box"><canvas id="tierChart"></canvas></div>
-</div>
-
-<div class="section-head"><h2>Top players</h2></div>
-<div class="card">
-  <div class="table-wrap">
-    <table class="sortable">
-      <thead><tr><th>#</th><th>Player</th><th class="num">Elo</th><th class="num">Matches</th></tr></thead>
-      <tbody>
-        {% for p in top_elo %}
-        <tr>
-          <td><span class="rank-badge {{ 'rank-1' if loop.index == 1 else 'rank-2' if loop.index == 2 else 'rank-3' if loop.index == 3 }}">{{ loop.index }}</span></td>
-          <td><a class="player-link" href="/player/{{ p.name }}">{{ p.name }}</a></td>
-          <td class="num rating rating-elo">{{ "%.0f"|format(p.rating) }}</td>
-          <td class="num">{{ p.matches }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
 </div>
 {% endblock %}
 

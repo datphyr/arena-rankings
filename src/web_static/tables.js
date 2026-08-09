@@ -61,11 +61,14 @@
     ths.forEach(function (th, idx) {
       th.style.cursor = 'pointer';
       th.addEventListener('click', function () {
+        var isNum = th.classList.contains('num') || th.dataset.sort === 'num';
+        var isRank = th.dataset.sort === 'rank' || th.textContent.trim() === '#';
         if (state.col === idx) {
           state.dir = state.dir === 'asc' ? 'desc' : 'asc';
         } else {
           state.col = idx;
-          state.dir = 'asc';
+          // Default direction: ranks and text ascend, numerics descend
+          state.dir = (isRank || !isNum) ? 'asc' : 'desc';
         }
         sortTable(table, idx, state.dir);
       });

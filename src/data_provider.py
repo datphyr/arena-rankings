@@ -544,6 +544,26 @@ class DataProvider:
                 for r in rows
             ]
 
+    def get_ratings_for_players(
+        self, player_ids: list, system: str = "glicko2", game: str = ""
+    ) -> dict:
+        """Batch-fetch a rating (default glicko2, combined) for a set of player IDs.
+
+        Returns {player_id: rating_value}.
+        """
+        if not player_ids:
+            return {}
+        rows = self.db.client.execute(
+            """
+            SELECT player_id, rating
+            FROM player_ratings FINAL
+            WHERE rating_system = %(sys)s AND game_name = %(game)s
+              AND player_id IN %(ids)s
+            """,
+            {"sys": system, "game": game, "ids": tuple(player_ids)},
+        )
+        return {r[0]: round(r[1], 1) for r in rows}
+
     def _get_top_players_by_peak(
         self,
         game: str = "",
@@ -932,6 +952,7 @@ class DataProvider:
         player_name: str,
         game: str = "",
         limit: int = 50,
+        since: str = "",
     ) -> list[dict]:
         """Rating history for a player with both ELO and Glicko-2 per row.
 
@@ -940,6 +961,11 @@ class DataProvider:
         """
         player_name = self._resolve_name(player_name)
         ch_fn = _glicko_period_ch_fn()
+        since_clause = ""
+        params: dict = {"name": player_name, "game": game, "lim": limit}
+        if since:
+            since_clause = "AND e.played_at >= %(since)s"
+            params["since"] = since
         rows = self.db.client.execute(
             f"""
             SELECT e.match_id, e.played_at, e.rating,
@@ -957,10 +983,11 @@ class DataProvider:
                 LIMIT 1
             )
             AND e.rating_system = 'elo' AND e.game_name = %(game)s
+            {since_clause}
             ORDER BY e.played_at DESC, e.match_id DESC
             LIMIT %(lim)s
             """,
-            {"name": player_name, "game": game, "lim": limit},
+            params,
         )
         return [
             {
@@ -1224,6 +1251,19 @@ class DataProvider:
         matches_per_game = {name: matches for name, matches, _ in per_game}
         tournaments_per_game = {name: tcnt for name, _, tcnt in per_game}
 
+        # Players per game (distinct players who played each game)
+        players_per_game = {}
+        for row in self.db.client.execute(
+            """
+            SELECT game_name, count(DISTINCT player_id) AS players FROM (
+                SELECT game_name, player1_id AS player_id FROM matches
+                UNION ALL
+                SELECT game_name, player2_id AS player_id FROM matches
+            ) GROUP BY game_name
+            """
+        ):
+            players_per_game[row[0]] = row[1]
+
         # Active players (played in last 30 days)
         active_players = self.db.client.execute(
             "SELECT count(DISTINCT player_id) FROM ("
@@ -1255,6 +1295,7 @@ class DataProvider:
             "date_range": (date_range[0], date_range[1]),
             "matches_per_game": matches_per_game,
             "tournaments_per_game": tournaments_per_game,
+            "players_per_game": players_per_game,
             "active_players": active_players,
             "avg_matches": avg_matches,
             "tournaments": tournaments,

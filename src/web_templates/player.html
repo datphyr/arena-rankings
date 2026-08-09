@@ -41,6 +41,17 @@
 </div>
 
 <div class="section-head"><h2>Rating history</h2></div>
+<form class="filters" method="get" action="/player/{{ player_name }}">
+  <label>Period</label>
+  <select name="period">
+    <option value="1m" {{ 'selected' if period == '1m' }}>1 month</option>
+    <option value="3m" {{ 'selected' if period == '3m' }}>3 months</option>
+    <option value="6m" {{ 'selected' if period == '6m' }}>6 months</option>
+    <option value="1y" {{ 'selected' if period == '1y' }}>1 year</option>
+    <option value="all" {{ 'selected' if period == 'all' }}>All time</option>
+  </select>
+  {% if game %}<input type="hidden" name="game" value="{{ game }}">{% endif %}
+</form>
 <div class="card">
   <div class="chart-box tall"><canvas id="historyChart"></canvas></div>
 </div>
@@ -55,7 +66,7 @@
         <tr>
           <td>{{ m.played_at.strftime("%Y-%m-%d") }}</td>
           <td><a class="player-link" href="/player/{{ m.player1 }}">{{ m.player1 }}</a></td>
-          <td class="center"><span class="{{ 'win' if m.winner == m.player1 else 'loss' }}">{{ m.score.split('-')[0] }}</span> : <span class="{{ 'win' if m.winner == m.player2 else 'loss' }}">{{ m.score.split('-')[1] }}</span></td>
+          <td class="center"><a class="score-link" href="/h2h?p1={{ m.player1 }}&p2={{ m.player2 }}" title="Head-to-head"><span class="{{ 'win' if m.winner == m.player1 else 'loss' }}">{{ m.score.split('-')[0] }}</span> : <span class="{{ 'win' if m.winner == m.player2 else 'loss' }}">{{ m.score.split('-')[1] }}</span></a></td>
           <td><a class="player-link" href="/player/{{ m.player2 }}">{{ m.player2 }}</a></td>
           <td>{{ m.game }}</td>
           <td>{{ m.tournament or '—' }}</td>

@@ -257,6 +257,8 @@ a.player-link:hover { color: var(--accent-2); text-decoration: underline; }
 
 .win { color: var(--green); font-weight: 600; }
 .loss { color: var(--red); font-weight: 600; }
+.score-link { text-decoration: none; border-bottom: 1px dashed var(--border); }
+.score-link:hover { border-bottom-color: var(--accent); }
 
 /* ─── Filters / forms ────────────────────────────────────── */
 .filters {
