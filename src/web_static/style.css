@@ -187,6 +187,20 @@ thead th {
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
+/* Sortable headers */
+table.sortable thead th { cursor: pointer; user-select: none; }
+table.sortable thead th:hover { color: var(--text); }
+table.sortable thead th.sort-asc::after,
+table.sortable thead th.sort-desc::after {
+  content: '';
+  display: inline-block;
+  margin-left: 6px;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  vertical-align: middle;
+}
+table.sortable thead th.sort-asc::after { border-bottom: 5px solid var(--accent); }
+table.sortable thead th.sort-desc::after { border-top: 5px solid var(--accent); }
 tbody td {
   padding: 12px 14px;
   border-bottom: 1px solid var(--border-soft);
