@@ -6,7 +6,7 @@
       <div class="name"><span class="player-name">{% if result.p1_country %}<span class="flag" title="{{ result.p1_country|upper }}">{{ result.p1_country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ result.p1_id }}/{{ slug(result.player1) }}">{{ result.player1 }}</a></span></div>
       {% if p1_ratings.get('elo') %}<div class="rating">Elo {{ "%.0f"|format(p1_ratings['elo'].rating) }}</div>{% endif %}
       {% if p1_ratings.get('glicko2') %}<div class="rating">Glicko {{ "%.0f"|format(p1_ratings['glicko2'].rating) }}</div>{% endif %}
-      <div class="wins rating-elo">{{ result.p1_wins }}</div>
+      <div class="wins {{ 'win' if result.p1_wins > result.p2_wins else 'loss' if result.p1_wins < result.p2_wins else '' }}">{{ result.p1_wins }}</div>
       <div style="color:var(--text-faint);font-size:0.8rem;">wins</div>
     </div>
     <div class="h2h-vs">VS</div>
@@ -14,7 +14,7 @@
       <div class="name"><span class="player-name">{% if result.p2_country %}<span class="flag" title="{{ result.p2_country|upper }}">{{ result.p2_country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ result.p2_id }}/{{ slug(result.player2) }}">{{ result.player2 }}</a></span></div>
       {% if p2_ratings.get('elo') %}<div class="rating">Elo {{ "%.0f"|format(p2_ratings['elo'].rating) }}</div>{% endif %}
       {% if p2_ratings.get('glicko2') %}<div class="rating">Glicko {{ "%.0f"|format(p2_ratings['glicko2'].rating) }}</div>{% endif %}
-      <div class="wins rating-glicko2">{{ result.p2_wins }}</div>
+      <div class="wins {{ 'win' if result.p2_wins > result.p1_wins else 'loss' if result.p2_wins < result.p1_wins else '' }}">{{ result.p2_wins }}</div>
       <div style="color:var(--text-faint);font-size:0.8rem;">wins</div>
     </div>
   </div>
@@ -50,7 +50,7 @@
       <tbody>
         {% for m in result.matches %}
         <tr>
-          <td class="col-date">{{ m.played_at_str }}</td>
+          <td class="col-date"><a class="match-link" href="/match/{{ m.match_id }}" title="Match details">{{ m.played_at_str }}</a></td>
           <td class="right col-flex"><span class="player-name"><a class="player-link" href="/player/{{ m.player1_id }}/{{ slug(m.player1) }}">{{ m.player1 }}</a>{% if m.player1_country %}<span class="flag" title="{{ m.player1_country|upper }}">{{ m.player1_country|flag }}</span>{% endif %}</span></td>
           <td class="center col-score"><span class="{{ 'win' if m.winner == m.player1 else 'loss' }}">{{ m.score1 }}</span> : <span class="{{ 'win' if m.winner == m.player2 else 'loss' }}">{{ m.score2 }}</span></td>
           <td class="col-flex"><span class="player-name">{% if m.player2_country %}<span class="flag" title="{{ m.player2_country|upper }}">{{ m.player2_country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ m.player2_id }}/{{ slug(m.player2) }}">{{ m.player2 }}</a></span></td>

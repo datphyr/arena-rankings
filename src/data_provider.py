@@ -15,6 +15,7 @@ Usage:
 """
 
 import logging
+import re
 from typing import Optional
 
 from src.db_client import Database
@@ -2143,6 +2144,127 @@ class DataProvider:
             }
             for r in rows
         ]
+
+    def get_match_details(self, match_id: int) -> Optional[dict]:
+        """Full details for a single match: header info + per-map breakdown.
+
+        Returns a dict with the match header (players, score, game, tournament,
+        stage, tier, date, countries) and a `maps` list, each map carrying its
+        name, per-player score, the winner name, and the hover image path
+        (extracted from the raw HTML `data-image` attribute). Returns None if
+        the match_id doesn't exist.
+        """
+        rows = self.db.client.execute(
+            """
+            SELECT m.match_id, m.player1_name, m.player2_name, m.player1_score, m.player2_score,
+                   m.player1_id, m.player2_id, m.winner_id, m.game_name, m.tournament_name,
+                   m.stage_name, m.played_at, m.match_format, t.tier
+            FROM matches m FINAL
+            LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
+            WHERE m.match_id = %(mid)s
+            """,
+            {"mid": match_id},
+        )
+        if not rows:
+            return None
+        r = rows[0]
+        ids = {r[5], r[6]}
+        canon = self._canonical_names(list(ids))
+        countries = self._countries(list(ids))
+        p1 = canon.get(r[5], r[1])
+        p2 = canon.get(r[6], r[2])
+        winner = _winner_from_ids(r[5], r[6], r[7], p1, p2)
+
+        # Per-map breakdown (may be empty for matches without map data).
+        map_rows = self.db.client.execute(
+            """
+            SELECT map_index, map_name, player1_name, player2_name, player1_score, player2_score
+            FROM match_maps
+            WHERE match_id = %(mid)s
+            ORDER BY map_index
+            """,
+            {"mid": match_id},
+        )
+        # Map hover images live in the raw HTML as data-image attributes.
+        images: dict[str, str] = {}
+        reg = self.db.client.execute(
+            "SELECT raw_html FROM match_registry WHERE match_id = %(mid)s", {"mid": match_id}
+        )
+        if reg and reg[0][0]:
+            for m in re.finditer(
+                r'data-image="([^"]+)"[^>]*data-name="([^"]+)"', reg[0][0]
+            ):
+                images[m.group(2)] = m.group(1)
+
+        maps = []
+        for mr in map_rows:
+            mp1 = mr[2]
+            mp2 = mr[3]
+            s1, s2 = mr[4], mr[5]
+            # Map-level winner: higher frag score wins the map (draws -> None).
+            mwin = mp1 if s1 > s2 else (mp2 if s2 > s1 else None)
+            maps.append({
+                "index": mr[0],
+                "name": mr[1],
+                "player1": mp1,
+                "player2": mp2,
+                "score1": s1,
+                "score2": s2,
+                "winner": mwin,
+                "image": images.get(mr[1], ""),
+            })
+
+        return {
+            "match_id": r[0],
+            "player1": p1,
+            "player2": p2,
+            "player1_id": r[5],
+            "player2_id": r[6],
+            "player1_country": countries.get(r[5], ""),
+            "player2_country": countries.get(r[6], ""),
+            "score1": r[3],
+            "score2": r[4],
+            "winner": winner,
+            "game": r[8],
+            "tournament": r[9],
+            "stage": r[10],
+            "played_at": r[11],
+            "format": r[12],
+            "tier": r[13],
+            "maps": maps,
+        }
+
+    def get_ratings_before_match(self, match_id: int) -> dict:
+        """Ratings each player had just before a match (per game + system).
+
+        Returns a dict keyed by player_id, each value being a dict of
+        {game_name: {system: rating}}. Ratings come from the most recent
+        rating_history snapshot strictly before the match's played_at, so they
+        reflect what each player was rated going into the match (not after).
+        Empty dict if the match doesn't exist or no prior snapshots exist.
+        """
+        m = self.db.client.execute(
+            "SELECT player1_id, player2_id, played_at FROM matches FINAL WHERE match_id = %(mid)s",
+            {"mid": match_id},
+        )
+        if not m:
+            return {}
+        p1, p2, played_at = m[0][0], m[0][1], m[0][2]
+        rows = self.db.client.execute(
+            """
+            SELECT player_id, game_name, rating_system, rating
+            FROM rating_history
+            WHERE player_id IN %(ids)s
+              AND played_at < %(ts)s
+            ORDER BY player_id, played_at DESC, match_id DESC
+            LIMIT 1 BY player_id, game_name, rating_system
+            """,
+            {"ids": (p1, p2), "ts": played_at},
+        )
+        out: dict[int, dict[str, dict[str, float]]] = {}
+        for pid, game, sys, rating in rows:
+            out.setdefault(pid, {}).setdefault(game, {})[sys] = rating
+        return out
 
     # --- Stats ---
 

@@ -152,7 +152,7 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
-html { scroll-behavior: smooth; font-size: 14px; }
+html { scroll-behavior: smooth; font-size: 14px; scrollbar-gutter: stable; }
 
 body {
   font-family: var(--font);
@@ -489,6 +489,9 @@ body::before {
 
 /* ─── Tables ─────────────────────────────────────────────── */
 .table-wrap { overflow-x: auto; border-radius: var(--radius-sm); }
+.maps-table-wrap { overflow: visible; }
+.maps-card .maps-table-wrap th.col-score,
+.maps-card .maps-table-wrap td.col-score { text-align: center; }
 table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
 
 /* Global fixed layout: every table uses fixed column widths so the layout
@@ -572,6 +575,20 @@ thead th::after {
   width: 0;
   height: 0;
   margin-left: 6px;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  vertical-align: middle;
+}
+/* Mirror the same reserved space on the LEFT of every header so the
+   columns stay horizontally symmetric with the sort-arrow space on the
+   right. Always transparent (the arrow only colors in on the right via
+   ::after when actually sorted). */
+thead th::before {
+  content: '';
+  display: inline-block;
+  width: 0;
+  height: 0;
+  margin-right: 6px;
   border-left: 4px solid transparent;
   border-right: 4px solid transparent;
   vertical-align: middle;
@@ -923,6 +940,56 @@ a.page-link:hover {
 .player-aliases { color: var(--text-dim); font-weight: 500; font-size: 1.1rem; letter-spacing: 0; }
 .player-sub { color: var(--text-dim); font-size: 0.95rem; }
 
+/* Match details page */
+.map-thumb {
+  width: 72px; height: 40px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border-soft);
+  vertical-align: middle;
+  margin-right: 10px;
+}
+.map-thumb-wrap {
+  position: relative;
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 10px;
+  line-height: 0;
+}
+.map-thumb-wrap .map-thumb { margin-right: 0; }
+.map-thumb-preview {
+  position: fixed;
+  width: 300px; height: 169px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.5);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease;
+  z-index: 50;
+  pointer-events: none;
+  left: 0; top: 0;
+}
+.map-thumb-wrap:hover .map-thumb-preview {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+}
+.map-link {
+  color: var(--text);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--border);
+}
+.map-link:hover { color: var(--accent); border-bottom-color: var(--accent); }
+.match-link {
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 600;
+  transition: color 0.12s ease;
+}
+.match-link:hover { color: var(--copper); text-decoration: underline; }
+
 .rank-pills { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
 .rank-pill {
   background: linear-gradient(135deg, var(--bg-card), var(--bg-hover));
@@ -1008,7 +1075,11 @@ a.page-link:hover {
 .h2h-player .rating { color: var(--text-faint); font-size: 0.8rem; margin-top: 2px; }
 .h2h-player .rating + .rating { margin-top: 1px; }
 .h2h-player .wins { font-family: var(--mono); font-size: 2.4rem; font-weight: 800; background: linear-gradient(120deg, var(--accent), var(--gold)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.h2h-player .wins.win { background: none; -webkit-text-fill-color: var(--green); color: var(--green); }
+.h2h-player .wins.loss { background: none; -webkit-text-fill-color: var(--red); color: var(--red); }
 .h2h-vs { color: var(--text-faint); font-weight: 800; font-size: 1.4rem; }
+.h2h-vs .vs-link { color: inherit; text-decoration: none; transition: color 0.15s ease; }
+.h2h-vs .vs-link:hover { color: var(--copper); text-decoration: underline; }
 
 .h2h-breakdown {
   display: grid;

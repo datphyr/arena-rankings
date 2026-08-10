@@ -319,10 +319,14 @@ def store_parsed_match(db: Database, detail: MatchDetail, tier_resolver: TierRes
 
     # Upsert tournament (if present)
     if detail.tournament_id > 0:
-        tier = ""
         if tier_resolver:
-            tier = tier_resolver.resolve(detail.tournament_id)
-        db.upsert_tournament(detail.tournament_id, detail.tournament_name, tier)
+            # resolver.resolve() already upserts name + tier + raw_html (it
+            # fetches the PlusForward page and caches the HTML). Do NOT call
+            # upsert_tournament again here — it would overwrite raw_html with
+            # "" and clobber the cached page.
+            tier_resolver.resolve(detail.tournament_id)
+        else:
+            db.upsert_tournament(detail.tournament_id, detail.tournament_name, "")
 
     # Insert match
     db.insert_match(detail)

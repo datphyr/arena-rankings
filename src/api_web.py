@@ -422,6 +422,23 @@ def _player_page(request: Request, name: str, game: str = "", limit: int = 50, p
     return templates.TemplateResponse(request, "player.html", ctx)
 
 
+@app.get("/match/{match_id}", response_class=HTMLResponse)
+def match_details(request: Request, match_id: int):
+    """Single match details page: header scoreboard + per-map breakdown."""
+    with DataProvider() as dx:
+        ctx = _base_context(request, dx)
+        ctx["active"] = "matches"
+        m = dx.get_match_details(match_id)
+        if m is None:
+            return templates.TemplateResponse(request, "match.html", ctx, status_code=404)
+        ctx["match"] = m
+        ctx["played_at_str"] = _fmt_dt(m.get("played_at"))
+        # Ratings each player had just before the match (per game + system).
+        ctx["pre_ratings"] = dx.get_ratings_before_match(match_id)
+        # Per-map winner names are already resolved; nothing extra needed.
+    return templates.TemplateResponse(request, "match.html", ctx)
+
+
 @app.get("/matches", response_class=HTMLResponse)
 def matches(
     request: Request,

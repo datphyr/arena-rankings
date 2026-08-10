@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}{% if match %}{{ match.player1 }} vs {{ match.player2 }}{% if match.tournament %} — {{ match.tournament }}{% endif %}{% if match.stage %} — {{ match.stage }}{% endif %}{% if match.game %} — {{ match.game }}{% endif %} — Arena Rankings{% else %}Match not found — Arena Rankings{% endif %}{% endblock %}
+{% block content %}
+{% if not match %}
+<div class="section-head"><h2>Match not found</h2></div>
+<div class="card">
+  <p class="empty">No match with that ID exists.</p>
+  <p style="margin-top:12px;"><a href="/matches" class="game-link">← Back to matches</a></p>
+</div>
+{% else %}
+{% set p1r = pre_ratings.get(match.player1_id, {}) %}
+{% set p2r = pre_ratings.get(match.player2_id, {}) %}
+{% set p1_game = p1r.get(match.game, p1r.get('', {})) %}
+{% set p2_game = p2r.get(match.game, p2r.get('', {})) %}
+
+<div class="section-head"><h2>Match</h2><div class="rank-pills" style="margin-top:0;">
+  <span class="rank-pill">Game: <strong>{{ match.game or '—' }}</strong></span>
+  <span class="rank-pill">Date: <strong>{{ played_at_str }}</strong></span>
+</div></div>
+
+<div class="card">
+  <div class="h2h-score">
+    <div class="h2h-player">
+      <div class="name"><span class="player-name">{% if match.player1_country %}<span class="flag" title="{{ match.player1_country|upper }}">{{ match.player1_country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ match.player1_id }}/{{ slug(match.player1) }}">{{ match.player1 }}</a></span></div>
+      {% if p1_game.get('elo') %}<div class="rating">Elo {{ "%.0f"|format(p1_game['elo']) }}</div>{% endif %}
+      {% if p1_game.get('glicko2') %}<div class="rating">Glicko {{ "%.0f"|format(p1_game['glicko2']) }}</div>{% endif %}
+      <div class="wins {{ 'win' if match.winner == match.player1 else 'loss' }}">{{ match.score1 }}</div>
+      <div style="color:var(--text-faint);font-size:0.8rem;">{{ 'winner' if match.winner == match.player1 else 'loser' }}</div>
+    </div>
+    <div class="h2h-vs"><a class="vs-link" href="/h2h?{{ qs(p1=match.player1, p2=match.player2) }}" title="Head-to-head">VS</a></div>
+    <div class="h2h-player">
+      <div class="name"><span class="player-name">{% if match.player2_country %}<span class="flag" title="{{ match.player2_country|upper }}">{{ match.player2_country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ match.player2_id }}/{{ slug(match.player2) }}">{{ match.player2 }}</a></span></div>
+      {% if p2_game.get('elo') %}<div class="rating">Elo {{ "%.0f"|format(p2_game['elo']) }}</div>{% endif %}
+      {% if p2_game.get('glicko2') %}<div class="rating">Glicko {{ "%.0f"|format(p2_game['glicko2']) }}</div>{% endif %}
+      <div class="wins {{ 'win' if match.winner == match.player2 else 'loss' }}">{{ match.score2 }}</div>
+      <div style="color:var(--text-faint);font-size:0.8rem;">{{ 'winner' if match.winner == match.player2 else 'loser' }}</div>
+    </div>
+  </div>
+  <div class="h2h-breakdown">
+    {% if match.tier %}
+    <div class="h2h-stat">
+      <div class="label">Tier</div>
+      <div class="value" style="font-size:0.95rem;">{{ match.tier|capitalize }}</div>
+    </div>
+    {% endif %}
+    {% if match.tournament %}
+    <div class="h2h-stat">
+      <div class="label">Tournament</div>
+      <div class="value" style="font-size:0.95rem;"><a class="tournament-link" href="/matches?{{ qs(tournament=match.tournament) }}">{{ match.tournament }}</a></div>
+    </div>
+    {% endif %}
+    {% if match.stage %}
+    <div class="h2h-stat">
+      <div class="label">Stage</div>
+      <div class="value" style="font-size:0.95rem;">{{ match.stage }}</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% if match.maps %}
+<div class="card maps-card">
+  <div class="card-title"><span class="dot"></span>Maps</div>
+  <div class="table-wrap maps-table-wrap">
+    <table class="matches-table auto-cols">
+      <thead><tr><th class="col-flex">Map</th><th class="right col-score">{{ match.player1 }}</th><th class="col-score">{{ match.player2 }}</th><th class="col-flex">Winner</th></tr></thead>
+      <tbody>
+        {% for mp in match.maps %}
+        <tr>
+          <td class="col-flex">
+            {% if mp.image %}<span class="map-thumb-wrap"><img class="map-thumb" src="https://www.plusforward.net{{ mp.image }}" alt="{{ mp.name }}" loading="lazy"><img class="map-thumb-preview" src="https://www.plusforward.net{{ mp.image }}" alt="{{ mp.name }}" loading="lazy"></span>{% endif %}
+            <a class="map-link" href="/matches?{{ qs(tournament=match.tournament) }}">{{ mp.name }}</a>
+          </td>
+          <td class="right col-score"><span class="{{ 'win' if mp.winner == mp.player1 else 'loss' }}">{{ mp.score1 }}</span></td>
+          <td class="col-score"><span class="{{ 'win' if mp.winner == mp.player2 else 'loss' }}">{{ mp.score2 }}</span></td>
+          <td class="col-flex">{% if mp.winner %}<a class="player-link" href="/player/{{ match.player1_id if mp.winner == mp.player1 else match.player2_id }}/{{ slug(mp.winner) }}">{{ mp.winner }}</a>{% else %}Draw{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<p style="margin-top:16px;"><a href="/matches" class="game-link">← Back to matches</a></p>
+{% endif %}
+
+<script>
+(function () {
+  // Position each map hover preview (position:fixed) to the left of its thumbnail.
+  var wraps = document.querySelectorAll('.map-thumb-wrap');
+  wraps.forEach(function (wrap) {
+    var thumb = wrap.querySelector('.map-thumb');
+    var prev = wrap.querySelector('.map-thumb-preview');
+    if (!thumb || !prev) return;
+    function place() {
+      var r = thumb.getBoundingClientRect();
+      prev.style.left = (r.left - 310) + 'px';
+      prev.style.top = (r.top + r.height / 2 - prev.offsetHeight / 2) + 'px';
+    }
+    wrap.addEventListener('mouseenter', place);
+    wrap.addEventListener('mousemove', place);
+  });
+  window.addEventListener('scroll', function () {
+    document.querySelectorAll('.map-thumb-preview').forEach(function (p) { p.style.visibility = 'hidden'; p.style.opacity = '0'; });
+  }, true);
+})();
+</script>
+{% endblock %}
