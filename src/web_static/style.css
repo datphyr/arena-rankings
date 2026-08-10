@@ -518,7 +518,11 @@ th.col-w, td.col-w { width: 56px; }            /* wins */
 th.col-l, td.col-l { width: 56px; }            /* losses */
 th.col-m, td.col-m { width: 56px; }            /* matches */
 th.col-wr, td.col-wr { width: 56px; }          /* win rate % */
+.rival-link { color: inherit; text-decoration: none; display: block; width: 100%; }
+.rival-link:hover { color: var(--copper); text-decoration: underline; }
+th.col-delta, td.col-delta { width: 76px; }    /* rating delta (Elo / Glicko-2) */
 th.col-date, td.col-date { width: 110px; }     /* date */
+th.col-stage, td.col-stage { width: 100px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* match stage */
 th.col-score, td.col-score { width: 70px; }    /* match score */
 th.col-game, td.col-game { width: 120px; }     /* game name */
 th.col-tier, td.col-tier { width: 80px; }      /* tier tag */
@@ -532,6 +536,13 @@ table.auto-cols { table-layout: auto; }
 table.auto-cols th, table.auto-cols td { width: auto !important; }
 table.auto-cols td.col-flex { overflow: visible; text-overflow: clip; white-space: normal; }
 table.auto-cols td.col-flex .player-name { max-width: none; overflow: visible; }
+/* In auto-layout standings, keep the rank column narrow and let the Player
+   column absorb the leftover space so # and Player stay anchored left instead
+   of the extra width being spread across every column. */
+table.player-ratings-table.auto-cols th:nth-child(1),
+table.player-ratings-table.auto-cols td:nth-child(1) { width: 56px !important; }
+table.player-ratings-table.auto-cols th:nth-child(2),
+table.player-ratings-table.auto-cols td:nth-child(2) { width: auto !important; }
 /* Cap the tournament column in auto-layout tables so a single long name
    doesn't blow out the layout and push the last column (Tier) off-screen. */
 table.auto-cols th.col-tournament, table.auto-cols td.col-tournament { max-width: 300px; }
@@ -638,6 +649,7 @@ table.player-ratings-table th:nth-child(1) { width: 56px; }
 th.num { padding-left: 4px; padding-right: 4px; }
 td.center, th.center { text-align: center; }
 td.right, th.right { text-align: right; }
+td.left, th.left { text-align: left; }
 
 /* Visually hidden but available to screen readers (used to keep a column
    header label while hiding it visually, e.g. reserved RD column in Elo table). */
@@ -801,6 +813,7 @@ a.tier-link:hover .tag { filter: brightness(1.2); }
   align-items: center;
   margin-bottom: 20px;
 }
+.filters.section-filters { margin-bottom: 0; flex: 1 1 auto; justify-content: flex-end; }
 .filters select, .filters input, .filters button {
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -959,8 +972,8 @@ a.page-link:hover {
 .map-thumb-wrap .map-thumb { margin-right: 0; }
 .map-thumb-preview {
   position: fixed;
-  width: 300px; height: 169px;
-  object-fit: cover;
+  max-width: 500px;
+  max-height: 400px;
   border-radius: 8px;
   border: 1px solid var(--border);
   box-shadow: 0 12px 32px rgba(0,0,0,0.5);
@@ -1001,6 +1014,66 @@ a.page-link:hover {
 }
 .rank-pill strong { color: var(--accent-2); font-family: var(--mono); }
 
+.count-badge {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 8px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 2px 10px;
+  font-size: 0.8rem;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-weight: 600;
+}
+
+.maplist-grid {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 12px;
+}
+.map-plaque {
+  background: var(--bg-card);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  text-align: center;
+  cursor: default;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.map-plaque .map-name {
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.map-thumb-wrap .map-plaque-img {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: var(--radius-xs);
+}
+.map-plaque-preview {
+  position: fixed;
+  max-width: 500px;
+  max-height: 400px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.5);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease;
+  z-index: 50;
+  pointer-events: none;
+  left: 0; top: 0;
+}
+.map-thumb-wrap:hover .map-plaque-preview {
+  opacity: 1;
+  visibility: visible;
+}
+
 /* Player highlight cards */
 .highlight-row {
   display: grid;
@@ -1016,6 +1089,9 @@ a.page-link:hover {
   text-align: center;
   position: relative;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
 }
 .highlight-box::before {
   content: '';
@@ -1026,6 +1102,7 @@ a.page-link:hover {
   opacity: 0.6;
 }
 .highlight-box .label {
+  flex: 0 0 auto;
   color: var(--text-faint);
   font-size: 0.75rem;
   text-transform: uppercase;
@@ -1033,6 +1110,10 @@ a.page-link:hover {
   font-weight: 600;
 }
 .highlight-box .value {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-family: var(--mono);
   font-size: 1.4rem;
   font-weight: 700;
@@ -1071,13 +1152,13 @@ a.page-link:hover {
   padding: 24px 0;
 }
 .h2h-player { text-align: center; min-width: 160px; }
-.h2h-player .name { font-weight: 700; font-size: 1.1rem; }
+.h2h-player .name { font-weight: 800; font-size: 2rem; letter-spacing: -0.02em; line-height: 1.2; }
 .h2h-player .rating { color: var(--text-faint); font-size: 0.8rem; margin-top: 2px; }
 .h2h-player .rating + .rating { margin-top: 1px; }
 .h2h-player .wins { font-family: var(--mono); font-size: 2.4rem; font-weight: 800; background: linear-gradient(120deg, var(--accent), var(--gold)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
 .h2h-player .wins.win { background: none; -webkit-text-fill-color: var(--green); color: var(--green); }
 .h2h-player .wins.loss { background: none; -webkit-text-fill-color: var(--red); color: var(--red); }
-.h2h-vs { color: var(--text-faint); font-weight: 800; font-size: 1.4rem; }
+.h2h-vs { color: var(--text-faint); font-weight: 800; font-size: 4.5rem; line-height: 1; letter-spacing: -0.05em; }
 .h2h-vs .vs-link { color: inherit; text-decoration: none; transition: color 0.15s ease; }
 .h2h-vs .vs-link:hover { color: var(--copper); text-decoration: underline; }
 

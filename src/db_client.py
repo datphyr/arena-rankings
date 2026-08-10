@@ -677,6 +677,14 @@ class Database:
             {"d": from_date},
         )
 
+    def get_tournament_tier(self, tournament_id: int) -> str:
+        """Return the stored tier for a single tournament, or '' if not parsed."""
+        rows = self.client.execute(
+            "SELECT tier FROM tournaments FINAL WHERE tournament_id = %(t)s",
+            {"t": tournament_id},
+        )
+        return rows[0][0] if rows and rows[0][0] else ""
+
     def get_tournament_tiers(self) -> dict[int, str]:
         """Load all tournament tiers from the tournaments table.
 
@@ -684,5 +692,19 @@ class Database:
         """
         rows = self.client.execute(
             "SELECT tournament_id, tier FROM tournaments FINAL"
+        )
+        return {tid: tier for tid, tier in rows}
+
+    def get_tournament_tiers_with_html(self) -> dict[int, str]:
+        """Load tournament tiers for tournaments that have raw_html stored.
+
+        Used by the resolver preload — only tournaments with cached HTML
+        can skip the network fetch. Tournaments with tier but no raw_html
+        still need to be fetched.
+
+        Returns dict mapping tournament_id -> tier string.
+        """
+        rows = self.client.execute(
+            "SELECT tournament_id, tier FROM tournaments FINAL WHERE raw_html != ''"
         )
         return {tid: tier for tid, tier in rows}

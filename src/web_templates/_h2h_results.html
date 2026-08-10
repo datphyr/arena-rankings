@@ -18,19 +18,20 @@
       <div style="color:var(--text-faint);font-size:0.8rem;">wins</div>
     </div>
   </div>
-  <div class="h2h-breakdown">
-    <div class="h2h-stat">
-      <div class="label">{{ result.player1 }} win rate</div>
-      <div class="value">{{ "%.0f%%"|format(result.p1_wins / result.total * 100) if result.total > 0 else '—' }}</div>
-    </div>
-    <div class="h2h-stat">
-      <div class="label">Total Matches</div>
-      <div class="value">{{ result.total }}</div>
-    </div>
-    <div class="h2h-stat">
-      <div class="label">{{ result.player2 }} win rate</div>
-      <div class="value">{{ "%.0f%%"|format(result.p2_wins / result.total * 100) if result.total > 0 else '—' }}</div>
-    </div>
+</div>
+
+<div class="highlight-row" style="margin-top:12px;">
+  <div class="highlight-box">
+    <div class="label">{{ result.player1 }} win rate</div>
+    <div class="value copper">{{ "%.0f%%"|format(result.p1_wins / result.total * 100) if result.total > 0 else '—' }}</div>
+  </div>
+  <div class="highlight-box">
+    <div class="label">Total Matches</div>
+    <div class="value">{{ result.total }}</div>
+  </div>
+  <div class="highlight-box">
+    <div class="label">{{ result.player2 }} win rate</div>
+    <div class="value copper">{{ "%.0f%%"|format(result.p2_wins / result.total * 100) if result.total > 0 else '—' }}</div>
   </div>
 </div>
 

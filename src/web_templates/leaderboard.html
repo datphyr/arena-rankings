@@ -3,9 +3,7 @@
 {% block content %}
 <div class="section-head">
   <h2>Leaderboard</h2>
-</div>
-
-<form class="filters" method="get" action="/leaderboard">
+<form class="filters section-filters" method="get" action="/leaderboard">
   <label>Game</label>
   <select name="game">
     <option value="">All games</option>
@@ -32,6 +30,7 @@
     <option value="all" {{ 'selected' if limit == 'all' }}>All</option>
   </select>
 </form>
+</div>
 
 {% include "_leaderboard_results.html" %}
 {% endblock %}

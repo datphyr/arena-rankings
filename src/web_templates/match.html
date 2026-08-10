@@ -12,6 +12,8 @@
 {% set p2r = pre_ratings.get(match.player2_id, {}) %}
 {% set p1_game = p1r.get(match.game, p1r.get('', {})) %}
 {% set p2_game = p2r.get(match.game, p2r.get('', {})) %}
+{% set p1d = match_deltas.get(match.player1_id, {}) %}
+{% set p2d = match_deltas.get(match.player2_id, {}) %}
 
 <div class="section-head"><h2>Match</h2><div class="rank-pills" style="margin-top:0;">
   <span class="rank-pill">Game: <strong>{{ match.game or '—' }}</strong></span>
@@ -22,40 +24,39 @@
   <div class="h2h-score">
     <div class="h2h-player">
       <div class="name"><span class="player-name">{% if match.player1_country %}<span class="flag" title="{{ match.player1_country|upper }}">{{ match.player1_country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ match.player1_id }}/{{ slug(match.player1) }}">{{ match.player1 }}</a></span></div>
-      {% if p1_game.get('elo') %}<div class="rating">Elo {{ "%.0f"|format(p1_game['elo']) }}</div>{% endif %}
-      {% if p1_game.get('glicko2') %}<div class="rating">Glicko {{ "%.0f"|format(p1_game['glicko2']) }}</div>{% endif %}
+      {% if p1_game.get('elo') %}<div class="rating">Rating {{ "%.0f"|format(p1_game['elo']) }}{% if p1d.get('elo') is not none %} <span class="{{ 'rating-pos' if p1d['elo'] > 0 else 'rating-neg' if p1d['elo'] < 0 }}">({{ '%+.1f'|format(p1d['elo']) }})</span>{% endif %}</div>{% endif %}
       <div class="wins {{ 'win' if match.winner == match.player1 else 'loss' }}">{{ match.score1 }}</div>
       <div style="color:var(--text-faint);font-size:0.8rem;">{{ 'winner' if match.winner == match.player1 else 'loser' }}</div>
     </div>
     <div class="h2h-vs"><a class="vs-link" href="/h2h?{{ qs(p1=match.player1, p2=match.player2) }}" title="Head-to-head">VS</a></div>
     <div class="h2h-player">
       <div class="name"><span class="player-name">{% if match.player2_country %}<span class="flag" title="{{ match.player2_country|upper }}">{{ match.player2_country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ match.player2_id }}/{{ slug(match.player2) }}">{{ match.player2 }}</a></span></div>
-      {% if p2_game.get('elo') %}<div class="rating">Elo {{ "%.0f"|format(p2_game['elo']) }}</div>{% endif %}
-      {% if p2_game.get('glicko2') %}<div class="rating">Glicko {{ "%.0f"|format(p2_game['glicko2']) }}</div>{% endif %}
+      {% if p2_game.get('elo') %}<div class="rating">Rating {{ "%.0f"|format(p2_game['elo']) }}{% if p2d.get('elo') is not none %} <span class="{{ 'rating-pos' if p2d['elo'] > 0 else 'rating-neg' if p2d['elo'] < 0 }}">({{ '%+.1f'|format(p2d['elo']) }})</span>{% endif %}</div>{% endif %}
       <div class="wins {{ 'win' if match.winner == match.player2 else 'loss' }}">{{ match.score2 }}</div>
       <div style="color:var(--text-faint);font-size:0.8rem;">{{ 'winner' if match.winner == match.player2 else 'loser' }}</div>
     </div>
   </div>
-  <div class="h2h-breakdown">
-    {% if match.tier %}
-    <div class="h2h-stat">
-      <div class="label">Tier</div>
-      <div class="value" style="font-size:0.95rem;">{{ match.tier|capitalize }}</div>
-    </div>
-    {% endif %}
-    {% if match.tournament %}
-    <div class="h2h-stat">
-      <div class="label">Tournament</div>
-      <div class="value" style="font-size:0.95rem;"><a class="tournament-link" href="/matches?{{ qs(tournament=match.tournament) }}">{{ match.tournament }}</a></div>
-    </div>
-    {% endif %}
-    {% if match.stage %}
-    <div class="h2h-stat">
-      <div class="label">Stage</div>
-      <div class="value" style="font-size:0.95rem;">{{ match.stage }}</div>
-    </div>
-    {% endif %}
+</div>
+
+<div class="highlight-row" style="margin-top:12px;">
+  {% if match.tier %}
+  <div class="highlight-box">
+    <div class="label">Tier</div>
+    <div class="value" style="font-size:0.95rem;">{{ match.tier|capitalize }}</div>
   </div>
+  {% endif %}
+  {% if match.tournament %}
+  <div class="highlight-box">
+    <div class="label">Tournament</div>
+    <div class="value" style="font-size:0.95rem;"><a class="tournament-link" href="/matches?{{ qs(tournament=match.tournament) }}">{{ match.tournament }}</a></div>
+  </div>
+  {% endif %}
+  {% if match.stage %}
+  <div class="highlight-box">
+    <div class="label">Stage</div>
+    <div class="value" style="font-size:0.95rem;">{{ match.stage }}</div>
+  </div>
+  {% endif %}
 </div>
 
 {% if match.maps %}

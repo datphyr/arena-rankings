@@ -58,15 +58,18 @@ class TournamentResolver:
     def preload_tiers(self, tiers: dict[int, str]):
         """Pre-load known tiers into cache (avoids network fetches).
 
+        Only preloads tiers for tournaments that also have raw_html in the DB,
+        so the resolver won't skip fetching pages for tournaments missing HTML.
+
         Args:
-            tiers: dict mapping tournament_id -> tier string.
+            tiers: dict mapping tournament_id -> tier string. Should already
+            be filtered to only tournaments with raw_html.
         """
         self._cache.update(tiers)
         self._preloaded = True
-        # Only log once per process — workers call this independently
         if not getattr(TournamentResolver, '_preload_logged', False):
             TournamentResolver._preload_logged = True
-            logger.debug(f"{len(tiers)} tiers preloaded")
+            logger.debug(f"{len(tiers)} tiers preloaded (only those with raw_html)")
 
     def resolve(self, tournament_id: int) -> str:
         """Return the tier for a tournament, using cache when possible.
@@ -99,56 +102,54 @@ class TournamentResolver:
     # ------------------------------------------------------------------
 
     def _fetch_tier(self, tournament_id: int) -> str:
-        """Fetch tournament page and extract tier + metadata.
+        """Resolve tournament tier, downloading and parsing as needed.
 
-        Strategy (in order):
-        1. **DB tier check**: check if tier already resolved in tournaments table
-        2. **ClickHouse HTML**: check if raw_html already stored in tournaments table
-        3. **Network**: fetch from PlusForward with infinite retries, checking
-           DB between attempts (another worker may resolve it while we wait)
-        4. Parse the HTML for tier info using title heuristics
+        Flow:
+        1. **Check DB for parsed tier + raw_html**: if tier is already stored
+           AND raw_html is cached, return tier. Both must be present — tier
+           without HTML means a previous run clobbered the HTML.
+        2. **Check DB for raw_html only**: if HTML is cached but tier wasn't
+           parsed, parse tier + metadata from HTML, upsert, return tier.
+        3. **Download**: no cached HTML — fetch from PlusForward, parse, upsert,
+           return tier.
+
+        Tier is a product of parsing, not a gate to skip downloading. A
+        tournament with tier but no raw_html must still fetch the page.
         """
-        # 1. Check if tier is already resolved in DB (avoids network entirely).
-        tier = self._check_db_tier(tournament_id)
+        # 1. Check DB for already-parsed tier AND cached HTML.
+        tier = self._db.get_tournament_tier(tournament_id)
+        html = ""
         if tier:
-            return tier
+            html = self._db.get_tournament_html(tournament_id)
+            if html:
+                TournamentResolver.db_hits += 1
+                return tier
+            # Tier exists but raw_html is missing — fall through to download.
+            # This happens when a previous run clobbered the HTML (the
+            # match_parser.py:339 bug that's now fixed).
+            logger.debug(f"tournament {tournament_id}: tier={tier!r} but no raw_html, fetching")
 
-        # 2. Try ClickHouse HTML cache.
-        html = self._db.get_tournament_html(tournament_id)
+        # 2. Check DB for cached HTML — parse tier + metadata from it.
+        if not html:
+            html = self._db.get_tournament_html(tournament_id)
         if html:
             TournamentResolver.db_hits += 1
             return self._resolve_from_html(html, tournament_id)
 
         # 3. Fetch from network with infinite retries.
-        #    Between retries, check DB — another worker may have resolved
-        #    the tier while we were waiting.
+        #    Between retries, check DB — another worker may store HTML
+        #    while we were waiting.
         url = f"{BASE_URL}/post/{tournament_id}/"
         TournamentResolver.network_fetches += 1
-        result = self._fetch_with_db_checks(url, tournament_id)
-        if result is None:
+        html = self._fetch_with_db_checks(url, tournament_id)
+        if html is None:
             # Should not happen with infinite retries, but guard anyway.
             TournamentResolver.failures += 1
             logger.error(f"tier fetch failed: {tournament_id} (retries exhausted)")
             return DEFAULT_TIER
 
-        # result is either HTML string (we fetched it) or a tier string
-        # (another worker resolved it — return directly).
-        if result in ("premier", "major", "minor"):
-            return result
-
         # We got HTML — parse and store.
-        return self._resolve_from_html(result, tournament_id)
-
-    def _check_db_tier(self, tournament_id: int) -> str:
-        """Check DB for already-resolved tier. Returns tier or ''."""
-        tier_rows = self._db.client.execute(
-            "SELECT tier FROM tournaments FINAL WHERE tournament_id = %(t)s",
-            {"t": tournament_id},
-        )
-        if tier_rows and tier_rows[0][0]:
-            TournamentResolver.db_hits += 1
-            return tier_rows[0][0]
-        return ""
+        return self._resolve_from_html(html, tournament_id)
 
     def _resolve_from_html(self, html: str, tournament_id: int) -> str:
         """Parse tier + tournament metadata from HTML and upsert to DB."""
@@ -174,9 +175,8 @@ class TournamentResolver:
         """Fetch URL with infinite retries, checking DB between attempts.
 
         Returns:
-            HTML string if fetched successfully.
-            Tier string (e.g. "minor") if another worker resolved it while
-                we were retrying.
+            HTML string if fetched successfully or if another worker stored
+                raw_html while we were retrying.
             None if all retries exhausted (should not happen with infinite).
         """
         attempt = 0
@@ -185,12 +185,12 @@ class TournamentResolver:
             if html:
                 return html
 
-            # Fetch failed. Check if another worker resolved the tier
-            # (and stored HTML) while we were trying.
-            tier = self._check_db_tier(tournament_id)
-            if tier:
-                logger.debug(f"tournament {tournament_id} resolved by another worker")
-                return tier
+            # Fetch failed. Check if another worker resolved it while we were
+            # trying — but only short-circuit if raw_html was also stored.
+            html = self._db.get_tournament_html(tournament_id)
+            if html:
+                logger.debug(f"tournament {tournament_id} html stored by another worker")
+                return html
 
             attempt += 1
             wait = min(RETRY_BACKOFF ** attempt, 60)

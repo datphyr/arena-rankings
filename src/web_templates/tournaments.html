@@ -1,9 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Tournaments — Arena Rankings{% endblock %}
 {% block content %}
-<div class="section-head"><h2>Tournaments</h2></div>
-
-<form class="filters" method="get" action="/tournaments">
+<div class="section-head"><h2>Tournaments</h2>
+<form class="filters section-filters" method="get" action="/tournaments">
   <label>Tier</label>
   <select name="tier">
     <option value="">All tiers</option>
@@ -26,6 +25,7 @@
   </select>
   <button type="submit" name="clear" value="1" class="btn-clear">Clear filters</button>
 </form>
+</div>
 
 <div class="card">
   <div class="card-title"><span class="dot"></span>Tier Breakdown</div>

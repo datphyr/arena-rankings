@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}{{ t.name if t else 'Tournament not found' }} — Arena Rankings{% endblock %}
+{% block content %}
+{% if not t %}
+<div class="section-head"><h2>Tournament not found</h2></div>
+<div class="card">
+  <p class="empty">No tournament with that ID exists.</p>
+  <p style="margin-top:12px;"><a href="/tournaments" class="game-link">← Back to tournaments</a></p>
+</div>
+{% else %}
+
+<div class="player-head">
+  <div class="player-avatar" style="background: {{ t.tournament_id|avatar_gradient }};">{{ t.name[0]|upper }}</div>
+  <div>
+    <h1><span class="player-name">{{ t.name }}</span></h1>
+    <div class="rank-pills">
+      {% if t.tier %}
+      <span class="rank-pill">Tier: <span class="tag tag-{{ t.tier }}">{{ t.tier }}</span></span>
+      {% endif %}
+      {% if t.game %}
+      <span class="rank-pill">Game: <a class="game-link" href="/leaderboard?game={{ t.game }}">{{ t.game }}</a></span>
+      {% endif %}
+      {% if t.prize_money %}
+      <span class="rank-pill">Prize pool: <strong>{{ t.prize_money }}</strong></span>
+      {% endif %}
+      {% if t.players_count %}
+      <span class="rank-pill">Players: <strong>{{ "{:,}".format(t.players_count) }}</strong></span>
+      {% endif %}
+      {% if t.matches_count %}
+      <span class="rank-pill">Matches: <strong>{{ "{:,}".format(t.matches_count) }}</strong></span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="highlight-row">
+  {% if t.tourney_format %}
+  <div class="highlight-box">
+    <div class="label">Tourney Format</div>
+    <div class="value" style="font-size:0.9rem;">{{ t.tourney_format }}</div>
+  </div>
+  {% endif %}
+  {% if t.schedule_start and t.schedule_start.year > 1970 %}
+  <div class="highlight-box">
+    <div class="label">Schedule</div>
+    <div class="value" style="font-size:0.95rem;">{{ schedule_start_str }}{% if t.schedule_end and t.schedule_end != t.schedule_start %} — {{ schedule_end_str }}{% endif %}</div>
+  </div>
+  {% endif %}
+  {% if t.match_format %}
+  <div class="highlight-box">
+    <div class="label">Match Format</div>
+    <div class="value" style="font-size:0.9rem;white-space:pre-line;">{{ t.match_format }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{% if maplist %}
+<div class="highlight-row" style="margin-top:12px;">
+  <div class="highlight-box" style="padding:16px;padding-bottom:24px;overflow:visible;grid-column:1 / -1;">
+    <div class="label">Maps</div>
+    <div class="value" style="display:flex;flex-wrap:wrap;gap:0;justify-content:center;align-items:flex-start;font-size:0.85rem;font-weight:400;flex:0 0 auto;">
+      {% for mp in maplist %}
+      {% set img = map_images.get(mp, '') %}{% set img_src = 'https://www.plusforward.net' + img if img else '/static/map-unknown.svg' %}
+      <div class="map-thumb-wrap" title="{{ mp }}" style="text-align:center;flex:1 1 0;min-width:0;align-self:stretch;">
+        <img class="map-plaque-img" src="{{ img_src }}" alt="{{ mp|mapname }}" loading="lazy">
+        <img class="map-plaque-preview" src="{{ img_src }}" alt="{{ mp|mapname }}" loading="lazy">
+        <div style="font-family:var(--mono);font-size:0.85rem;padding-top:0.85rem;word-wrap:break-word;overflow-wrap:anywhere;line-height:1.2;">{{ mp|mapname }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if rankings %}
+<div class="section-head"><h2>Final Standings</h2></div>
+<div class="card">
+  <div class="table-wrap" style="overflow:visible;">
+    <table class="player-ratings-table auto-cols">
+      <thead>
+        <tr>
+          <th class="num col-num">#</th>
+          <th class="col-flex">Player</th>
+          <th class="num col-delta">Rating</th>
+          <th class="num col-wr">Prize</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rankings %}
+        <tr>
+          <td class="num col-num">
+            {% set pos = r.position | ranknum %}
+            <span class="rank-badge {{ 'rank-1' if pos == 1 else 'rank-2' if pos == 2 else 'rank-3' if pos == 3 else 'rank-4' if pos == 4 else 'rank-5' if pos == 5 }}">{{ pos }}</span>
+          </td>
+          <td class="col-flex"><span class="player-name">{% if r.country %}<span class="flag" title="{{ r.country|upper }}">{{ r.country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ r.player_id }}/{{ slug(r.player_name) }}">{{ r.player_name }}</a></span></td>
+          <td class="num col-delta">{% if r.elo_delta is not none %}<span class="{{ 'win' if r.elo_delta > 0 else 'loss' if r.elo_delta < 0 }}">{{ '%+.1f'|format(r.elo_delta) }}</span>{% else %}—{% endif %}</td>
+          <td class="num col-wr">{{ r.prize if r.prize else '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="empty">No final standings recorded.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="section-head"><h2>Matches</h2></div>
+<div class="card">
+  <div class="table-wrap">
+    <table class="matches-table auto-cols">
+      <thead><tr>
+        <th class="col-date">Date</th>
+        <th class="col-stage">Stage</th>
+        <th class="num col-delta">Rating</th>
+        <th class="right col-flex">Player 1</th>
+        <th class="center col-score">Score</th>
+        <th class="col-flex">Player 2</th>
+        <th class="left col-delta">Rating</th>
+      </tr></thead>
+      <tbody>
+        {% for m in matches %}
+        <tr>
+          <td class="col-date"><a class="match-link" href="/match/{{ m.match_id }}" title="Match details">{{ m.played_at_str }}</a></td>
+          <td class="col-stage">{{ m.stage or '—' }}</td>
+          <td class="num col-delta">{% if m.p1_elo_delta is not none %}<span class="{{ 'win' if m.p1_elo_delta > 0 else 'loss' if m.p1_elo_delta < 0 }}">{{ '%+.1f'|format(m.p1_elo_delta) }}</span>{% else %}—{% endif %}</td>
+          <td class="right col-flex"><span class="player-name"><a class="player-link" href="/player/{{ m.player1_id }}/{{ slug(m.player1) }}">{{ m.player1 }}</a>{% if m.player1_country %}<span class="flag" title="{{ m.player1_country|upper }}">{{ m.player1_country|flag }}</span>{% endif %}</span></td>
+          <td class="center col-score"><a class="score-link" href="/h2h?p1={{ m.player1 }}&p2={{ m.player2 }}" title="Head-to-head"><span class="{{ 'win' if m.winner == m.player1 else 'loss' }}">{{ m.score1 }}</span> : <span class="{{ 'win' if m.winner == m.player2 else 'loss' }}">{{ m.score2 }}</span></a></td>
+          <td class="col-flex"><span class="player-name">{% if m.player2_country %}<span class="flag" title="{{ m.player2_country|upper }}">{{ m.player2_country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ m.player2_id }}/{{ slug(m.player2) }}">{{ m.player2 }}</a></span></td>
+          <td class="left col-delta">{% if m.p2_elo_delta is not none %}<span class="{{ 'win' if m.p2_elo_delta > 0 else 'loss' if m.p2_elo_delta < 0 }}">{{ '%+.1f'|format(m.p2_elo_delta) }}</span>{% else %}—{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="empty">No matches found for this tournament.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<p style="margin-top:16px;"><a href="/tournaments" class="game-link">← Back to tournaments</a></p>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var plaques = document.querySelectorAll('.map-thumb-wrap');
+  plaques.forEach(function (plaque) {
+    var prev = plaque.querySelector('.map-plaque-preview');
+    if (!prev) return;
+    function place() {
+      var r = plaque.getBoundingClientRect();
+      prev.style.left = (r.left + r.width / 2 - 150) + 'px';
+      prev.style.top = (r.top - 185) + 'px';
+    }
+    plaque.addEventListener('mouseenter', place);
+    plaque.addEventListener('mousemove', place);
+  });
+  window.addEventListener('scroll', function () {
+    document.querySelectorAll('.map-plaque-preview').forEach(function (p) { p.style.visibility = 'hidden'; p.style.opacity = '0'; });
+  }, true);
+})();
+</script>
+{% endblock %}

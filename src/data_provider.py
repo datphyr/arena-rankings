@@ -14,6 +14,7 @@ Usage:
     dx.close()
 """
 
+import bisect
 import logging
 import re
 from typing import Optional
@@ -157,6 +158,8 @@ def _sort_tournaments(rows: list, sort_col: str, sort_dir: str = "desc") -> list
             return (r.get("game") or "").lower()
         if c == "matches":
             return r.get("matches") or 0
+        if c == "players":
+            return r.get("players") or 0
         if c == "last_match":
             return r.get("last_match") or None
         if c == "first_match":
@@ -780,6 +783,7 @@ class DataProvider:
         # Count matches per tournament
         t_ids = [r[0] for r in rows]
         match_counts = {}
+        player_counts = {}
         if t_ids:
             mc_params = {"ids": tuple(t_ids)}
             mc_query = (
@@ -792,6 +796,21 @@ class DataProvider:
             mc_query += " GROUP BY tournament_id"
             mc_rows = self.db.client.execute(mc_query, mc_params)
             match_counts = {r[0]: r[1] for r in mc_rows}
+            # Count distinct players per tournament (union of both columns)
+            pc_params = {"ids": tuple(t_ids)}
+            pc_where = ""
+            if game:
+                pc_params["game"] = game
+                pc_where = " AND game_name = %(game)s"
+            pc_query = (
+                "SELECT tournament_id, uniqExact(pid) FROM ("
+                "SELECT tournament_id, player1_id AS pid FROM matches FINAL WHERE tournament_id IN %(ids)s" + pc_where + " "
+                "UNION ALL "
+                "SELECT tournament_id, player2_id AS pid FROM matches FINAL WHERE tournament_id IN %(ids)s" + pc_where + " "
+                ") GROUP BY tournament_id"
+            )
+            pc_rows = self.db.client.execute(pc_query, pc_params)
+            player_counts = {r[0]: r[1] for r in pc_rows}
         tournaments = [
             {
                 "tournament_id": r[0],
@@ -800,6 +819,7 @@ class DataProvider:
                 "first_match": r[3],
                 "last_match": r[4],
                 "matches": match_counts.get(r[0], 0),
+                "players": player_counts.get(r[0], 0),
                 "game": r[5] or "",
             }
             for r in rows
@@ -857,6 +877,261 @@ class DataProvider:
                 for r in rows
             ]
         }
+
+    def get_tournament_details(self, tournament_id: int) -> Optional[dict]:
+        """Return parsed tournament metadata (game, prize, formats, schedule,
+        maplist, rankings) for a single tournament by ID. None if missing."""
+        det = self.db.get_tournament_details(tournament_id)
+        if det is None:
+            return None
+        # Attach match count + first/last match date for the header.
+        mrow = self.db.client.execute(
+            "SELECT count(), min(played_at), max(played_at) "
+            "FROM matches FINAL WHERE tournament_id = %(t)s",
+            {"t": tournament_id},
+        )
+        det["matches_count"] = mrow[0][0] if mrow else 0
+        det["first_match"] = mrow[0][1] if mrow else None
+        det["last_match"] = mrow[0][2] if mrow else None
+        # Distinct player count (union of both player columns), same as the
+        # tournaments table's "Players" column.
+        prow = self.db.client.execute(
+            "SELECT uniqExact(pid) FROM ("
+            "SELECT player1_id AS pid FROM matches FINAL WHERE tournament_id = %(t)s "
+            "UNION ALL "
+            "SELECT player2_id AS pid FROM matches FINAL WHERE tournament_id = %(t)s "
+            ") ",
+            {"t": tournament_id},
+        )
+        det["players_count"] = prow[0][0] if prow else 0
+        return det
+
+    def get_tournament_map_images(self, tournament_id: int) -> dict:
+        """Return {map_name: image_path} for maps in this tournament.
+        Extracts data-image attributes from the tournament's own raw_html."""
+        rows = self.db.client.execute(
+            "SELECT raw_html FROM tournaments WHERE tournament_id = %(t)s",
+            {"t": tournament_id},
+        )
+        if not rows or not rows[0][0]:
+            return {}
+        raw = rows[0][0]
+        images: dict[str, str] = {}
+        for m in re.finditer(
+            r'data-image="([^"]+)"[^>]*data-name="([^"]+)"', raw
+        ):
+            images[m.group(2)] = m.group(1)
+        return images
+
+    def get_tournament_matches(self, tournament_id: int, limit: int = 20) -> list[dict]:
+        """Recent matches belonging to a tournament (by ID, unambiguous even
+        when tournament names collide). Newest first."""
+        rows = self.db.client.execute(
+            """
+            SELECT m.match_id, m.player1_name, m.player2_name, m.player1_score, m.player2_score,
+                   m.player1_id, m.player2_id, m.winner_id, m.game_name, m.stage_name, m.played_at, t.tier
+            FROM matches m FINAL
+            LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
+            WHERE m.tournament_id = %(t)s
+            ORDER BY m.played_at ASC
+            LIMIT %(lim)s
+            """,
+            {"t": tournament_id, "lim": limit},
+        )
+        # Batch-fetch country codes for all involved players (from players table).
+        pids = {r[5] for r in rows} | {r[6] for r in rows}
+        countries = self._countries(list(pids))
+        return [
+            {
+                "match_id": r[0],
+                "player1": r[1],
+                "player2": r[2],
+                "score1": r[3],
+                "score2": r[4],
+                "player1_id": r[5],
+                "player2_id": r[6],
+                "player1_country": countries.get(r[5], ""),
+                "player2_country": countries.get(r[6], ""),
+                "winner": r[1] if r[7] == r[5] else r[2] if r[7] == r[6] else "",
+                "game": r[8],
+                "stage": r[9],
+                "played_at": r[10],
+                "tier": r[11],
+            }
+            for r in rows
+        ]
+
+    def get_tournament_rating_deltas(self, tournament_id: int) -> dict:
+        """Elo + Glicko-2 rating change for each player in a tournament's final
+        standings, over the tournament's own time window.
+
+        For each player: delta = rating at/before the tournament's last match
+        minus rating just before the tournament's first match. Both systems are
+        read from rating_history (same game as the tournament). Players with no
+        snapshots on either side get None for that system.
+
+        Returns dict keyed by player_id: {player_id: {'elo': float|None,
+        'glicko2': float|None}}.
+        """
+        det = self.db.get_tournament_details(tournament_id)
+        if det is None:
+            return {}
+        game = det.get("game") or ""
+        # Tournament time window from the matches table.
+        mrow = self.db.client.execute(
+            "SELECT min(played_at), max(played_at) FROM matches FINAL WHERE tournament_id = %(t)s",
+            {"t": tournament_id},
+        )
+        if not mrow or not mrow[0][0] or not mrow[0][1]:
+            return {}
+        first_ts, last_ts = mrow[0][0], mrow[0][1]
+        # Players in the final standings.
+        try:
+            import json as _json
+            standings = _json.loads(det.get("rankings") or "[]")
+        except Exception:
+            standings = []
+        pids = [r.get("player_id") for r in standings if r.get("player_id")]
+        if not pids:
+            return {}
+
+        out: dict[int, dict[str, float | None]] = {p: {"elo": None, "glicko2": None} for p in pids}
+        for sys in ("elo", "glicko2"):
+            # Start rating: most recent snapshot strictly before the first match.
+            start_rows = self.db.client.execute(
+                """
+                SELECT player_id, rating
+                FROM rating_history
+                WHERE player_id IN %(ids)s AND rating_system = %(sys)s
+                  AND game_name = %(game)s AND played_at < %(first)s
+                ORDER BY player_id, played_at DESC, match_id DESC
+                LIMIT 1 BY player_id
+                """,
+                {"ids": tuple(pids), "sys": sys, "game": game, "first": first_ts},
+            )
+            # Fallback start rating for players with no snapshot before the
+            # first match (their rating history begins inside this tournament):
+            # use their earliest snapshot within the window as the baseline so
+            # we still report their total change across the event instead of
+            # a blank. Only fills in players missing from start_rows.
+            have_start = {r[0] for r in start_rows}
+            missing = [p for p in pids if p not in have_start]
+            fallback_start = {}
+            if missing:
+                fb_rows = self.db.client.execute(
+                    """
+                    SELECT player_id, rating
+                    FROM rating_history
+                    WHERE player_id IN %(ids)s AND rating_system = %(sys)s
+                      AND game_name = %(game)s
+                      AND played_at >= %(first)s AND played_at <= %(last)s
+                    ORDER BY player_id, played_at ASC, match_id ASC
+                    LIMIT 1 BY player_id
+                    """,
+                    {"ids": tuple(missing), "sys": sys, "game": game,
+                     "first": first_ts, "last": last_ts},
+                )
+                fallback_start = {r[0]: r[1] for r in fb_rows}
+            start_map = {r[0]: r[1] for r in start_rows}
+            start_map.update(fallback_start)
+            # End rating: most recent snapshot at/before the last match.
+            end_rows = self.db.client.execute(
+                """
+                SELECT player_id, rating
+                FROM rating_history
+                WHERE player_id IN %(ids)s AND rating_system = %(sys)s
+                  AND game_name = %(game)s AND played_at <= %(last)s
+                ORDER BY player_id, played_at DESC, match_id DESC
+                LIMIT 1 BY player_id
+                """,
+                {"ids": tuple(pids), "sys": sys, "game": game, "last": last_ts},
+            )
+            end_map = {r[0]: r[1] for r in end_rows}
+            for pid in pids:
+                if pid in start_map and pid in end_map:
+                    out[pid][sys] = round(end_map[pid] - start_map[pid], 1)
+        return out
+
+    def get_matches_rating_deltas(self, match_ids: list[int], game: str = "") -> dict:
+        """Per-match Elo + Glicko-2 rating change for each player in a set of
+        matches (same game as the tournament).
+
+        For each match and each of its two players, delta = the player's rating
+        snapshot at that match minus their rating snapshot at the previous match
+        (same game + system). Winner gains, loser loses, so the two deltas are
+        roughly symmetric. Players with no prior snapshot get None.
+
+        Returns dict keyed by match_id: {match_id: {player_id: {'elo': float|None,
+        'glicko2': float|None}}}.
+        """
+        if not match_ids:
+            return {}
+        # Match timestamps + players.
+        mrows = self.db.client.execute(
+            """
+            SELECT match_id, player1_id, player2_id, played_at
+            FROM matches FINAL
+            WHERE match_id IN %(ids)s
+            """,
+            {"ids": tuple(match_ids)},
+        )
+        if not mrows:
+            return {}
+        match_info = {r[0]: (r[1], r[2], r[3]) for r in mrows}
+        pids = {p for _, (p1, p2, _) in match_info.items() for p in (p1, p2)}
+        out: dict[int, dict[int, dict[str, float | None]]] = {
+            mid: {p: {"elo": None, "glicko2": None} for p in (p1, p2)}
+            for mid, (p1, p2, _) in match_info.items()
+        }
+        for sys in ("elo", "glicko2"):
+            # Rating at each match (snapshot tagged with that match_id).
+            at_rows = self.db.client.execute(
+                """
+                SELECT match_id, player_id, rating
+                FROM rating_history
+                WHERE match_id IN %(ids)s AND rating_system = %(sys)s
+                  AND game_name = %(game)s
+                """,
+                {"ids": tuple(match_ids), "sys": sys, "game": game},
+            )
+            at_map: dict[int, dict[int, float]] = {}
+            for mid, pid, rating in at_rows:
+                at_map.setdefault(mid, {})[pid] = rating
+            # Previous snapshot per player: the max played_at strictly before
+            # each match's played_at. Fetch each player's full history in ONE
+            # query (sorted), then find the previous snapshot per match with a
+            # binary search — avoids the previous N+1 (one query per match,
+            # which made large tournament pages slow).
+            prev_rows = self.db.client.execute(
+                """
+                SELECT player_id, played_at, rating
+                FROM rating_history
+                WHERE player_id IN %(ids)s AND rating_system = %(sys)s
+                  AND game_name = %(game)s
+                ORDER BY player_id, played_at, match_id
+                """,
+                {"ids": tuple(pids), "sys": sys, "game": game},
+            )
+            hist: dict[int, list[tuple]] = {}
+            for pid, ts, rating in prev_rows:
+                hist.setdefault(pid, []).append((ts, rating))
+            for mid, (p1, p2, played_at) in match_info.items():
+                prev_map: dict[int, float] = {}
+                for pid in (p1, p2):
+                    h = hist.get(pid, [])
+                    idx = bisect.bisect_left(h, (played_at,))
+                    prev_map[pid] = h[idx - 1][1] if idx > 0 else None
+                for pid in (p1, p2):
+                    cur = at_map.get(mid, {}).get(pid)
+                    prev = prev_map.get(pid)
+                    if cur is not None and prev is None:
+                        # Debut match: no prior snapshot. Use the initial rating
+                        # baseline (both Elo and Glicko-2 start new players at
+                        # 1500.0) so we still report the change from that match.
+                        prev = 1500.0
+                    if cur is not None and prev is not None:
+                        out[mid][pid][sys] = round(cur - prev, 1)
+        return out
 
     # --- Leaderboards ---
 
@@ -1853,7 +2128,8 @@ class DataProvider:
         tournament_match = tournament_match or match
         query = """
             SELECT m.match_id, m.player1_name, m.player2_name, m.player1_score, m.player2_score,
-                   m.player1_id, m.player2_id, m.winner_id, m.game_name, m.tournament_name, m.stage_name, m.played_at, t.tier
+                   m.player1_id, m.player2_id, m.winner_id, m.game_name, m.tournament_name, m.stage_name, m.played_at, t.tier,
+                   m.tournament_id
             FROM matches m FINAL
             LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
         """
@@ -1915,6 +2191,7 @@ class DataProvider:
                 "winner": _winner_from_ids(r[5], r[6], r[7], canon.get(r[5], r[1]), canon.get(r[6], r[2])),
                 "game": r[8],
                 "tournament": r[9],
+                "tournament_id": r[13],
                 "stage": r[10],
                 "played_at": r[11],
                 "tier": r[12],
@@ -2063,18 +2340,26 @@ class DataProvider:
         """
         query = """
             SELECT
-                max(length(name)),
-                max(length(tier)),
-                max(length(game_name)),
-                max(length(toString(cnt)))
+                max(length(name)), max(length(tier)), max(length(game_name)),
+                max(length(toString(cnt))), max(length(toString(pcnt)))
             FROM (
-                SELECT t.tournament_id, t.name, t.tier,
-                       any(m.game_name) AS game_name,
-                       count(m.match_id) AS cnt
+                SELECT
+                    t.name AS name,
+                    t.tier AS tier,
+                    any(m.game_name) AS game_name,
+                    count(m.match_id) AS cnt,
+                    p.pcnt AS pcnt
                 FROM tournaments t FINAL
                 LEFT JOIN matches m ON m.tournament_id = t.tournament_id
+                LEFT JOIN (
+                    SELECT tournament_id, uniqExact(pid) AS pcnt FROM (
+                        SELECT tournament_id, player1_id AS pid FROM matches
+                        UNION ALL
+                        SELECT tournament_id, player2_id AS pid FROM matches
+                    ) GROUP BY tournament_id
+                ) p ON p.tournament_id = t.tournament_id
                 WHERE t.name != ''
-                GROUP BY t.tournament_id, t.name, t.tier
+                GROUP BY t.tournament_id, t.name, t.tier, p.pcnt
             )
         """
         rows = self.db.client.execute(query)
@@ -2086,6 +2371,7 @@ class DataProvider:
             "tier": r[1] or 0,
             "game": r[2] or 0,
             "matches": r[3] or 0,
+            "players": r[4] or 0,
         }
 
     # --- Player matches ---
@@ -2103,7 +2389,8 @@ class DataProvider:
             return []
         query = """
             SELECT m.match_id, m.player1_name, m.player2_name, m.player1_score, m.player2_score,
-                   m.player1_id, m.player2_id, m.winner_id, m.game_name, m.tournament_name, m.stage_name, m.played_at, t.tier
+                   m.player1_id, m.player2_id, m.winner_id, m.game_name, m.tournament_name, m.stage_name, m.played_at, t.tier,
+                   m.tournament_id
             FROM matches m FINAL
             LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
             WHERE (m.player1_id = %(pid)s OR m.player2_id = %(pid)s)
@@ -2138,6 +2425,7 @@ class DataProvider:
                 "winner": _winner_from_ids(r[5], r[6], r[7], canon.get(r[5], r[1]), canon.get(r[6], r[2])),
                 "game": r[8],
                 "tournament": r[9],
+                "tournament_id": r[13],
                 "stage": r[10],
                 "played_at": r[11],
                 "tier": r[12],
@@ -2657,6 +2945,7 @@ class DataProvider:
         rivals = [
             {
                 "name": opp_canon.get(r[0], f"player_{r[0]}"),
+                "id": r[0],
                 "country": opp_countries.get(r[0], ""),
                 "matches": r[1],
                 "wins": r[2],

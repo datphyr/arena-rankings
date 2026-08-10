@@ -84,6 +84,25 @@ def _mapname(name: str) -> str:
 templates.env.filters["mapname"] = _mapname
 
 
+def _ranknum(pos) -> int:
+    """Extract the numeric rank from an ordinal position string ('1st'->1,
+    '2nd'->2, '3rd'->3, '10th'->10). Returns the int or 0 if not parseable."""
+    s = str(pos or "").strip().lstrip("#")
+    digits = ""
+    for ch in s:
+        if ch.isdigit():
+            digits += ch
+        elif digits:
+            break
+    try:
+        return int(digits) if digits else 0
+    except ValueError:
+        return 0
+
+
+templates.env.filters["ranknum"] = _ranknum
+
+
 def _fmt_dt(d) -> str:
     """Format a datetime as 'YYYY-MM-DD, HH:MM' (comma between date and time).
     Shared by all templates via the 'dt' Jinja filter."""
@@ -444,6 +463,10 @@ def match_details(request: Request, match_id: int):
         ctx["played_at_str"] = _fmt_dt(m.get("played_at"))
         # Ratings each player had just before the match (per game + system).
         ctx["pre_ratings"] = dx.get_ratings_before_match(match_id)
+        # Per-match Elo + Glicko-2 deltas for both players (same game as the
+        # match), for the delta display on the scoreboard.
+        md = dx.get_matches_rating_deltas([match_id], game=m.get("game") or "")
+        ctx["match_deltas"] = md.get(match_id, {})
         # Per-map winner names are already resolved; nothing extra needed.
     return templates.TemplateResponse(request, "match.html", ctx)
 
@@ -586,8 +609,9 @@ def tournaments(
             "name": min(_cw.get("name", 0) * _CH + _PAD, _MAX_NAME),
             "tier": _cw.get("tier", 0) * _CH + _PAD,
             "game": _cw.get("game", 0) * _CH + _PAD,
-            "matches": _cw.get("matches", 0) * _CH + _PAD,
-            "date": 10 * _CH + _PAD,  # 'YYYY-MM-DD' = 10 chars
+            "matches": max(_cw.get("matches", 0), len("Matches")) * _CH + _PAD,
+            "players": max(_cw.get("players", 0), len("Players")) * _CH + _PAD,
+            "date": max(10, len("Last Match")) * _CH + _PAD + 24,  # header 'LAST MATCH' + sort arrow space
         }
         ctx["page"] = page
         ctx["total"] = total
@@ -599,6 +623,80 @@ def tournaments(
     if partial:
         return templates.TemplateResponse(request, "_tournaments_results.html", ctx)
     return templates.TemplateResponse(request, "tournaments.html", ctx)
+
+
+@app.get("/tournament/{tournament_id}/{name}", response_class=HTMLResponse)
+def tournament_details(
+    request: Request,
+    tournament_id: int,
+    name: str,
+):
+    # Two-segment path = id-based. The name segment is a readability slug only
+    # — resolution is by id, so it's always unambiguous even if the slug is
+    # stale or wrong (or the name collides with another tournament).
+    return _tournament_page(request, tournament_id)
+
+
+@app.get("/tournament/{tournament_id}", response_class=HTMLResponse)
+def tournament_details_short(request: Request, tournament_id: int):
+    # Single numeric segment = id lookup (same page as /tournament/{id}/{slug}).
+    return _tournament_page(request, tournament_id)
+
+
+def _tournament_page(request: Request, tournament_id: int):
+    import json as _json
+    with DataProvider() as dx:
+        ctx = _base_context(request, dx)
+        ctx["active"] = "tournaments"
+        det = dx.get_tournament_details(tournament_id)
+        if det is None:
+            return templates.TemplateResponse(request, "tournament.html", ctx, status_code=404)
+        ctx["t"] = det
+        # Parse rankings JSON for the template.
+        try:
+            ctx["rankings"] = _json.loads(det.get("rankings") or "[]")
+        except Exception:
+            ctx["rankings"] = []
+        # Enrich each standings row with the player's country (for the flag).
+        if ctx["rankings"]:
+            rids = [r.get("player_id") for r in ctx["rankings"] if r.get("player_id")]
+            countries = dx._countries(list(set(rids))) if rids else {}
+            for r in ctx["rankings"]:
+                r["country"] = countries.get(r.get("player_id"), "")
+        # Enrich each standings row with Elo + Glicko-2 rating deltas over the
+        # tournament's own time window (for the colored delta columns).
+        if ctx["rankings"]:
+            deltas = dx.get_tournament_rating_deltas(tournament_id)
+            for r in ctx["rankings"]:
+                d = deltas.get(r.get("player_id"), {})
+                r["elo_delta"] = d.get("elo")
+                r["glicko2_delta"] = d.get("glicko2")
+        ml = det.get("maplist") or []
+        seen = set()
+        ctx["maplist"] = [m for m in ml if not (m in seen or seen.add(m))]
+        ctx["map_images"] = dx.get_tournament_map_images(tournament_id)
+        ctx["name_slug"] = _slug(det["name"])
+        ctx["schedule_start_str"] = _fmt_dt(det.get("schedule_start"))
+        ctx["schedule_end_str"] = _fmt_dt(det.get("schedule_end"))
+        # Recent matches in this tournament (by ID) for the matches card —
+        # shown when there are no final rankings (league/group-stage events).
+        ctx["matches"] = dx.get_tournament_matches(tournament_id, limit=100000)
+        for m in ctx["matches"]:
+            m["played_at_str"] = _fmt_dt(m.get("played_at"))
+        # Per-match Elo + Glicko-2 deltas for both players (same game as the
+        # tournament), for the delta columns in the matches table.
+        if ctx["matches"]:
+            m_deltas = dx.get_matches_rating_deltas(
+                [m["match_id"] for m in ctx["matches"]], game=det.get("game") or ""
+            )
+            for m in ctx["matches"]:
+                d = m_deltas.get(m["match_id"], {})
+                m["p1_elo_delta"] = d.get(m["player1_id"], {}).get("elo")
+                m["p1_glicko2_delta"] = d.get(m["player1_id"], {}).get("glicko2")
+                m["p2_elo_delta"] = d.get(m["player2_id"], {}).get("elo")
+                m["p2_glicko2_delta"] = d.get(m["player2_id"], {}).get("glicko2")
+        ctx["canonical_name"] = det.get("name") or ""
+    return templates.TemplateResponse(request, "tournament.html", ctx)
 
 
 @app.get("/h2h", response_class=HTMLResponse)

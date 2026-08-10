@@ -1,9 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Head-to-Head — Arena Rankings{% endblock %}
 {% block content %}
-<div class="section-head"><h2>Head-to-Head</h2></div>
-
-<form class="filters" method="get" action="/h2h">
+<div class="section-head"><h2>Head-to-Head</h2>
+<form class="filters section-filters" method="get" action="/h2h">
   <label>Player 1</label>
   <input type="text" name="p1" value="{{ p1 }}" placeholder="e.g. rapha" data-autocomplete="player">
   <label>Player 2</label>
@@ -15,9 +14,8 @@
     <option value="{{ g }}" {{ 'selected' if game == g }}>{{ g }}</option>
     {% endfor %}
   </select>
-  <button type="submit">Compare</button>
-  <button type="submit" name="clear" value="1" class="btn-clear">Clear filters</button>
 </form>
+</div>
 
 {% include "_h2h_results.html" %}
 {% endblock %}

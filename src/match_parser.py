@@ -330,13 +330,18 @@ def store_parsed_match(db: Database, detail: MatchDetail, resolver: TournamentRe
     # Upsert tournament (if present)
     if detail.tournament_id > 0:
         if resolver:
-            # resolver.resolve() already upserts name + tier + raw_html (it
-            # fetches the PlusForward page and caches the HTML). Do NOT call
-            # upsert_tournament again here — it would overwrite raw_html with
-            # "" and clobber the cached page.
+            # resolver.resolve() downloads the page and upserts name + tier +
+            # raw_html + all parsed metadata. Do NOT call upsert_tournament
+            # again here — it would overwrite raw_html with "" and clobber
+            # the cached page.
             resolver.resolve(detail.tournament_id)
         else:
-            db.upsert_tournament(detail.tournament_id, detail.tournament_name, "")
+            # No resolver — just ensure the tournament name is stored.
+            # Use empty raw_html only if the tournament doesn't exist yet,
+            # to avoid clobbering previously stored HTML.
+            existing = db.get_tournament_html(detail.tournament_id)
+            if not existing:
+                db.upsert_tournament(detail.tournament_id, detail.tournament_name, "")
 
     # Insert match
     db.insert_match(detail)
@@ -499,7 +504,7 @@ def parse_all_matches(limit: int = 0, workers: int = 0) -> tuple[int, int]:
         # Each worker handles parse + tier resolve + store with its own DB connection.
         # Pre-load all known tournament tiers from DB so workers don't hammer PlusForward.
         db = Database()
-        preloaded_tiers = db.get_tournament_tiers()
+        preloaded_tiers = db.get_tournament_tiers_with_html()
         db.close()
         logger.debug(f"preloading {len(preloaded_tiers)} tiers into {workers}w")
 
