@@ -75,6 +75,15 @@ def _slug(name: str) -> str:
 templates.env.globals["slug"] = _slug
 
 
+def _mapname(name: str) -> str:
+    """Display name for a map. Unknown maps are stored as '?' — show 'unknown'."""
+    name = (name or "").strip()
+    return "Unknown" if name == "?" else name
+
+
+templates.env.filters["mapname"] = _mapname
+
+
 def _fmt_dt(d) -> str:
     """Format a datetime as 'YYYY-MM-DD, HH:MM' (comma between date and time).
     Shared by all templates via the 'dt' Jinja filter."""

@@ -54,14 +54,27 @@ DDL_STATEMENTS = [
     ORDER BY player_id
     """,
 
-    # tournaments — Tournament metadata extracted from match pages
+    # tournaments — Tournament metadata extracted from the tournament page itself
+    # (PlusForward post page at {BASE_URL}/post/{tournament_id}/). Name, tier, and
+    # raw_html are populated by the TournamentResolver when it fetches the page.
+    # The *_parsed columns (game, prize, formats, maplist, rankings) are extracted
+    # from the same page's .tour_info / .tour_rankings blocks. rankings is a JSON
+    # array: [{"position": "1st", "player_id": 123, "player_name": "...", "prize": "60 USD"}]
     # tournament_id is the PlusForward post ID of the tournament page
     """
     CREATE TABLE IF NOT EXISTS arena_rankings.tournaments (
         tournament_id UInt64,
         name String,
         tier LowCardinality(String) DEFAULT '',
-        raw_html String DEFAULT ''
+        raw_html String DEFAULT '',
+        game LowCardinality(String) DEFAULT '',
+        prize_money String DEFAULT '',
+        tourney_format LowCardinality(String) DEFAULT '',
+        match_format LowCardinality(String) DEFAULT '',
+        schedule_start DateTime DEFAULT '1970-01-01',
+        schedule_end DateTime DEFAULT '1970-01-01',
+        maplist Array(String) DEFAULT [],
+        rankings String DEFAULT '[]'
     )
     ENGINE = ReplacingMergeTree()
     ORDER BY tournament_id

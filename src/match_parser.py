@@ -16,7 +16,7 @@ from typing import Optional
 
 from src.db_client import Database
 from src.fetcher import PageFetcher
-from src.tier_resolver import TierResolver
+from src.tournament_resolver import TournamentResolver
 
 logger = logging.getLogger(__name__)
 
@@ -257,9 +257,18 @@ class MatchDetailParser:
 
         detailed = detailed_match.group(1)
 
+        # Map name cell is either a known map (span with data-name) or an
+        # unknown map shown as a bare "?" (td with title="unknown map").
+        # Match both so the ? maps are still captured with their scores.
+        map_cell = (
+            r'(?:'
+            r'<td class="map">\s*<span[^>]*data-name="([^"]+)"[^>]*>[^<]*</span>\s*</td>'
+            r'|<td class="map"[^>]*>\s*([?])\s*</td>'
+            r')'
+        )
         row_pattern = re.compile(
             r'<tr>\s*'
-            r'<td class="map">\s*<span[^>]*data-name="([^"]+)"[^>]*>[^<]*</span>\s*</td>\s*'
+            + map_cell + r'\s*'
             r'<td class="mp_left[^"]*">([^<]*)</td>\s*'
             r'<td class="score_value[^"]*">(\d+)</td>\s*'
             r'<td class="score_value[^"]*">(\d+)</td>\s*'
@@ -269,11 +278,12 @@ class MatchDetailParser:
         )
 
         for m in row_pattern.finditer(detailed):
-            map_name = m.group(1).strip()
-            p1_name = m.group(2).strip()
-            p1_score = int(m.group(3))
-            p2_score = int(m.group(4))
-            p2_name = m.group(5).strip()
+            # Map name: group(1) = known map, group(2) = unknown "?"
+            map_name = (m.group(1) or m.group(2) or "?").strip()
+            p1_name = m.group(3).strip()
+            p1_score = int(m.group(4))
+            p2_score = int(m.group(5))
+            p2_name = m.group(6).strip()
             maps.append(MapResult(
                 map_name=map_name,
                 player1_score=p1_score,
@@ -301,7 +311,7 @@ class MatchDetailParser:
         return datetime.strptime(combined, "%d %B %Y %H:%M")
 
 
-def store_parsed_match(db: Database, detail: MatchDetail, tier_resolver: TierResolver = None):
+def store_parsed_match(db: Database, detail: MatchDetail, resolver: TournamentResolver = None):
     """Store parsed match data into ClickHouse tables.
 
     Inserts into: players, tournaments, matches, match_maps.
@@ -310,7 +320,7 @@ def store_parsed_match(db: Database, detail: MatchDetail, tier_resolver: TierRes
     Args:
         db: Database instance.
         detail: Parsed match details.
-        tier_resolver: Optional TierResolver instance. If provided, resolves
+        resolver: Optional TournamentResolver instance. If provided, resolves
             tournament tier from PlusForward. If None, tier stays empty.
     """
     # Upsert players
@@ -319,12 +329,12 @@ def store_parsed_match(db: Database, detail: MatchDetail, tier_resolver: TierRes
 
     # Upsert tournament (if present)
     if detail.tournament_id > 0:
-        if tier_resolver:
+        if resolver:
             # resolver.resolve() already upserts name + tier + raw_html (it
             # fetches the PlusForward page and caches the HTML). Do NOT call
             # upsert_tournament again here — it would overwrite raw_html with
             # "" and clobber the cached page.
-            tier_resolver.resolve(detail.tournament_id)
+            resolver.resolve(detail.tournament_id)
         else:
             db.upsert_tournament(detail.tournament_id, detail.tournament_name, "")
 
@@ -339,7 +349,7 @@ def _parse_worker_init():
     """Initialize thread-local resources (one per worker thread).
 
     Each thread gets its own Database connection, MatchDetailParser, PageFetcher,
-    and TierResolver. This avoids sharing rate-limited fetchers and DB connections
+    and TournamentResolver. This avoids sharing rate-limited fetchers and DB connections
     across threads.
     """
     import threading
@@ -351,7 +361,7 @@ def _parse_worker_init():
 def _parse_worker(task: tuple, preloaded_tiers: dict = None) -> tuple[int, bool, str]:
     """Parse and store a single match in a worker thread.
 
-    Each thread has its own Database, PageFetcher, TierResolver, and parser.
+    Each thread has its own Database, PageFetcher, TournamentResolver, and parser.
     This parallelizes both CPU-bound parsing and I/O-bound tier resolution.
 
     Args:
@@ -366,9 +376,9 @@ def _parse_worker(task: tuple, preloaded_tiers: dict = None) -> tuple[int, bool,
         local.db = Database()
         local.parser = MatchDetailParser()
         local.fetcher = PageFetcher()
-        local.tier_resolver = TierResolver(local.db, local.fetcher)
+        local.resolver = TournamentResolver(local.db, local.fetcher)
         if preloaded_tiers:
-            local.tier_resolver.preload_tiers(preloaded_tiers)
+            local.resolver.preload_tiers(preloaded_tiers)
 
     match_id, orig_played_at, raw_html = task
     try:
@@ -383,7 +393,7 @@ def _parse_worker(task: tuple, preloaded_tiers: dict = None) -> tuple[int, bool,
             return match_id, False, "parse failed"
 
         # Store structured data first (tier resolution happens here)
-        store_parsed_match(local.db, detail, local.tier_resolver)
+        store_parsed_match(local.db, detail, local.resolver)
         # Only mark as parsed if store succeeded
         local.db.client.execute(
             "INSERT INTO match_registry "
@@ -400,7 +410,7 @@ def parse_all_matches(limit: int = 0, workers: int = 0) -> tuple[int, int]:
 
     Uses a thread pool to parallelize HTML parsing (CPU-bound) and tier
     resolution (I/O-bound). Each worker thread has its own Database,
-    PageFetcher, and TierResolver instance.
+    PageFetcher, and TournamentResolver instance.
 
     Args:
         limit: Maximum matches to parse (0 = unlimited).
@@ -448,7 +458,7 @@ def parse_all_matches(limit: int = 0, workers: int = 0) -> tuple[int, int]:
         db = Database()
         parser = MatchDetailParser()
         fetcher = PageFetcher()
-        tier_resolver = TierResolver(db, fetcher)
+        resolver = TournamentResolver(db, fetcher)
         try:
             for i, (match_id, orig_played_at, raw_html) in enumerate(rows, 1):
                 detail = parser.parse(raw_html, match_id)
@@ -461,7 +471,7 @@ def parse_all_matches(limit: int = 0, workers: int = 0) -> tuple[int, int]:
                     )
                 else:
                     try:
-                        store_parsed_match(db, detail, tier_resolver)
+                        store_parsed_match(db, detail, resolver)
                         db.client.execute(
                             "INSERT INTO match_registry "
                             "(match_id, played_at, raw_html, status) VALUES",

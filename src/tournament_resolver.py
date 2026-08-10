@@ -1,18 +1,23 @@
-"""Tier resolution from PlusForward tournament pages.
+"""Tournament resolution from PlusForward tournament pages.
 
-Fetches tournament pages and extracts tier (premier/major/minor) from CSS classes.
-Stores raw HTML in the tournaments table (same pattern as match_registry/matches).
+Fetches tournament pages and extracts:
+  - tier (premier/major/minor) from CSS classes / title heuristics
+  - tournament metadata (game, prize money, formats, maplist, final rankings,
+    schedule) from the .tour_info and .tour_rankings blocks
+Stores raw HTML and the parsed metadata in the tournaments table.
 
 Usage:
-    from src.tier_resolver import TierResolver
-    resolver = TierResolver(db, fetcher)
+    from src.tournament_resolver import TournamentResolver
+    resolver = TournamentResolver(db, fetcher)
     tier = resolver.resolve(tournament_id)  # "premier", "major", "minor", or ""
 """
 
+import json
 import logging
 import random
 import re
 import time
+from datetime import datetime
 from typing import Optional
 
 from config import BASE_URL, RETRY_BACKOFF
@@ -24,11 +29,12 @@ logger = logging.getLogger(__name__)
 DEFAULT_TIER = ""
 
 
-class TierResolver:
-    """Resolve tournament tier by fetching and parsing the tournament page.
+class TournamentResolver:
+    """Resolve tournament tier + metadata by fetching and parsing the tournament page.
 
     Uses ClickHouse for HTML caching — raw_html is stored in the tournaments table,
-    same pattern as match_registry stores match HTML.
+    same pattern as match_registry stores match HTML. Parsed metadata is stored in
+    the same tournaments row.
     """
 
     # Class-level stats for observability.
@@ -36,11 +42,12 @@ class TierResolver:
     db_hits: int = 0
     network_fetches: int = 0
     failures: int = 0
+    parsed_details: int = 0
 
     def __init__(self, db, fetcher: PageFetcher = None):
         """
         Args:
-            db: Database instance for reading/writing tournament HTML.
+            db: Database instance for reading/writing tournament HTML + metadata.
             fetcher: PageFetcher instance. If None, creates one.
         """
         self._db = db
@@ -57,8 +64,8 @@ class TierResolver:
         self._cache.update(tiers)
         self._preloaded = True
         # Only log once per process — workers call this independently
-        if not getattr(TierResolver, '_preload_logged', False):
-            TierResolver._preload_logged = True
+        if not getattr(TournamentResolver, '_preload_logged', False):
+            TournamentResolver._preload_logged = True
             logger.debug(f"{len(tiers)} tiers preloaded")
 
     def resolve(self, tournament_id: int) -> str:
@@ -71,7 +78,7 @@ class TierResolver:
 
         cached = self._cache.get(tournament_id)
         if cached is not None:
-            TierResolver.cache_hits += 1
+            TournamentResolver.cache_hits += 1
             return cached
 
         tier = self._fetch_tier(tournament_id)
@@ -81,14 +88,18 @@ class TierResolver:
     @classmethod
     def log_stats(cls):
         """Log cache/db/network statistics."""
-        logger.debug(f"tiers: {cls.cache_hits} cache, {cls.db_hits} db, {cls.network_fetches} fetch, {cls.failures} fail")
+        logger.debug(
+            f"tiers: {cls.cache_hits} cache, {cls.db_hits} db, "
+            f"{cls.network_fetches} fetch, {cls.failures} fail, "
+            f"{cls.parsed_details} details"
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
     def _fetch_tier(self, tournament_id: int) -> str:
-        """Fetch tournament page and extract tier class.
+        """Fetch tournament page and extract tier + metadata.
 
         Strategy (in order):
         1. **DB tier check**: check if tier already resolved in tournaments table
@@ -105,18 +116,18 @@ class TierResolver:
         # 2. Try ClickHouse HTML cache.
         html = self._db.get_tournament_html(tournament_id)
         if html:
-            TierResolver.db_hits += 1
+            TournamentResolver.db_hits += 1
             return self._resolve_from_html(html, tournament_id)
 
         # 3. Fetch from network with infinite retries.
         #    Between retries, check DB — another worker may have resolved
         #    the tier while we were waiting.
         url = f"{BASE_URL}/post/{tournament_id}/"
-        TierResolver.network_fetches += 1
+        TournamentResolver.network_fetches += 1
         result = self._fetch_with_db_checks(url, tournament_id)
         if result is None:
             # Should not happen with infinite retries, but guard anyway.
-            TierResolver.failures += 1
+            TournamentResolver.failures += 1
             logger.error(f"tier fetch failed: {tournament_id} (retries exhausted)")
             return DEFAULT_TIER
 
@@ -135,19 +146,28 @@ class TierResolver:
             {"t": tournament_id},
         )
         if tier_rows and tier_rows[0][0]:
-            TierResolver.db_hits += 1
+            TournamentResolver.db_hits += 1
             return tier_rows[0][0]
         return ""
 
     def _resolve_from_html(self, html: str, tournament_id: int) -> str:
-        """Parse tier from HTML and upsert to DB."""
+        """Parse tier + tournament metadata from HTML and upsert to DB."""
         tier = self._parse_tier(html, tournament_id)
+        details = self._parse_tournament_details(html)
         name_rows = self._db.client.execute(
             "SELECT name FROM tournaments FINAL WHERE tournament_id = %(t)s",
             {"t": tournament_id},
         )
         name = name_rows[0][0] if name_rows else ""
-        self._db.upsert_tournament(tournament_id, name, tier, raw_html=html)
+        self._db.upsert_tournament(
+            tournament_id, name, tier, raw_html=html,
+            game=details["game"], prize_money=details["prize_money"],
+            tourney_format=details["tourney_format"], match_format=details["match_format"],
+            schedule_start=details["schedule_start"], schedule_end=details["schedule_end"],
+            maplist=details["maplist"], rankings=details["rankings"],
+        )
+        if details["rankings"] != "[]" or details["maplist"]:
+            TournamentResolver.parsed_details += 1
         return tier
 
     def _fetch_with_db_checks(self, url: str, tournament_id: int):
@@ -177,6 +197,10 @@ class TierResolver:
             wait += random.uniform(0, wait * 0.3)
             logger.debug(f"tournament {tournament_id}: fetch attempt {attempt} failed, retry in {wait:.1f}s")
             time.sleep(wait)
+
+    # ------------------------------------------------------------------
+    # Parsers
+    # ------------------------------------------------------------------
 
     def _parse_tier(self, html: str, tournament_id: int) -> str:
         """Extract tier from cached/fetched HTML.
@@ -224,3 +248,91 @@ class TierResolver:
         #   Default to minor for safety.
         logger.warning(f"tournament {tournament_id}: no postinnercontent, using minor")
         return "minor"
+
+    def _parse_tournament_details(self, html: str) -> dict:
+        """Extract tournament metadata from the page HTML.
+
+        Returns a dict with keys: game, prize_money, tourney_format, match_format,
+        schedule_start, schedule_end, maplist, rankings (JSON string). Any field
+        that can't be found falls back to its empty default.
+        """
+        details = {
+            "game": "",
+            "prize_money": "",
+            "tourney_format": "",
+            "match_format": "",
+            "schedule_start": None,
+            "schedule_end": None,
+            "maplist": [],
+            "rankings": "[]",
+        }
+
+        # Main content block — the sidebar is global/identical, so scope all
+        # extraction to the page's own postinnercontent.
+        body = html
+        m = re.search(r'<div id="postinnercontent">(.*?)(?:</div>\s*<div class="sidebar|$)', html, re.DOTALL)
+        if m:
+            body = m.group(1)
+
+        # Game — from the inner title: <i class="pfcat-N"></i> [Tier] Game - Format
+        game_m = re.search(
+            r'<div class="title">\s*<i class="pfcat-\d+"></i>\s*(?:premier|major|minor\s+)?'
+            r'([A-Za-z0-9 &\.\-]+?)(?:\s*[-–]\s*|\s*$)', body, re.DOTALL | re.IGNORECASE)
+        if game_m:
+            details["game"] = game_m.group(1).strip()
+
+        # Info block fields: <div class="tc_title">Label</div><div>Value</div>
+        def info_value(label):
+            pat = re.compile(
+                r'<div class="tc_title">' + re.escape(label) + r'</div>\s*<div[^>]*>(.*?)</div>',
+                re.DOTALL | re.IGNORECASE)
+            m = pat.search(body)
+            if not m:
+                return ""
+            val = re.sub(r'<[^>]+>', '', m.group(1)).strip()
+            return val
+
+        details["prize_money"] = info_value("Prizemoney")
+        details["tourney_format"] = info_value("Tourney format")
+        details["match_format"] = info_value("Match format")
+
+        # Schedule: <div class="tc_title">Schedule</div><div>09 Aug 2026 - 16:00 UTC → 20:15 UTC</div>
+        sched_m = re.search(
+            r'<div class="tc_title">Schedule</div>\s*<div[^>]*>\s*'
+            r'(\d{1,2}\s+\w+\s+\d{4})\s*[-–]\s*(\d{1,2}:\d{2})\s*UTC'
+            r'(?:\s*<i[^>]*></i>\s*|\s*[-–>→]\s*|\s*)(\d{1,2}:\d{2})?\s*UTC?',
+            body, re.DOTALL | re.IGNORECASE)
+        if sched_m:
+            try:
+                start = datetime.strptime(sched_m.group(1), "%d %b %Y")
+                day = start.strftime("%Y-%m-%d ")
+                details["schedule_start"] = day + sched_m.group(2) + ":00"
+                details["schedule_end"] = day + (sched_m.group(3) or sched_m.group(2)) + ":00"
+            except ValueError:
+                pass
+
+        # Maplist: <span class="map_preview" ... data-name="Awoken">Awoken</span>
+        maplist = re.findall(
+            r'<span class="map_preview"[^>]*data-name="([^"]+)"', body)
+        if maplist:
+            details["maplist"] = maplist
+
+        # Final rankings: .tour_rankings table rows
+        #   <td class="position">1st</td> ... <a class="profile" href="/player/16947/...">Name</a> ... <td class="prizemoney">60 USD</td>
+        rankings = []
+        rank_rows = re.findall(
+            r'<tr>.*?<td class="position">([^<]+)</td>.*?'
+            r'<a class="profile" href="/player/(\d+)/[^"]*"[^>]*>(?:<span[^>]*></span>\s*)?([^<]+)</a>.*?'
+            r'<td class="prizemoney">([^<]*)</td>',
+            body, re.DOTALL)
+        for pos, pid, pname, prize in rank_rows:
+            rankings.append({
+                "position": pos.strip(),
+                "player_id": int(pid),
+                "player_name": pname.strip(),
+                "prize": prize.strip(),
+            })
+        if rankings:
+            details["rankings"] = json.dumps(rankings, ensure_ascii=False)
+
+        return details

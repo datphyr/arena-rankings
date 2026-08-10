@@ -1,7 +1,7 @@
 """Backfill raw_html for tournaments that have empty cached page HTML.
 
 Root cause of the empty raw_html: store_parsed_match in match_parser.py called
-upsert_tournament(..., without raw_html) AFTER tier_resolver.resolve() had already
+upsert_tournament(..., without raw_html) AFTER the resolver resolved the tier had already
 saved the HTML. Because tournaments is a ReplacingMergeTree keyed on tournament_id,
 the second (empty-HTML) insert clobbered the one with HTML.
 
@@ -26,7 +26,7 @@ if str(ROOT) not in sys.path:
 from config import BASE_URL
 from src.db_client import Database
 from src.fetcher import PageFetcher
-from src.tier_resolver import TierResolver
+from src.tournament_resolver import TournamentResolver
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("backfill")
@@ -41,7 +41,7 @@ def main():
 
     db = Database()
     fetcher = PageFetcher()
-    resolver = TierResolver(db, fetcher)
+    resolver = TournamentResolver(db, fetcher)
 
     # All tournament ids that have empty raw_html, ordered newest first.
     rows = db.client.execute(
@@ -72,7 +72,14 @@ def main():
             continue
 
         tier = resolver._parse_tier(html, tid)
-        db.upsert_tournament(tid, name, tier, raw_html=html)
+        details = resolver._parse_tournament_details(html)
+        db.upsert_tournament(
+            tid, name, tier, raw_html=html,
+            game=details["game"], prize_money=details["prize_money"],
+            tourney_format=details["tourney_format"], match_format=details["match_format"],
+            schedule_start=details["schedule_start"], schedule_end=details["schedule_end"],
+            maplist=details["maplist"], rankings=details["rankings"],
+        )
         fetched += 1
         done += 1
 

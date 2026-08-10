@@ -19,6 +19,32 @@ from src.db_schema import DDL_STATEMENTS
 logger = logging.getLogger(__name__)
 
 
+class _DatetimeEpoch:
+    """Sentinel for a missing/empty datetime (1970-01-01)."""
+
+    pass
+
+
+def _coerce_datetime(value):
+    """Coerce a value to a datetime for a DateTime column.
+
+    Accepts None (→ epoch), a datetime, or an ISO/"YYYY-MM-DD HH:MM:SS" string.
+    Strings like '2026-08-09' (date only) become midnight that day.
+    """
+    if value is None:
+        return datetime(1970, 1, 1)
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        s = value.strip()
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(s, fmt)
+            except ValueError:
+                continue
+    return datetime(1970, 1, 1)
+
+
 class Database:
     """ClickHouse database client."""
 
@@ -178,13 +204,39 @@ class Database:
     # --- Tournaments ---
 
     def upsert_tournament(
-        self, tournament_id: int, name: str, tier: str = "", raw_html: str = ""
+        self,
+        tournament_id: int,
+        name: str,
+        tier: str = "",
+        raw_html: str = "",
+        game: str = "",
+        prize_money: str = "",
+        tourney_format: str = "",
+        match_format: str = "",
+        schedule_start=None,
+        schedule_end=None,
+        maplist: list = None,
+        rankings: str = "[]",
     ):
-        """Insert or update a tournament record."""
+        """Insert or update a tournament record, including parsed metadata.
+
+        All columns live in the single tournaments table. The parsed fields
+        (game, prize, formats, maplist, rankings) are extracted from the
+        tournament page HTML by the TournamentResolver; raw_html is the cached
+        page source.
+        """
+        schedule_start = _coerce_datetime(schedule_start)
+        schedule_end = _coerce_datetime(schedule_end)
         self.client.execute(
             "INSERT INTO tournaments "
-            "(tournament_id, name, tier, raw_html) VALUES",
-            [(tournament_id, name, tier, raw_html)],
+            "(tournament_id, name, tier, raw_html, game, prize_money, "
+            " tourney_format, match_format, schedule_start, schedule_end, "
+            " maplist, rankings) VALUES",
+            [(
+                tournament_id, name, tier, raw_html, game, prize_money,
+                tourney_format, match_format, schedule_start, schedule_end,
+                maplist or [], rankings,
+            )],
         )
 
     def get_tournament_html(self, tournament_id: int) -> str:
@@ -194,6 +246,31 @@ class Database:
             {"t": tournament_id},
         )
         return rows[0][0] if rows else ""
+
+    def get_tournament_details(self, tournament_id: int) -> dict:
+        """Return parsed tournament metadata dict, or None if not stored."""
+        rows = self.client.execute(
+            "SELECT tournament_id, name, tier, game, prize_money, tourney_format, "
+            " match_format, schedule_start, schedule_end, maplist, rankings "
+            "FROM tournaments FINAL WHERE tournament_id = %(t)s",
+            {"t": tournament_id},
+        )
+        if not rows:
+            return None
+        r = rows[0]
+        return {
+            "tournament_id": r[0],
+            "name": r[1],
+            "tier": r[2],
+            "game": r[3],
+            "prize_money": r[4],
+            "tourney_format": r[5],
+            "match_format": r[6],
+            "schedule_start": r[7],
+            "schedule_end": r[8],
+            "maplist": r[9],
+            "rankings": r[10],
+        }
 
     # --- Matches ---
 

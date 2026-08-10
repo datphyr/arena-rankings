@@ -94,8 +94,8 @@ LOGGER_NAME_MAP = {
     "uvicorn": "web",
     "fetcher": "fetch",
     "src.fetcher": "fetch",
-    "tier_resolver": "parse",
-    "src.tier_resolver": "parse",
+    "tournament_resolver": "parse",
+    "src.tournament_resolver": "parse",
     "daemon": None,
     "src.daemon": None,
 }

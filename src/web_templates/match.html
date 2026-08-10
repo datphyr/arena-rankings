@@ -68,8 +68,9 @@
         {% for mp in match.maps %}
         <tr>
           <td class="col-flex">
-            {% if mp.image %}<span class="map-thumb-wrap"><img class="map-thumb" src="https://www.plusforward.net{{ mp.image }}" alt="{{ mp.name }}" loading="lazy"><img class="map-thumb-preview" src="https://www.plusforward.net{{ mp.image }}" alt="{{ mp.name }}" loading="lazy"></span>{% endif %}
-            <a class="map-link" href="/matches?{{ qs(tournament=match.tournament) }}">{{ mp.name }}</a>
+            {% if mp.image %}<span class="map-thumb-wrap"><img class="map-thumb" src="https://www.plusforward.net{{ mp.image }}" alt="{{ mp.name|mapname }}" loading="lazy"><img class="map-thumb-preview" src="https://www.plusforward.net{{ mp.image }}" alt="{{ mp.name|mapname }}" loading="lazy"></span>
+            {% else %}<span class="map-thumb-wrap"><img class="map-thumb" src="/static/map-unknown.svg" alt="{{ mp.name|mapname }}" loading="lazy"><img class="map-thumb-preview" src="/static/map-unknown.svg" alt="{{ mp.name|mapname }}" loading="lazy"></span>{% endif %}
+            <a class="map-link" href="/matches?{{ qs(tournament=match.tournament) }}">{{ mp.name|mapname }}</a>
           </td>
           <td class="right col-score"><span class="{{ 'win' if mp.winner == mp.player1 else 'loss' }}">{{ mp.score1 }}</span></td>
           <td class="col-score"><span class="{{ 'win' if mp.winner == mp.player2 else 'loss' }}">{{ mp.score2 }}</span></td>
