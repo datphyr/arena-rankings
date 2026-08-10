@@ -40,7 +40,7 @@ from cli import (
 
 # Game choices for slash command options
 GAME_CHOICES = [
-    app_commands.Choice(name="Combined", value=""),
+    app_commands.Choice(name="All Games", value=""),
     app_commands.Choice(name="Quake Live", value="Quake Live"),
     app_commands.Choice(name="Quake Champions", value="Quake Champions"),
     app_commands.Choice(name="Quake 3 Arena", value="Quake 3 Arena"),
@@ -72,7 +72,7 @@ def _game_val(game):
     return game.value if game else ""
 
 def _game_name(game):
-    return game.name if game else "Combined"
+    return game.name if game else "All Games"
 
 def _system_val(system):
     return system.value if system else "elo"

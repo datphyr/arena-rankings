@@ -58,7 +58,7 @@
         {% for r in ratings if r.system == 'elo' %}
         <tr>
           <td class="num col-num">{% if r.rank %}<span class="rank-badge {{ 'rank-1' if r.rank == 1 else 'rank-2' if r.rank == 2 else 'rank-3' if r.rank == 3 else 'rank-4' if r.rank == 4 else 'rank-5' if r.rank == 5 }}">#{{ r.rank }}</span>{% else %}—{% endif %}</td>
-          <td class="col-flex">{% if r.game != 'Combined' %}<a class="game-link" href="/leaderboard?game={{ r.game }}">{{ r.game }}</a>{% else %}<a class="game-link" href="/leaderboard">{{ r.game }}</a>{% endif %}</td>
+          <td class="col-flex">{% if r.game != 'All Games' %}<a class="game-link" href="/leaderboard?game={{ r.game }}">{{ r.game }}</a>{% else %}<a class="game-link" href="/leaderboard">{{ r.game }}</a>{% endif %}</td>
           <td class="num col-rating rating rating-elo">{{ "%.0f"|format(r.rating) }}</td>
           <td class="num col-peak" style="color:var(--gold);">{{ "%.0f"|format(r.peak) if r.peak else '—' }}</td>
           <td class="center col-peak-date" style="color:var(--text-faint);font-size:0.85rem;">{{ r.peak_date|dt if r.peak_date else '' }}</td>
@@ -87,11 +87,11 @@
         {% for r in ratings if r.system == 'glicko2' %}
         <tr>
           <td class="num col-num">{% if r.rank %}<span class="rank-badge {{ 'rank-1' if r.rank == 1 else 'rank-2' if r.rank == 2 else 'rank-3' if r.rank == 3 else 'rank-4' if r.rank == 4 else 'rank-5' if r.rank == 5 }}">#{{ r.rank }}</span>{% else %}—{% endif %}</td>
-          <td class="col-flex">{% if r.game != 'Combined' %}<a class="game-link" href="/leaderboard?game={{ r.game }}&system=glicko2">{{ r.game }}</a>{% else %}<a class="game-link" href="/leaderboard?system=glicko2">{{ r.game }}</a>{% endif %}</td>
+          <td class="col-flex">{% if r.game != 'All Games' %}<a class="game-link" href="/leaderboard?game={{ r.game }}&system=glicko2">{{ r.game }}</a>{% else %}<a class="game-link" href="/leaderboard?system=glicko2">{{ r.game }}</a>{% endif %}</td>
           <td class="num col-rating rating rating-glicko2">{{ "%.0f"|format(r.rating) }}</td>
           <td class="num col-peak" style="color:var(--gold);">{{ "%.0f"|format(r.peak) if r.peak else '—' }}</td>
           <td class="center col-peak-date" style="color:var(--text-faint);font-size:0.85rem;">{{ r.peak_date|dt if r.peak_date else '' }}</td>
-          <td class="num col-rd">{{ "%.0f"|format(r.rd) if r.rd is not none else '—' }}</td>
+          <td class="num col-rd">{{ "%.0f"|format(r.rd_at_peak if r.rd_at_peak is not none else r.rd) if (r.rd_at_peak if r.rd_at_peak is not none else r.rd) is not none else '—' }}</td>
           <td class="num col-m">{{ r.matches }}</td>
           <td class="num col-w win">{{ r.wins }}</td>
           <td class="num col-l loss">{{ r.losses }}</td>
@@ -109,7 +109,7 @@
 <form class="filters" method="get" action="/player/{{ player_id }}/{{ slug(player_name) }}">
   <label>Game</label>
   <select name="game">
-    <option value="" {{ 'selected' if not game }}>Combined (all games)</option>
+    <option value="" {{ 'selected' if not game }}>All Games</option>
     {% for g in player_games %}
     <option value="{{ g }}" {{ 'selected' if game == g }}>{{ g }}</option>
     {% endfor %}
@@ -198,7 +198,10 @@ function buildChart(history) {
   })).reverse();
   const ptsG = history.map(h => ({
     x: new Date(h.played_at || '').getTime(),
-    y: h.glicko2
+    // Conservative Glicko-2: rating - rd (RD removed), matching the leaderboard
+    // and the peak plaque. The line plots the RD-stripped value, not raw rating.
+    y: (h.glicko2 != null && h.rd != null) ? h.glicko2 - h.rd : h.glicko2,
+    rd: h.rd
   })).reverse();
   if (chart) { chart.destroy(); chart = null; }
 
@@ -332,6 +335,8 @@ function buildChart(history) {
 
 // Render the peak rating as a stat plaque (like the Total Matches / Win Rate
 // cards at the top) under the Rating History section. One plaque per series.
+// The Glicko-2 series is already conservative (rating - rd, see buildChart),
+// so the peak is just the max of the plotted y values. Elo has no RD.
 function renderPeakPlaques(pts, ptsG) {
   const wrap = document.getElementById('peak-plaques');
   if (!wrap) return;
@@ -343,7 +348,8 @@ function renderPeakPlaques(pts, ptsG) {
     let peak = null;
     for (let i = 0; i < s.pts.length; i++) {
       const p = s.pts[i];
-      if (p && p.y !== null && (!peak || p.y >= peak.y)) peak = p;
+      if (!p || p.y === null) continue;
+      if (!peak || p.y >= peak.y) peak = p;
     }
     if (!peak) return '';
     return '<div class="highlight-box">' +
@@ -363,7 +369,7 @@ const peakMarker = {
     const ctx = chart.ctx;
     const series = [
       { idx: 0, color: '#ef4444' },  // Elo
-      { idx: 1, color: '#7c3aed' }   // Glicko-2
+      { idx: 1, color: '#7c3aed' }   // Glicko-2 (already conservative: rating - rd)
     ];
     const area = chart.chartArea;
     for (const s of series) {
@@ -371,7 +377,9 @@ const peakMarker = {
       if (!ds || !ds.data.length) continue;
       let peakIdx = 0;
       for (let i = 1; i < ds.data.length; i++) {
-        if (ds.data[i] && ds.data[i].y !== null && ds.data[i].y >= ds.data[peakIdx].y) peakIdx = i;
+        const cur = ds.data[i], best = ds.data[peakIdx];
+        if (!cur || cur.y === null) continue;
+        if (cur.y >= best.y) peakIdx = i;
       }
       const meta = chart.getDatasetMeta(s.idx);
       const pt = meta.data[peakIdx];

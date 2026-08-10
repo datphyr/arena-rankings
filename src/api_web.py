@@ -393,11 +393,11 @@ def _player_page(request: Request, name: str, game: str = "", limit: int = 50, p
         ctx["player_id"] = dx._player_id(name)
         ctx["ratings"] = dx.get_player_ratings(name)
         # Games the player actually has ratings for (for the history game selector)
-        ctx["player_games"] = sorted({r["game"] for r in ctx["ratings"] if r["game"] != "Combined"})
+        ctx["player_games"] = sorted({r["game"] for r in ctx["ratings"] if r["game"] != "All Games"})
         # Compute per-game rank for each rating row (for the rank column)
         for r in ctx["ratings"]:
-            # Combined ratings are stored with game_name = '' in the DB; map back for the rank query
-            rank_game = "" if r["game"] == "Combined" else r["game"]
+            # All Games ratings are stored with game_name = '' in the DB; map back for the rank query
+            rank_game = "" if r["game"] == "All Games" else r["game"]
             rk = dx.get_player_rank(name, game=rank_game, system=r["system"], min_matches=_min_matches(r["system"]))
             r["rank"] = rk["rank"] if rk else None
             r["rank_total"] = rk["total"] if rk else None

@@ -668,6 +668,17 @@ a.player-link {
 }
 a.player-link:hover { color: var(--copper); text-decoration: underline; }
 
+/* Clickable all-time peak value on the home page — links to the leaderboard
+   for that game + system, sorted by peak. Keeps the original gold stat look
+   (no default blue/underline), but underlines + recolors on hover like
+   player names. */
+a.peak-link {
+  color: var(--gold);
+  text-decoration: none;
+  transition: color 0.12s ease;
+}
+a.peak-link:hover { color: var(--copper); text-decoration: underline; }
+
 /* Player name + country flag. The flag sits inline before the name and is
    sized to match the text; .flag-lg is the larger variant for page headers. */
 .player-name {

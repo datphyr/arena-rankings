@@ -22,7 +22,7 @@
           <td class="col-flex"><span class="player-name">{% if p.country %}<span class="flag" title="{{ p.country|upper }}">{{ p.country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ p.player_id }}/{{ slug(p.name) }}">{{ p.name }}</a></span></td>
           {% if not game %}<td class="col-main-game">{% if p.main_game %}<a class="game-link" href="/leaderboard?game={{ p.main_game }}">{{ p.main_game }}</a>{% else %}—{% endif %}</td>{% endif %}
           <td class="num col-rating rating {{ 'rating-elo' if system == 'elo' else 'rating-glicko2' }}">{{ "%.0f"|format(p.peak if sort == 'peak' and p.peak else p.rating) if (p.peak if sort == 'peak' and p.peak else p.rating) else '—' }}</td>
-          <td class="num col-rd">{{ "%.0f"|format(p.rd) if p.rd else '' }}</td>
+          <td class="num col-rd">{{ "%.0f"|format(p.rd_at_peak if sort == 'peak' and p.rd_at_peak else p.rd) if (p.rd_at_peak if sort == 'peak' and p.rd_at_peak else p.rd) else '' }}</td>
           <td class="center col-peak-date peak-date-col" style="color:var(--text-faint);font-size:0.85rem;">{% if sort == 'peak' %}{{ p.peak_date|dt if p.peak_date else '' }}{% endif %}</td>
           <td class="num col-m">{{ p.matches if p.matches is not none else '—' }}</td>
           <td class="num col-w win">{{ p.wins if p.wins is not none else '—' }}</td>

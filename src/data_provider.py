@@ -862,10 +862,30 @@ class DataProvider:
     def _fetch_peaks(self, player_ids: list[int], system: str) -> dict:
         """Fetch peak rating + date for a batch of players from rating_history.
 
-        Returns dict: {(player_id, game_name): (peak_rating, peak_date)}
+        For glicko2 the returned peak is the conservative lower bound
+        (peak - rd_at_peak), i.e. RD is removed using the RD from the date the
+        peak was reached — consistent with the leaderboard sort and the home
+        page plaque. The RD at the peak date is returned alongside so callers
+        can display it.
+
+        Returns dict: {(player_id, game_name): (peak_rating, peak_date, rd_at_peak)}
         """
         if not player_ids:
             return {}
+        if system == "glicko2":
+            peak_rows = self.db.client.execute(
+                """
+                SELECT player_id, game_name,
+                       max(rating) - argMax(rd, rating) AS peak,
+                       argMax(played_at, rating) AS peak_date,
+                       argMax(rd, rating) AS rd_at_peak
+                FROM rating_history
+                WHERE rating_system = %(rs)s AND player_id IN %(ids)s
+                GROUP BY player_id, game_name
+                """,
+                {"rs": system, "ids": tuple(player_ids)},
+            )
+            return {(r[0], r[1]): (round(r[2], 1), r[3], round(r[4], 1)) for r in peak_rows}
         peak_rows = self.db.client.execute(
             """
             SELECT player_id, game_name,
@@ -877,7 +897,7 @@ class DataProvider:
             """,
             {"rs": system, "ids": tuple(player_ids)},
         )
-        return {(r[0], r[1]): (round(r[2], 1), r[3]) for r in peak_rows}
+        return {(r[0], r[1]): (round(r[2], 1), r[3], None) for r in peak_rows}
 
     def get_top_players(
         self,
@@ -918,7 +938,7 @@ class DataProvider:
             params["mm"] = min_matches
 
         if not game:
-            # Combined: fetch main game per player via separate query
+            # All Games: fetch main game per player via separate query
             query = """
                 SELECT player_id, player_name, rating, rd, vol, wins, losses, matches_played,
                        last_match_date, first_match_date
@@ -1007,8 +1027,9 @@ class DataProvider:
                     "last_match_date": r[8],
                     "first_match_date": r[9],
                     "main_game": "",
-                    "peak": peaks.get((r[0], game), (None, None))[0],
-                    "peak_date": peaks.get((r[0], game), (None, None))[1],
+                    "peak": peaks.get((r[0], game), (None, None, None))[0],
+                    "peak_date": peaks.get((r[0], game), (None, None, None))[1],
+                    "rd_at_peak": peaks.get((r[0], game), (None, None, None))[2],
                     "rank": i + 1,
                 }
                 for i, r in enumerate(rows)
@@ -1101,7 +1122,13 @@ class DataProvider:
             return []
 
         player_ids = [r[0] for r in peak_rows]
-        peak_map = {r[0]: (round(r[1], 1), r[2]) for r in peak_rows}
+        # For glicko2 the displayed peak is the conservative lower bound
+        # (peak - rd_at_peak), matching the sort and the home page plaque.
+        # rd_at_peak is kept so the RD column can show the RD at the peak date.
+        if system == "glicko2":
+            peak_map = {r[0]: (round(r[1] - r[3], 1), r[2], round(r[3], 1)) for r in peak_rows}
+        else:
+            peak_map = {r[0]: (round(r[1], 1), r[2], None) for r in peak_rows}
         countries = self._countries(player_ids)
 
         # Step 2: Fetch current ratings from player_ratings for those player_ids
@@ -1136,7 +1163,7 @@ class DataProvider:
         results = []
         for rank, pid in enumerate(player_ids, start=1):
             r = rating_map.get(pid)
-            pk, pkd = peak_map[pid]
+            pk, pkd, rd_at_peak = peak_map[pid]
             if r:
                 results.append({
                     "player_id": r[0],
@@ -1153,6 +1180,7 @@ class DataProvider:
                     "main_game": main_games.get(r[0], ""),
                     "peak": pk,
                     "peak_date": pkd,
+                    "rd_at_peak": rd_at_peak,
                     "rank": rank,
                 })
             else:
@@ -1173,6 +1201,7 @@ class DataProvider:
                     "main_game": main_games.get(pid, ""),
                     "peak": pk,
                     "peak_date": pkd,
+                    "rd_at_peak": rd_at_peak,
                     "rank": rank,
                 })
         return results[offset:offset + limit]
@@ -1242,6 +1271,10 @@ class DataProvider:
                 """
                 order_expr = "p.peak DESC"
                 group_extra = ""
+            # For glicko2 the displayed peak is the conservative lower bound
+            # (peak - rd_at_peak), matching the sort and home page plaque.
+            peak_expr = "p.peak - p.rd_at_peak" if system == "glicko2" else "p.peak"
+            rd_at_peak_expr = ", p.rd_at_peak" if system == "glicko2" else ""
             query = f"""
                 SELECT h.player_id,
                        argMax(h.rating, h.played_at) AS rating,
@@ -1251,8 +1284,8 @@ class DataProvider:
                        argMax(h.losses, h.played_at) AS losses,
                        argMax(h.matches_played, h.played_at) AS matches,
                        max(h.played_at) AS last_match,
-                       p.peak,
-                       p.peak_date
+                       {peak_expr} AS peak,
+                       p.peak_date{rd_at_peak_expr}
                 FROM rating_history h
                 INNER JOIN (
                     {peak_subquery}
@@ -1297,19 +1330,36 @@ class DataProvider:
             for r in nr_rows:
                 names[r[0]] = r[1]
                 first_dates[r[0]] = r[2]
-            # Peak as of the given date — only consider history up to that date
-            peak_rows = self.db.client.execute(
-                """
-                SELECT player_id, game_name,
-                       max(rating) AS peak,
-                       argMax(played_at, rating) AS peak_date
-                FROM rating_history
-                WHERE rating_system = %(rs)s AND player_id IN %(ids)s AND played_at <= toDateTime(%(date)s)
-                GROUP BY player_id, game_name
-                """,
-                {"rs": system, "ids": tuple(player_ids), "date": f"{date} 00:00:00"},
-            )
-            peaks = {(r[0], r[1]): (round(r[2], 1), r[3]) for r in peak_rows}
+            # Peak as of the given date — only consider history up to that date.
+            # For glicko2 the displayed peak is the conservative lower bound
+            # (peak - rd_at_peak), matching the sort and home page plaque.
+            if system == "glicko2":
+                peak_rows = self.db.client.execute(
+                    """
+                    SELECT player_id, game_name,
+                           max(rating) - argMax(rd, rating) AS peak,
+                           argMax(played_at, rating) AS peak_date,
+                           argMax(rd, rating) AS rd_at_peak
+                    FROM rating_history
+                    WHERE rating_system = %(rs)s AND player_id IN %(ids)s AND played_at <= toDateTime(%(date)s)
+                    GROUP BY player_id, game_name
+                    """,
+                    {"rs": system, "ids": tuple(player_ids), "date": f"{date} 00:00:00"},
+                )
+                peaks = {(r[0], r[1]): (round(r[2], 1), r[3], round(r[4], 1)) for r in peak_rows}
+            else:
+                peak_rows = self.db.client.execute(
+                    """
+                    SELECT player_id, game_name,
+                           max(rating) AS peak,
+                           argMax(played_at, rating) AS peak_date
+                    FROM rating_history
+                    WHERE rating_system = %(rs)s AND player_id IN %(ids)s AND played_at <= toDateTime(%(date)s)
+                    GROUP BY player_id, game_name
+                    """,
+                    {"rs": system, "ids": tuple(player_ids), "date": f"{date} 00:00:00"},
+                )
+                peaks = {(r[0], r[1]): (round(r[2], 1), r[3], None) for r in peak_rows}
 
         # For combined: also get main game per player
         main_games = {}
@@ -1335,8 +1385,9 @@ class DataProvider:
                 "last_match_date": r[7],
                 "first_match_date": first_dates.get(r[0]),
                 "main_game": main_games.get(r[0], ""),
-                "peak": peaks.get((r[0], game), (None, None))[0],
-                "peak_date": peaks.get((r[0], game), (None, None))[1],
+                "peak": peaks.get((r[0], game), (None, None, None))[0],
+                "peak_date": peaks.get((r[0], game), (None, None, None))[1],
+                "rd_at_peak": peaks.get((r[0], game), (None, None, None))[2],
                 "rank": i + 1,
             }
             for i, r in enumerate(rows)
@@ -1428,26 +1479,42 @@ class DataProvider:
         player_id = rows[0][0] if rows else None
         peaks = {}
         if player_id:
+            # For glicko2 the displayed peak is the conservative lower bound
+            # (peak - rd_at_peak), matching the leaderboard and home page plaque.
+            peak_rows = self.db.client.execute(
+                """
+                SELECT rating_system, game_name,
+                       max(rating) - argMax(rd, rating) AS peak,
+                       argMax(played_at, rating) AS peak_date,
+                       argMax(rd, rating) AS rd_at_peak
+                FROM rating_history
+                WHERE player_id = %(pid)s AND rating_system = 'glicko2'
+                GROUP BY rating_system, game_name
+                """,
+                {"pid": player_id},
+            )
+            for r in peak_rows:
+                peaks[(r[0], r[1])] = (round(r[2], 1), r[3], round(r[4], 1))
             peak_rows = self.db.client.execute(
                 """
                 SELECT rating_system, game_name,
                        max(rating) AS peak,
                        argMax(played_at, rating) AS peak_date
                 FROM rating_history
-                WHERE player_id = %(pid)s
+                WHERE player_id = %(pid)s AND rating_system != 'glicko2'
                 GROUP BY rating_system, game_name
                 """,
                 {"pid": player_id},
             )
             for r in peak_rows:
-                peaks[(r[0], r[1])] = (round(r[2], 1), r[3])
+                peaks[(r[0], r[1])] = (round(r[2], 1), r[3], None)
 
         return [
             {
                 "player_id": r[0],
                 "name": canon,
                 "country": self._country(r[0]),
-                "game": r[2] or "Combined",
+                "game": r[2] or "All Games",
                 "system": r[3],
                 "rating": round(r[4], 1),
                 "rd": round(r[5], 1) if r[5] else None,
@@ -1458,8 +1525,9 @@ class DataProvider:
                 "last_match_id": r[10],
                 "last_match_date": r[11],
                 "first_match_date": r[12],
-                "peak": peaks.get((r[3], r[2]), (None, None))[0],
-                "peak_date": peaks.get((r[3], r[2]), (None, None))[1],
+                "peak": peaks.get((r[3], r[2]), (None, None, None))[0],
+                "peak_date": peaks.get((r[3], r[2]), (None, None, None))[1],
+                "rd_at_peak": peaks.get((r[3], r[2]), (None, None, None))[2],
             }
             for r in rows
         ]
@@ -2155,7 +2223,7 @@ class DataProvider:
             "losses": losses,
             "matches": matches,
             "system": system,
-            "game": game or "Combined",
+            "game": game or "All Games",
         }
 
     def get_stats(self) -> dict:
@@ -2345,7 +2413,7 @@ class DataProvider:
             "country": self._country(pid),
             "peak": round(peak, 1),
             "peak_date": peak_date,
-            "game": peak_game or "Combined",
+            "game": peak_game or "All Games",
         }
 
     def get_top_players_by_game(self, system: str = "elo", limit: int = 5) -> list[dict]:
@@ -2380,18 +2448,18 @@ class DataProvider:
         total_losses = 0
         total_matches = 0
         for r in ratings:
-            if r["system"] == "elo" and r["game"] == "Combined":
+            if r["system"] == "elo" and r["game"] == "All Games":
                 total_wins = r["wins"]
                 total_losses = r["losses"]
                 total_matches = r["matches"]
                 if r["peak"]:
                     peak_rating = r["peak"]
                     peak_date = r["peak_date"]
-            if r["system"] == "glicko2" and r["game"] == "Combined":
+            if r["system"] == "glicko2" and r["game"] == "All Games":
                 if r["peak"]:
                     peak_glicko = r["peak"]
                     peak_glicko_date = r["peak_date"]
-            if r["system"] == "elo" and r["game"] != "Combined":
+            if r["system"] == "elo" and r["game"] != "All Games":
                 if r["rating"] > best_rating:
                     best_rating = r["rating"]
                     best_game = r
@@ -2420,7 +2488,7 @@ class DataProvider:
         # Per-game breakdown
         per_game = {}
         for r in ratings:
-            if r["system"] == "elo" and r["game"] != "Combined":
+            if r["system"] == "elo" and r["game"] != "All Games":
                 g = r["game"]
                 per_game[g] = {
                     "rating": r["rating"],

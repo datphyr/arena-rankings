@@ -21,10 +21,11 @@
   <div class="card" style="text-align:center;padding:18px 24px;flex:1;">
     <span style="color:var(--text-faint);font-size:0.8rem;text-transform:uppercase;letter-spacing:0.08em;">All-time peak Elo</span><br>
     <span style="font-family:var(--mono);font-size:1.8rem;font-weight:800;color:var(--gold);">
-      {{ "%.0f"|format(peak_info.peak) }}
+      <a class="peak-link" href="/leaderboard{% if peak_info.game and peak_info.game != 'All Games' %}?game={{ peak_info.game }}&system=elo&sort=peak{% else %}?system=elo&sort=peak{% endif %}">{{ "%.0f"|format(peak_info.peak) }}</a>
     </span>
     by
     <span class="player-name">{% if peak_info.country %}<span class="flag" title="{{ peak_info.country|upper }}">{{ peak_info.country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ peak_info.player_id }}/{{ slug(peak_info.name) }}">{{ peak_info.name }}</a></span>
+    {% if peak_info.game %}in {{ peak_info.game }}{% endif %}
     on {{ peak_info.peak_date|dt if peak_info.peak_date else '—' }}
   </div>
   {% endif %}
@@ -32,10 +33,11 @@
   <div class="card" style="text-align:center;padding:18px 24px;flex:1;">
     <span style="color:var(--text-faint);font-size:0.8rem;text-transform:uppercase;letter-spacing:0.08em;">All-time peak Glicko-2</span><br>
     <span style="font-family:var(--mono);font-size:1.8rem;font-weight:800;color:var(--gold);">
-      {{ "%.0f"|format(peak_info_glicko.peak) }}
+      <a class="peak-link" href="/leaderboard{% if peak_info_glicko.game and peak_info_glicko.game != 'All Games' %}?game={{ peak_info_glicko.game }}&system=glicko2&sort=peak{% else %}?system=glicko2&sort=peak{% endif %}">{{ "%.0f"|format(peak_info_glicko.peak) }}</a>
     </span>
     by
     <span class="player-name">{% if peak_info_glicko.country %}<span class="flag" title="{{ peak_info_glicko.country|upper }}">{{ peak_info_glicko.country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ peak_info_glicko.player_id }}/{{ slug(peak_info_glicko.name) }}">{{ peak_info_glicko.name }}</a></span>
+    {% if peak_info_glicko.game %}in {{ peak_info_glicko.game }}{% endif %}
     on {{ peak_info_glicko.peak_date|dt if peak_info_glicko.peak_date else '—' }}
   </div>
   {% endif %}

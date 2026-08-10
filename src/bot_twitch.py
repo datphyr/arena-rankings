@@ -53,7 +53,7 @@ DEFAULT_HISTORY_LIMIT = 8
 # ─── Game abbreviation ────────────────────────────────────────────────────────
 
 GAME_SHORT = {
-    "Combined": "ALL",
+    "All Games": "ALL",
     "Quake Champions": "QC",
     "Quake Live": "QL",
     "Quake 3 Arena": "Q3",
@@ -87,7 +87,7 @@ class ParsedArgs:
     def __init__(self):
         self.positional: list[str] = []
         self.game: str = ""
-        self.game_label: str = "Combined"
+        self.game_label: str = "All Games"
         self.limit: Optional[int] = None
         self.system: str = "elo"
         self.sort_by: str = "rating"
@@ -253,7 +253,7 @@ def _fmt_player(ratings: list, name: str, system: str) -> list[str]:
     sys_label = "Glicko-2" if system == "glicko2" else "Elo"
     entries = []
     for r in ratings:
-        game = _game_short(r.get("game") or "Combined")
+        game = _game_short(r.get("game") or "All Games")
         if system == "glicko2":
             rating = fmt_rating(r["rating"])
             rd = r.get("rd")
@@ -648,7 +648,7 @@ class TwitchBot:
 
         for r in sys_r:
             rank = self._dx.get_player_rank(
-                name, game=r["game"] if r["game"] != "Combined" else "",
+                name, game=r["game"] if r["game"] != "All Games" else "",
                 system=pa.system, min_matches=min_m,
             )
             r["rank"] = rank["rank"] if rank else "—"

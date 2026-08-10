@@ -53,8 +53,8 @@ def _k_factor_for_tier(tier: str, games_played: int) -> float:
 
 
 def _game_label(game_name: str) -> str:
-    """Format game name for log messages — empty string becomes 'Combined'."""
-    return game_name if game_name else "Combined"
+    """Format game name for log messages — empty string becomes 'All Games'."""
+    return game_name if game_name else "All Games"
 
 
 def _system_display(system: str) -> str:
