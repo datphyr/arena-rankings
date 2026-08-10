@@ -184,7 +184,7 @@ GAME_ALIASES = {
 
 
 def _resolve_game(game: str) -> str:
-    """Resolve a game alias to its canonical name ("" = combined)."""
+    """Resolve a game alias to its canonical name ("" = all games)."""
     if not game:
         return ""
     g = game.strip().lower()
@@ -287,7 +287,7 @@ def top_players_partial(request: Request, sort: str = Query("elo", pattern="^(el
 @app.get("/leaderboard", response_class=HTMLResponse)
 def leaderboard(
     request: Request,
-    game: str = Query("", description="Game name or alias (empty = combined)"),
+    game: str = Query("", description="Game name or alias (empty = all games)"),
     system: str = Query("elo", pattern="^(elo|glicko2)$"),
     sort: str = Query("rating", pattern="^(rating|peak)$"),
     date: Optional[str] = Query(None, description="Leaderboard as of YYYY-MM-DD"),
@@ -351,7 +351,7 @@ def player_by_id(
     request: Request,
     player_id: int,
     name: str,
-    game: str = Query("", description="Game name or alias (empty = combined)"),
+    game: str = Query("", description="Game name or alias (empty = all games)"),
     limit: int = Query(50, ge=1, le=200),
     period: str = Query("all", description="History period: 1m, 3m, 6m, 1y, all"),
 ):
@@ -367,7 +367,7 @@ def player_by_id(
 def player_by_id_short(
     request: Request,
     player_id: int,
-    game: str = Query("", description="Game name or alias (empty = combined)"),
+    game: str = Query("", description="Game name or alias (empty = all games)"),
     limit: int = Query(50, ge=1, le=200),
     period: str = Query("all", description="History period: 1m, 3m, 6m, 1y, all"),
 ):

@@ -668,7 +668,7 @@ class DataProvider:
     # --- Games ---
 
     def get_games(self) -> list[str]:
-        """Return list of game names (excluding combined)."""
+        """Return list of game names (excluding all-games aggregate)."""
         rows = self.db.client.execute(
             "SELECT DISTINCT game_name FROM matches FINAL WHERE game_name != '' ORDER BY game_name"
         )
@@ -913,7 +913,7 @@ class DataProvider:
         """Top players by rating or peak.
 
         Args:
-            game: game name ("" = combined)
+            game: game name ("" = all games)
             system: "elo" or "glicko2"
             limit: max results
             min_matches: minimum matches played to qualify
@@ -1041,7 +1041,7 @@ class DataProvider:
     def get_ratings_for_players(
         self, player_ids: list, system: str = "glicko2", game: str = ""
     ) -> dict:
-        """Batch-fetch a rating (default glicko2, combined) for a set of player IDs.
+        """Batch-fetch a rating (default glicko2, all games) for a set of player IDs.
 
         Returns {player_id: rating_value}.
         """
@@ -1225,7 +1225,7 @@ class DataProvider:
 
         Args:
             date: ISO date string (e.g. '2020-01-01').
-            game: game name ("" = combined).
+            game: game name ("" = all games).
             system: "elo" or "glicko2".
             limit: max results.
             min_matches: minimum matches played to qualify.
@@ -2312,7 +2312,7 @@ class DataProvider:
         }
 
     def get_most_active_players(self, limit: int = 10) -> list[dict]:
-        """Players with the most matches (combined, any system)."""
+        """Players with the most matches (all games, any system)."""
         rows = self.db.client.execute(
             """
             SELECT player_id, player_name, matches_played, wins, losses

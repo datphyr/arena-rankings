@@ -82,7 +82,7 @@ Detailed info for each step:
   - Glicko-2 reloads from start of last period to catch late-added matches.
 - Stores ratings in player_ratings, history snapshots in rating_history.
 - Rating history tracks peak rating + peak date per player per game.
-- Wrapper: rank.py (daemon mode, computes per-game + combined for both systems)
+- Wrapper: rank.py (daemon mode, computes per-game + all-games aggregate for both systems)
 
 4. DATA PROVIDER
 4.0 SHARED LAYER (implemented ✓) — src/data_provider.py

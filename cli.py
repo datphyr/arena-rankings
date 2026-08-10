@@ -55,7 +55,7 @@ def fmt_top(dx: DataProvider, game: str = "", system: str = "elo",
             date: str = None, sort_by: str = "rating") -> str:
     """Format leaderboard as a string."""
     buf = StringIO()
-    game_label = game or "Combined"
+    game_label = game or "All Games"
     is_combined = not game
 
     for sys_name in ("elo", "glicko2"):
@@ -116,7 +116,7 @@ def fmt_player(dx: DataProvider, name: str, min_matches: int = -1) -> str:
     for r in elo_ratings + glicko_ratings:
         r_mm = elo_mm if r['system'] == 'elo' else glicko_mm
         rank = dx.get_player_rank(
-            name, game=r['game'] if r['game'] != 'Combined' else '',
+            name, game=r['game'] if r['game'] != 'All Games' else '',
             system=r['system'], min_matches=r_mm,
         )
         r['rank'] = rank['rank'] if rank else '—'
@@ -138,7 +138,7 @@ def fmt_history(dx: DataProvider, name: str, game: str = "",
     """Format rating history as a string."""
     buf = StringIO()
     resolved = dx._resolve_name(name)
-    game_label = game or "Combined"
+    game_label = game or "All Games"
 
     merged = dx.get_player_history_both(name, game=game, limit=limit)
     if not merged:
@@ -337,7 +337,7 @@ def main():
 
     # top
     p = sub.add_parser("top", help="Leaderboard")
-    p.add_argument("--game", "-g", default="", help="Game name (empty = combined)")
+    p.add_argument("--game", "-g", default="", help="Game name (empty = all games)")
     p.add_argument("--system", "-s", default="elo", choices=["elo", "glicko2"])
     p.add_argument("--limit", "-n", type=int, default=20)
     p.add_argument("--min-matches", type=int, default=-1, help=f"Minimum matches played (default: {MIN_MATCHES_GLICKO2} for glicko2, {MIN_MATCHES_ELO} for elo)")

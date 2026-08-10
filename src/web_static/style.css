@@ -338,9 +338,9 @@ body::before {
 .peak-row {
   display: flex;
   gap: 16px;
-  margin: 0 0 24px;
+  margin: 0;
 }
-.peak-row .card { flex: 1; }
+.peak-row .card { flex: 1; margin-bottom: 0; }
 .stat-card {
   background: var(--bg-card);
   border: 1px solid var(--border-soft);
