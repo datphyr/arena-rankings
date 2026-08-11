@@ -22,22 +22,22 @@ Data is stored in **ClickHouse**.
  PlusForward (matchlist + match pages)
         │
         ▼
- ┌─────────────┐   ┌──────────┐   ┌──────────┐   ┌────────────┐
- │  discovery  │──▶│ download │──▶│  parse   │──▶│    rank    │
- └─────────────┘   └──────────┘   └──────────┘   └────────────┘
+ ┌─────────────┐   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
+ │  discovery  │──▶│  download   │──▶│    parse    │──▶│    rank     │
+ └─────────────┘   └─────────────┘   └─────────────┘   └─────────────┘
         │               │               │               │
         └───────────────┴───────┬───────┴───────────────┘
                                 ▼
-                          ┌───────────┐
-                          │ ClickHouse │
-                          └───────────┘
+                         ┌─────────────┐
+                         │  ClickHouse │
+                         └─────────────┘
                                 │
-          ┌─────────────────────┼──────────────────────┐
-          ▼                     ▼                      ▼
-     ┌─────────┐          ┌─────────┐           ┌──────────┐
-     │  web    │          │ Discord │           │  Twitch  │
-     │(FastAPI)│          │   bot   │           │   bot    │
-     └─────────┘          └─────────┘           └──────────┘
+          ┌─────────────────────┼─────────────────────┐
+          ▼                     ▼                     ▼
+     ┌─────────┐           ┌─────────┐           ┌─────────┐
+     │   web   │           │ Discord │           │  Twitch │
+     │(FastAPI)│           │   bot   │           │   bot   │
+     └─────────┘           └─────────┘           └─────────┘
 ```
 
 - **Pipeline wrappers** (top-level scripts): `discovery.py`, `download.py`, `parse.py`, `rank.py`, `reset.py`.
@@ -167,22 +167,6 @@ Run `python api_web.py` and open `http://localhost:8080`.
 - **Matches / Tournament pages** — match details, map results, tournament metadata and rankings.
 - **H2H** — head-to-head comparison between two players.
 - **JSON API** — interactive docs at `/api/docs` (endpoints under `/api/...`).
-
-## Screenshots
-
-Screenshots of the running app in its default **dark** theme (toggle to **light** via the header button). Light-mode captures live under `screenshots/light/`.
-
-![Home](screenshots/dark/home.png)
-
-![Leaderboard](screenshots/dark/leaderboard.png)
-
-![Player page with rating history](screenshots/dark/player.png)
-
-![Matches](screenshots/dark/matches.png)
-
-![Head-to-head](screenshots/dark/h2h.png)
-
-![Tournaments](screenshots/dark/tournaments.png)
 
 ## Project layout
 
