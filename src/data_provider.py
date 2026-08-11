@@ -498,6 +498,7 @@ _GAMES_CACHE: Optional[list[str]] = None
 _PEAK_OVERALL_CACHE: dict[tuple, dict] = {}
 _STATS_CACHE: Optional[dict] = None
 _TOURNAMENT_STATS_CACHE: Optional[dict] = None
+_MAIN_GAMES_CACHE: dict[str, dict[int, str]] = {}
 
 
 class DataProvider:
@@ -1248,16 +1249,30 @@ class DataProvider:
             if player_ids:
                 # Per-game elo rows have zero duplicates (FINAL is a no-op and
                 # costs a sort); glicko2 per-game rows have duplicates, so keep
-                # FINAL only for glicko2.
-                mg_final = " FINAL" if system == "glicko2" else ""
-                mg_rows = self.db.client.execute(
-                    f"SELECT player_id, argMax(game_name, matches_played) AS main_game "
-                    f"FROM player_ratings{mg_final} "
-                    f"WHERE rating_system = %(sys)s AND game_name != '' AND player_id IN %(ids)s "
-                    f"GROUP BY player_id",
-                    {"sys": system, "ids": tuple(player_ids)},
-                )
-                main_games = {r[0]: r[1] for r in mg_rows}
+                # FINAL only for glicko2. Cache per system — main_game only
+                # changes on import.
+                mg_cache = _MAIN_GAMES_CACHE.get(system)
+                if mg_cache is not None:
+                    main_games = {pid: mg_cache[pid] for pid in player_ids if pid in mg_cache}
+                    missing_mg = [pid for pid in player_ids if pid not in mg_cache]
+                else:
+                    main_games = {}
+                    missing_mg = list(player_ids)
+                if missing_mg:
+                    mg_final = " FINAL" if system == "glicko2" else ""
+                    mg_rows = self.db.client.execute(
+                        f"SELECT player_id, argMax(game_name, matches_played) AS main_game "
+                        f"FROM player_ratings{mg_final} "
+                        f"WHERE rating_system = %(sys)s AND game_name != '' AND player_id IN %(ids)s "
+                        f"GROUP BY player_id",
+                        {"sys": system, "ids": tuple(missing_mg)},
+                    )
+                    if mg_cache is None:
+                        mg_cache = {}
+                        _MAIN_GAMES_CACHE[system] = mg_cache
+                    for r in mg_rows:
+                        main_games[r[0]] = r[1]
+                        mg_cache[r[0]] = r[1]
                 if fetch_peaks:
                     peaks = self._fetch_peaks(player_ids, system)
 
