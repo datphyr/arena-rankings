@@ -886,15 +886,11 @@ class DataProvider:
         """Tier distribution stats."""
         rows = self.db.client.execute(
             """
-            SELECT tier, count() AS tournaments, sum(matches) AS matches
-            FROM (
-                SELECT t.tier AS tier, t.tournament_id AS tid, count(m.match_id) AS matches
-                FROM tournaments t FINAL
-                INNER JOIN matches m ON m.tournament_id = t.tournament_id
-                WHERE t.name != ''
-                GROUP BY t.tier, t.tournament_id
-            )
-            GROUP BY tier
+            SELECT t.tier, count(DISTINCT m.tournament_id) AS tournaments, count() AS matches
+            FROM tournaments t FINAL
+            INNER JOIN matches m ON m.tournament_id = t.tournament_id
+            WHERE t.name != ''
+            GROUP BY t.tier
             ORDER BY matches DESC
             """
         )
