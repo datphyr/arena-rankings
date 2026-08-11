@@ -1079,6 +1079,11 @@ class DataProvider:
             return {}
         match_info = {r[0]: (r[1], r[2], r[3]) for r in mrows}
         pids = {p for _, (p1, p2, _) in match_info.items() for p in (p1, p2)}
+        # Only snapshots at or before the latest match timestamp are needed to
+        # compute each match's previous snapshot — anything after the last match
+        # in the set is irrelevant. Filtering here cuts the history fetch
+        # dramatically (e.g. 32k -> 9k rows for a 446-match tournament).
+        max_ts = max((ts for _, (_, _, ts) in match_info.items()), default=None)
         out: dict[int, dict[int, dict[str, float | None]]] = {
             mid: {p: {"elo": None, "glicko2": None} for p in (p1, p2)}
             for mid, (p1, p2, _) in match_info.items()
@@ -1107,10 +1112,10 @@ class DataProvider:
                 SELECT player_id, played_at, rating
                 FROM rating_history
                 WHERE player_id IN %(ids)s AND rating_system = %(sys)s
-                  AND game_name = %(game)s
+                  AND game_name = %(game)s AND played_at <= %(max)s
                 ORDER BY player_id, played_at, match_id
                 """,
-                {"ids": tuple(pids), "sys": sys, "game": game},
+                {"ids": tuple(pids), "sys": sys, "game": game, "max": max_ts},
             )
             hist: dict[int, list[tuple]] = {}
             for pid, ts, rating in prev_rows:
@@ -2795,9 +2800,11 @@ class DataProvider:
         total_matches = self.db.client.execute("SELECT count() FROM matches FINAL")[0][0]
         total_players = self.db.client.execute("SELECT count() FROM players FINAL")[0][0]
         total_downloaded = self.db.client.execute(
-            "SELECT count() FROM match_registry FINAL WHERE status = 'parsed'"
+            "SELECT count() FROM match_registry WHERE status = 'parsed'"
         )[0][0]
-        total_discovered = self.db.client.execute("SELECT count() FROM match_registry FINAL")[0][0]
+        total_discovered = self.db.client.execute(
+            "SELECT uniqExact(match_id) FROM match_registry"
+        )[0][0]
         games = self.get_games()
 
         # Date range from matches
@@ -2991,12 +2998,19 @@ class DataProvider:
                 result.append({"game": g, "players": top})
         return result
 
-    def get_player_summary(self, player_name: str, ratings: list[dict] | None = None) -> dict | None:
+    def get_player_summary(
+        self,
+        player_name: str,
+        ratings: list[dict] | None = None,
+        recent_matches: list[dict] | None = None,
+    ) -> dict | None:
         """Aggregated summary stats for a player.
 
         ratings: optional pre-fetched list from get_player_ratings (avoids a
         redundant re-query when the caller already has the rows, e.g. the
         player page). If omitted, ratings are fetched here.
+        recent_matches: optional pre-fetched list from get_player_matches
+        (limit >= 100) used for streak detection. If omitted, fetched here.
         """
         player_name = self._resolve_name(player_name)
         p_id = self._player_id(player_name)
@@ -3038,7 +3052,7 @@ class DataProvider:
                     worst_game = r
 
         # Current streak from recent matches (scan enough to catch long streaks)
-        recent = self.get_player_matches(player_name, limit=100)
+        recent = recent_matches if recent_matches is not None else self.get_player_matches(player_name, limit=100)
         streak = 0
         streak_type = ""
         for m in recent:

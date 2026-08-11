@@ -444,7 +444,11 @@ def _player_page(request: Request, name: str, game: str = "", limit: int = 50, p
         for h in ctx["history"]:
             if h.get("played_at") is not None:
                 h["played_at"] = h["played_at"].isoformat()
-        ctx["matches"] = dx.get_player_matches(name, game=game, limit=10)
+        # Fetch recent matches once (limit 100) and reuse for both the matches
+        # list (sliced to 10) and the summary streak scan — avoids a redundant
+        # get_player_matches(100) re-query inside get_player_summary.
+        recent_matches = dx.get_player_matches(name, game=game, limit=100)
+        ctx["matches"] = recent_matches[:10]
         # Current-game rank for both systems, batched into one query.
         cur_ranks = dx.get_player_ranks(ctx["player_id"], [
             {"game": game, "system": "elo", "min_matches": MIN_MATCHES_ELO},
@@ -452,7 +456,7 @@ def _player_page(request: Request, name: str, game: str = "", limit: int = 50, p
         ])
         ctx["rank_elo"] = cur_ranks.get((game, "elo"))
         ctx["rank_glicko"] = cur_ranks.get((game, "glicko2"))
-        ctx["summary"] = dx.get_player_summary(name, ratings=ctx["ratings"])
+        ctx["summary"] = dx.get_player_summary(name, ratings=ctx["ratings"], recent_matches=recent_matches)
         # Resolve canonical name from first rating row if available
         if ctx["ratings"]:
             ctx["player_name"] = ctx["ratings"][0]["name"]
