@@ -521,12 +521,12 @@ class DataProvider:
                 SELECT pid, argMax(name, cnt) AS name
                 FROM (
                     SELECT player1_id AS pid, player1_name AS name, count() AS cnt
-                    FROM matches FINAL
+                    FROM matches
                     WHERE player1_id IN %(ids)s AND player1_name != ''
                     GROUP BY player1_id, player1_name
                     UNION ALL
                     SELECT player2_id AS pid, player2_name AS name, count() AS cnt
-                    FROM matches FINAL
+                    FROM matches
                     WHERE player2_id IN %(ids)s AND player2_name != ''
                     GROUP BY player2_id, player2_name
                 )
@@ -584,9 +584,9 @@ class DataProvider:
             """
             SELECT name, count() AS cnt
             FROM (
-                SELECT player1_name AS name FROM matches FINAL WHERE player1_id = %(pid)s AND player1_name != ''
+                SELECT player1_name AS name FROM matches WHERE player1_id = %(pid)s AND player1_name != ''
                 UNION ALL
-                SELECT player2_name AS name FROM matches FINAL WHERE player2_id = %(pid)s AND player2_name != ''
+                SELECT player2_name AS name FROM matches WHERE player2_id = %(pid)s AND player2_name != ''
             )
             GROUP BY name
             ORDER BY cnt DESC, name
@@ -643,26 +643,26 @@ class DataProvider:
             return row[0][0]
         # 3. Exact-case match in matches (players without ratings yet).
         row = self.db.client.execute(
-            "SELECT player1_id FROM matches FINAL WHERE player1_name = %(n)s LIMIT 1",
+            "SELECT player1_id FROM matches WHERE player1_name = %(n)s LIMIT 1",
             {"n": name},
         )
         if row:
             return row[0][0]
         row = self.db.client.execute(
-            "SELECT player2_id FROM matches FINAL WHERE player2_name = %(n)s LIMIT 1",
+            "SELECT player2_id FROM matches WHERE player2_name = %(n)s LIMIT 1",
             {"n": name},
         )
         if row:
             return row[0][0]
         # 4. Case-insensitive match in matches.
         row = self.db.client.execute(
-            "SELECT player1_id FROM matches FINAL WHERE lowerUTF8(player1_name) = lowerUTF8(%(n)s) LIMIT 1",
+            "SELECT player1_id FROM matches WHERE lowerUTF8(player1_name) = lowerUTF8(%(n)s) LIMIT 1",
             {"n": name},
         )
         if row:
             return row[0][0]
         row = self.db.client.execute(
-            "SELECT player2_id FROM matches FINAL WHERE lowerUTF8(player2_name) = lowerUTF8(%(n)s) LIMIT 1",
+            "SELECT player2_id FROM matches WHERE lowerUTF8(player2_name) = lowerUTF8(%(n)s) LIMIT 1",
             {"n": name},
         )
         if row:
@@ -674,7 +674,7 @@ class DataProvider:
     def get_games(self) -> list[str]:
         """Return list of game names (excluding all-games aggregate)."""
         rows = self.db.client.execute(
-            "SELECT DISTINCT game_name FROM matches FINAL WHERE game_name != '' ORDER BY game_name"
+            "SELECT DISTINCT game_name FROM matches WHERE game_name != '' ORDER BY game_name"
         )
         return [r[0] for r in rows]
 
@@ -717,10 +717,10 @@ class DataProvider:
                 extra = self.db.client.execute(
                     """
                     SELECT DISTINCT pid, name FROM (
-                        SELECT player1_id AS pid, player1_name AS name FROM matches FINAL
+                        SELECT player1_id AS pid, player1_name AS name FROM matches
                         WHERE lowerUTF8(player1_name) LIKE lowerUTF8(%(q)s)
                         UNION ALL
-                        SELECT player2_id AS pid, player2_name AS name FROM matches FINAL
+                        SELECT player2_id AS pid, player2_name AS name FROM matches
                         WHERE lowerUTF8(player2_name) LIKE lowerUTF8(%(q)s)
                     )
                     LIMIT %(lim)s
@@ -739,7 +739,7 @@ class DataProvider:
         if kind == "tournament":
             rows = self.db.client.execute(
                 """
-                SELECT DISTINCT tournament_name FROM matches FINAL
+                SELECT DISTINCT tournament_name FROM matches
                 WHERE tournament_name != '' AND lowerUTF8(tournament_name) LIKE lowerUTF8(%(q)s)
                 ORDER BY tournament_name LIMIT %(lim)s
                 """,
@@ -787,7 +787,7 @@ class DataProvider:
         if t_ids:
             mc_params = {"ids": tuple(t_ids)}
             mc_query = (
-                "SELECT tournament_id, count() FROM matches FINAL "
+                "SELECT tournament_id, count() FROM matches "
                 "WHERE tournament_id IN %(ids)s"
             )
             if game:
@@ -804,9 +804,9 @@ class DataProvider:
                 pc_where = " AND game_name = %(game)s"
             pc_query = (
                 "SELECT tournament_id, uniqExact(pid) FROM ("
-                "SELECT tournament_id, player1_id AS pid FROM matches FINAL WHERE tournament_id IN %(ids)s" + pc_where + " "
+                "SELECT tournament_id, player1_id AS pid FROM matches WHERE tournament_id IN %(ids)s" + pc_where + " "
                 "UNION ALL "
-                "SELECT tournament_id, player2_id AS pid FROM matches FINAL WHERE tournament_id IN %(ids)s" + pc_where + " "
+                "SELECT tournament_id, player2_id AS pid FROM matches WHERE tournament_id IN %(ids)s" + pc_where + " "
                 ") GROUP BY tournament_id"
             )
             pc_rows = self.db.client.execute(pc_query, pc_params)
@@ -887,7 +887,7 @@ class DataProvider:
         # Attach match count + first/last match date for the header.
         mrow = self.db.client.execute(
             "SELECT count(), min(played_at), max(played_at) "
-            "FROM matches FINAL WHERE tournament_id = %(t)s",
+            "FROM matches WHERE tournament_id = %(t)s",
             {"t": tournament_id},
         )
         det["matches_count"] = mrow[0][0] if mrow else 0
@@ -897,9 +897,9 @@ class DataProvider:
         # tournaments table's "Players" column.
         prow = self.db.client.execute(
             "SELECT uniqExact(pid) FROM ("
-            "SELECT player1_id AS pid FROM matches FINAL WHERE tournament_id = %(t)s "
+            "SELECT player1_id AS pid FROM matches WHERE tournament_id = %(t)s "
             "UNION ALL "
-            "SELECT player2_id AS pid FROM matches FINAL WHERE tournament_id = %(t)s "
+            "SELECT player2_id AS pid FROM matches WHERE tournament_id = %(t)s "
             ") ",
             {"t": tournament_id},
         )
@@ -930,7 +930,7 @@ class DataProvider:
             """
             SELECT m.match_id, m.player1_name, m.player2_name, m.player1_score, m.player2_score,
                    m.player1_id, m.player2_id, m.winner_id, m.game_name, m.stage_name, m.played_at, t.tier
-            FROM matches m FINAL
+            FROM matches m
             LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
             WHERE m.tournament_id = %(t)s
             ORDER BY m.played_at ASC
@@ -979,7 +979,7 @@ class DataProvider:
         game = det.get("game") or ""
         # Tournament time window from the matches table.
         mrow = self.db.client.execute(
-            "SELECT min(played_at), max(played_at) FROM matches FINAL WHERE tournament_id = %(t)s",
+            "SELECT min(played_at), max(played_at) FROM matches WHERE tournament_id = %(t)s",
             {"t": tournament_id},
         )
         if not mrow or not mrow[0][0] or not mrow[0][1]:
@@ -1070,7 +1070,7 @@ class DataProvider:
         mrows = self.db.client.execute(
             """
             SELECT match_id, player1_id, player2_id, played_at
-            FROM matches FINAL
+            FROM matches
             WHERE match_id IN %(ids)s
             """,
             {"ids": tuple(match_ids)},
@@ -1190,6 +1190,7 @@ class DataProvider:
         sort_col: str = "",
         sort_dir: str = "desc",
         offset: int = 0,
+        fetch_peaks: bool = True,
     ) -> list[dict]:
         """Top players by rating or peak.
 
@@ -1203,6 +1204,10 @@ class DataProvider:
                 When set, fetches all qualifying players and sorts in Python.
             sort_dir: "asc" or "desc" (used with sort_col).
             offset: row offset for pagination.
+            fetch_peaks: whether to fetch per-player peak rating/date from
+                rating_history. Callers that don't display peaks (e.g. the
+                home page top-players table, or leaderboard sorted by rating)
+                can set False to skip an extra query.
         """
         if sort_by == "peak" and not sort_col:
             return self._get_top_players_by_peak(
@@ -1219,15 +1224,31 @@ class DataProvider:
             params["mm"] = min_matches
 
         if not game:
-            # All Games: fetch main game per player via separate query
+            # All Games: fetch main game per player via separate query.
+            # Dedupe player_ratings with GROUP BY + argMax (latest row per
+            # player_id) instead of FINAL — FINAL forces a full merge of the
+            # ReplacingMergeTree which is ~2x slower for this hot query.
             query = """
                 SELECT player_id, player_name, rating, rd, vol, wins, losses, matches_played,
                        last_match_date, first_match_date
-                FROM player_ratings FINAL
-                WHERE rating_system = %(sys)s AND game_name = ''
+                FROM (
+                    SELECT player_id,
+                           argMax(player_name, last_match_id) AS player_name,
+                           argMax(rating, last_match_id) AS rating,
+                           argMax(rd, last_match_id) AS rd,
+                           argMax(vol, last_match_id) AS vol,
+                           argMax(wins, last_match_id) AS wins,
+                           argMax(losses, last_match_id) AS losses,
+                           argMax(matches_played, last_match_id) AS matches_played,
+                           argMax(last_match_date, last_match_id) AS last_match_date,
+                           argMax(first_match_date, last_match_id) AS first_match_date
+                    FROM player_ratings
+                    WHERE rating_system = %(sys)s AND game_name = ''
+                    GROUP BY player_id
+                )
             """
             if min_matches > 0:
-                query += " AND matches_played >= %(mm)s"
+                query += " WHERE matches_played >= %(mm)s"
             # Glicko-2: sort by rating - RD (conservative lower bound) to demote uncertain players
             if system == "glicko2":
                 query += f" ORDER BY {_glicko_rank_sql()} DESC LIMIT %(lim)s"
@@ -1250,7 +1271,8 @@ class DataProvider:
                     {"sys": system, "ids": tuple(player_ids)},
                 )
                 main_games = {r[0]: r[1] for r in mg_rows}
-                peaks = self._fetch_peaks(player_ids, system)
+                if fetch_peaks:
+                    peaks = self._fetch_peaks(player_ids, system)
 
             results = [
                 {
@@ -1279,11 +1301,24 @@ class DataProvider:
             query = """
                 SELECT player_id, player_name, rating, rd, vol, wins, losses, matches_played,
                        last_match_date, first_match_date
-                FROM player_ratings FINAL
-                WHERE rating_system = %(sys)s AND game_name = %(game)s
+                FROM (
+                    SELECT player_id,
+                           argMax(player_name, last_match_id) AS player_name,
+                           argMax(rating, last_match_id) AS rating,
+                           argMax(rd, last_match_id) AS rd,
+                           argMax(vol, last_match_id) AS vol,
+                           argMax(wins, last_match_id) AS wins,
+                           argMax(losses, last_match_id) AS losses,
+                           argMax(matches_played, last_match_id) AS matches_played,
+                           argMax(last_match_date, last_match_id) AS last_match_date,
+                           argMax(first_match_date, last_match_id) AS first_match_date
+                    FROM player_ratings
+                    WHERE rating_system = %(sys)s AND game_name = %(game)s
+                    GROUP BY player_id
+                )
             """
             if min_matches > 0:
-                query += " AND matches_played >= %(mm)s"
+                query += " WHERE matches_played >= %(mm)s"
             # Glicko-2: sort by rating - RD (conservative lower bound)
             if system == "glicko2":
                 query += f" ORDER BY {_glicko_rank_sql()} DESC LIMIT %(lim)s"
@@ -1293,7 +1328,7 @@ class DataProvider:
             player_ids = [r[0] for r in rows]
             canon = self._canonical_names(player_ids)
             countries = self._countries(player_ids)
-            peaks = self._fetch_peaks(player_ids, system)
+            peaks = self._fetch_peaks(player_ids, system) if fetch_peaks else {}
             results = [
                 {
                     "player_id": r[0],
@@ -1994,7 +2029,7 @@ class DataProvider:
                     countIf(m.winner_id = %(p1id)s),
                     countIf(m.winner_id = %(p2id)s),
                     count()
-                FROM matches m FINAL
+                FROM matches m
                 WHERE {where}
                 """,
                 {**params, "p1id": p1_id, "p2id": p2_id},
@@ -2028,7 +2063,7 @@ class DataProvider:
                             WHEN m.winner_id = m.player2_id THEN m.player2_name
                             ELSE NULL
                         END AS winner_name
-                    FROM matches m FINAL
+                    FROM matches m
                     WHERE {where}
                 )
                 """,
@@ -2044,7 +2079,7 @@ class DataProvider:
             SELECT m.match_id, m.player1_name, m.player2_name, m.player1_score, m.player2_score,
                    m.player1_id, m.player2_id, m.winner_id, m.game_name, m.tournament_name,
                    m.stage_name, m.played_at, t.tier, m.tournament_id
-            FROM matches m FINAL
+            FROM matches m
             LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
             WHERE {where}
             ORDER BY m.played_at DESC
@@ -2147,7 +2182,7 @@ class DataProvider:
             SELECT m.match_id, m.player1_name, m.player2_name, m.player1_score, m.player2_score,
                    m.player1_id, m.player2_id, m.winner_id, m.game_name, m.tournament_name, m.stage_name, m.played_at, t.tier,
                    m.tournament_id
-            FROM matches m FINAL
+            FROM matches m
             LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
         """
         params = {"lim": limit, "off": offset}
@@ -2235,7 +2270,7 @@ class DataProvider:
         tournament_match = tournament_match or match
         query = """
             SELECT count()
-            FROM matches m FINAL
+            FROM matches m
             LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
         """
         params = {}
@@ -2299,7 +2334,7 @@ class DataProvider:
                 max(length(m.game_name)),
                 max(length(m.tournament_name)),
                 max(length(t.tier))
-            FROM matches m FINAL
+            FROM matches m
             LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
         """
         params = {}
@@ -2408,7 +2443,7 @@ class DataProvider:
             SELECT m.match_id, m.player1_name, m.player2_name, m.player1_score, m.player2_score,
                    m.player1_id, m.player2_id, m.winner_id, m.game_name, m.tournament_name, m.stage_name, m.played_at, t.tier,
                    m.tournament_id
-            FROM matches m FINAL
+            FROM matches m
             LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
             WHERE (m.player1_id = %(pid)s OR m.player2_id = %(pid)s)
         """
@@ -2464,7 +2499,7 @@ class DataProvider:
             SELECT m.match_id, m.player1_name, m.player2_name, m.player1_score, m.player2_score,
                    m.player1_id, m.player2_id, m.winner_id, m.game_name, m.tournament_name,
                    m.stage_name, m.played_at, m.match_format, t.tier, m.tournament_id
-            FROM matches m FINAL
+            FROM matches m
             LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
             WHERE m.match_id = %(mid)s
             """,
@@ -2550,7 +2585,7 @@ class DataProvider:
         Empty dict if the match doesn't exist or no prior snapshots exist.
         """
         m = self.db.client.execute(
-            "SELECT player1_id, player2_id, played_at FROM matches FINAL WHERE match_id = %(mid)s",
+            "SELECT player1_id, player2_id, played_at FROM matches WHERE match_id = %(mid)s",
             {"mid": match_id},
         )
         if not m:
@@ -2797,7 +2832,7 @@ class DataProvider:
 
     def get_stats(self) -> dict:
         """Overall system stats."""
-        total_matches = self.db.client.execute("SELECT count() FROM matches FINAL")[0][0]
+        total_matches = self.db.client.execute("SELECT count() FROM matches")[0][0]
         total_players = self.db.client.execute("SELECT count() FROM players FINAL")[0][0]
         total_downloaded = self.db.client.execute(
             "SELECT count() FROM match_registry WHERE status = 'parsed'"
@@ -3089,7 +3124,7 @@ class DataProvider:
         date_rows = self.db.client.execute(
             """
             SELECT min(played_at) AS first_match, max(played_at) AS last_match
-            FROM matches FINAL
+            FROM matches
             WHERE player1_id = %(pid)s OR player2_id = %(pid)s
             """,
             {"pid": p_id},
@@ -3105,7 +3140,7 @@ class DataProvider:
                 CASE WHEN player1_id = %(pid)s THEN player2_id ELSE player1_id END AS opp_id,
                 count() AS matches,
                 sum(CASE WHEN winner_id = %(pid)s THEN 1 ELSE 0 END) AS wins
-            FROM matches FINAL
+            FROM matches
             WHERE player1_id = %(pid)s OR player2_id = %(pid)s
             GROUP BY opp_id
             ORDER BY matches DESC
@@ -3163,12 +3198,12 @@ class DataProvider:
             FROM (
                 SELECT player1_id AS pid, winner_id,
                        if(winner_id = player1_id, 1, 0) AS is_win
-                FROM matches FINAL
+                FROM matches
                 WHERE tournament_name = %(t)s AND player1_id != 0
                 UNION ALL
                 SELECT player2_id AS pid, winner_id,
                        if(winner_id = player2_id, 1, 0) AS is_win
-                FROM matches FINAL
+                FROM matches
                 WHERE tournament_name = %(t)s AND player2_id != 0
             )
             GROUP BY pid

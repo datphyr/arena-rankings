@@ -276,12 +276,12 @@ def home(request: Request, sort: str = Query("elo", pattern="^(elo|glicko2)$")):
         ctx["active"] = "home"
         ctx["stats"] = dx.get_stats()
         ctx["tier_stats"] = dx.get_tournament_stats()
-        ctx["top_elo"] = dx.get_top_players(game="", system="elo", limit=10, min_matches=MIN_MATCHES_ELO)
+        ctx["top_elo"] = dx.get_top_players(game="", system="elo", limit=10, min_matches=MIN_MATCHES_ELO, fetch_peaks=False)
         # Batch-fetch glicko2 ratings for the top Elo players (combined)
         glicko = dx.get_ratings_for_players([p["player_id"] for p in ctx["top_elo"]], system="glicko2", game="")
         for p in ctx["top_elo"]:
             p["glicko"] = glicko.get(p["player_id"])
-        ctx["top_glicko"] = dx.get_top_players(game="", system="glicko2", limit=10, min_matches=MIN_MATCHES_GLICKO2)
+        ctx["top_glicko"] = dx.get_top_players(game="", system="glicko2", limit=10, min_matches=MIN_MATCHES_GLICKO2, fetch_peaks=False)
         # Batch-fetch elo ratings for the top Glicko-2 players (combined)
         elo = dx.get_ratings_for_players([p["player_id"] for p in ctx["top_glicko"]], system="elo", game="")
         for p in ctx["top_glicko"]:
@@ -300,12 +300,12 @@ def top_players_partial(request: Request, sort: str = Query("elo", pattern="^(el
     """Return just the Top Players table HTML for in-place (AJAX) sorting."""
     with DataProvider() as dx:
         if sort == "glicko2":
-            players = dx.get_top_players(game="", system="glicko2", limit=10, min_matches=MIN_MATCHES_GLICKO2)
+            players = dx.get_top_players(game="", system="glicko2", limit=10, min_matches=MIN_MATCHES_GLICKO2, fetch_peaks=False)
             elo = dx.get_ratings_for_players([p["player_id"] for p in players], system="elo", game="")
             for p in players:
                 p["elo"] = elo.get(p["player_id"])
         else:
-            players = dx.get_top_players(game="", system="elo", limit=10, min_matches=MIN_MATCHES_ELO)
+            players = dx.get_top_players(game="", system="elo", limit=10, min_matches=MIN_MATCHES_ELO, fetch_peaks=False)
             glicko = dx.get_ratings_for_players([p["player_id"] for p in players], system="glicko2", game="")
             for p in players:
                 p["glicko"] = glicko.get(p["player_id"])
@@ -356,6 +356,7 @@ def leaderboard(
                 game=game, system=system, limit=per_page,
                 min_matches=_min_matches(system), sort_by=sort,
                 sort_col=sort_col, sort_dir=sort_dir, offset=offset,
+                fetch_peaks=(sort == "peak"),
             )
             total = dx.count_top_players(
                 game=game, system=system, min_matches=_min_matches(system)
