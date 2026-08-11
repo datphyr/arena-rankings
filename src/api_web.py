@@ -436,7 +436,7 @@ def _player_page(request: Request, name: str, game: str = "", limit: int = 50, p
                  "min_matches": _min_matches(r["system"])}
                 for r in ctx["ratings"]
             ]
-            ranks = dx.get_player_ranks(ctx["player_id"], rank_combos)
+            ranks = dx.get_player_ranks(ctx["player_id"], rank_combos, player_ratings=ctx["ratings"])
             for r in ctx["ratings"]:
                 rk = ranks.get(("" if r["game"] == "All Games" else r["game"], r["system"]))
                 r["rank"] = rk["rank"] if rk else None

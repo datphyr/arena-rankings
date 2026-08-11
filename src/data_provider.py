@@ -1794,7 +1794,9 @@ class DataProvider:
                 "game": r[2] or "All Games",
                 "system": r[3],
                 "rating": round(r[4], 1),
+                "_raw_rating": r[4],
                 "rd": round(r[5], 1) if r[5] else None,
+                "_raw_rd": r[5],
                 "vol": round(r[6], 4) if r[6] else None,
                 "wins": r[7],
                 "losses": r[8],
@@ -2692,7 +2694,7 @@ class DataProvider:
             "game": game or "All Games",
         }
 
-    def get_player_ranks(self, player_id: int, combos: list[dict]) -> dict:
+    def get_player_ranks(self, player_id: int, combos: list[dict], player_ratings: list[dict] | None = None) -> dict:
         """Batched rank + total for multiple (game, system) leaderboards.
 
         Each combo is a dict: {game, system, min_matches}. The player's exact
@@ -2701,6 +2703,12 @@ class DataProvider:
         get_player_rank exactly. Returns {(game, system): {'rank': int,
         'total': int}} for combos where the player qualifies (meets
         min_matches), else None for that key.
+
+        player_ratings: optional pre-fetched list from get_player_ratings. If
+        provided, the player's exact ratings are taken from it (keyed by
+        (game, system)) using the un-rounded _raw_rating field, avoiding a
+        separate player_ratings FINAL query — the caller (player page) already
+        has these rows.
 
         Replaces the previous N+1 pattern of calling get_player_rank once per
         rating row (3 queries each). This runs a single query for the player's
@@ -2727,26 +2735,32 @@ class DataProvider:
             max_mm[k] = max(max_mm.get(k, 0), c.get("min_matches", 0))
 
         # The player's exact ratings for all pairs (un-rounded, so the rank
-        # comparison matches get_player_rank).
-        pair_conds = []
-        pparams: dict = {"pid": player_id}
-        for i, (g, s) in enumerate(pairs):
-            pair_conds.append(
-                f"(game_name = %(pg{i})s AND rating_system = %(ps{i})s)"
+        # comparison matches get_player_rank). Reuse caller's rows when given.
+        if player_ratings is not None:
+            player_rat: dict[tuple, tuple] = {}
+            for r in player_ratings:
+                g = "" if r["game"] == "All Games" else r["game"]
+                player_rat[(g, r["system"])] = (r["_raw_rating"], r["_raw_rd"], r["matches"])
+        else:
+            pair_conds = []
+            pparams: dict = {"pid": player_id}
+            for i, (g, s) in enumerate(pairs):
+                pair_conds.append(
+                    f"(game_name = %(pg{i})s AND rating_system = %(ps{i})s)"
+                )
+                pparams[f"pg{i}"] = g
+                pparams[f"ps{i}"] = s
+            prow = self.db.client.execute(
+                f"""
+                SELECT game_name, rating_system, rating, rd, matches_played
+                FROM player_ratings FINAL
+                WHERE player_id = %(pid)s AND ({' OR '.join(pair_conds)})
+                """,
+                pparams,
             )
-            pparams[f"pg{i}"] = g
-            pparams[f"ps{i}"] = s
-        prow = self.db.client.execute(
-            f"""
-            SELECT game_name, rating_system, rating, rd, matches_played
-            FROM player_ratings FINAL
-            WHERE player_id = %(pid)s AND ({' OR '.join(pair_conds)})
-            """,
-            pparams,
-        )
-        player_rat: dict[tuple, tuple] = {}
-        for g, s, rating, rd, matches in prow:
-            player_rat[(g, s)] = (rating, rd, matches)
+            player_rat: dict[tuple, tuple] = {}
+            for g, s, rating, rd, matches in prow:
+                player_rat[(g, s)] = (rating, rd, matches)
 
         # One query: distinct rank-values per (game, system), filtered by the
         # strictest min_matches for that pair. Glicko-2 uses rating - rd.
