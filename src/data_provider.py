@@ -496,6 +496,8 @@ _COUNTRY_CACHE: dict[int, str] = {}
 _PLAYER_ID_CACHE: dict[str, Optional[int]] = {}
 _GAMES_CACHE: Optional[list[str]] = None
 _PEAK_OVERALL_CACHE: dict[tuple, dict] = {}
+_STATS_CACHE: Optional[dict] = None
+_TOURNAMENT_STATS_CACHE: Optional[dict] = None
 
 
 class DataProvider:
@@ -884,7 +886,10 @@ class DataProvider:
         return rows[0][0] if rows else 0
 
     def get_tournament_stats(self) -> dict:
-        """Tier distribution stats."""
+        """Tier distribution stats. Cached at module level — static between imports."""
+        global _TOURNAMENT_STATS_CACHE
+        if _TOURNAMENT_STATS_CACHE is not None:
+            return _TOURNAMENT_STATS_CACHE
         rows = self.db.client.execute(
             """
             SELECT t.tier, count(DISTINCT m.tournament_id) AS tournaments, count() AS matches
@@ -895,12 +900,14 @@ class DataProvider:
             ORDER BY matches DESC
             """
         )
-        return {
+        result = {
             "tiers": [
                 {"tier": r[0], "tournaments": r[1], "matches": r[2]}
                 for r in rows
             ]
         }
+        _TOURNAMENT_STATS_CACHE = result
+        return result
 
     def get_tournament_details(self, tournament_id: int) -> Optional[dict]:
         """Return parsed tournament metadata (game, prize, formats, schedule,
@@ -2833,7 +2840,10 @@ class DataProvider:
         return out
 
     def get_stats(self) -> dict:
-        """Overall system stats."""
+        """Overall system stats. Cached at module level — data only changes on import."""
+        global _STATS_CACHE
+        if _STATS_CACHE is not None:
+            return _STATS_CACHE
         # Combine the matches-table aggregates (count, date range, tournament
         # count) into a single scan instead of three separate round-trips.
         mrow = self.db.client.execute(
@@ -2905,7 +2915,7 @@ class DataProvider:
         # Avg matches per player
         avg_matches = round(total_matches / total_players, 1) if total_players > 0 else 0
 
-        return {
+        result = {
             "total_matches": total_matches,
             "total_players": total_players,
             "total_downloaded": total_downloaded,
@@ -2920,6 +2930,8 @@ class DataProvider:
             "tournaments": tournaments,
             "countries": countries,
         }
+        _STATS_CACHE = result
+        return result
 
     def get_most_active_players(self, limit: int = 10) -> list[dict]:
         """Players with the most matches (all games, any system)."""
