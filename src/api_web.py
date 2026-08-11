@@ -422,13 +422,20 @@ def _player_page(request: Request, name: str, game: str = "", limit: int = 50, p
         ctx["ratings"] = dx.get_player_ratings(name, min_matches={"glicko2": MIN_MATCHES_GLICKO2, "elo": MIN_MATCHES_ELO})
         # Games the player actually has ratings for (for the history game selector)
         ctx["player_games"] = sorted({r["game"] for r in ctx["ratings"] if r["game"] != "All Games"})
-        # Compute per-game rank for each rating row (for the rank column)
-        for r in ctx["ratings"]:
-            # All Games ratings are stored with game_name = '' in the DB; map back for the rank query
-            rank_game = "" if r["game"] == "All Games" else r["game"]
-            rk = dx.get_player_rank(name, game=rank_game, system=r["system"], min_matches=_min_matches(r["system"]))
-            r["rank"] = rk["rank"] if rk else None
-            r["rank_total"] = rk["total"] if rk else None
+        # Compute per-game rank for each rating row (for the rank column) in a
+        # single batched query instead of one get_player_rank call per row.
+        if ctx["ratings"]:
+            rank_combos = [
+                {"game": "" if r["game"] == "All Games" else r["game"],
+                 "system": r["system"],
+                 "min_matches": _min_matches(r["system"])}
+                for r in ctx["ratings"]
+            ]
+            ranks = dx.get_player_ranks(ctx["player_id"], rank_combos)
+            for r in ctx["ratings"]:
+                rk = ranks.get(("" if r["game"] == "All Games" else r["game"], r["system"]))
+                r["rank"] = rk["rank"] if rk else None
+                r["rank_total"] = rk["total"] if rk else None
         # Rating history is always all-time (no truncation).
         hist_limit = 100000
         ctx["history"] = dx.get_player_history_both(name, game=game, limit=hist_limit, since=since)
@@ -438,9 +445,14 @@ def _player_page(request: Request, name: str, game: str = "", limit: int = 50, p
             if h.get("played_at") is not None:
                 h["played_at"] = h["played_at"].isoformat()
         ctx["matches"] = dx.get_player_matches(name, game=game, limit=10)
-        ctx["rank_elo"] = dx.get_player_rank(name, game=game, system="elo", min_matches=MIN_MATCHES_ELO)
-        ctx["rank_glicko"] = dx.get_player_rank(name, game=game, system="glicko2", min_matches=MIN_MATCHES_GLICKO2)
-        ctx["summary"] = dx.get_player_summary(name)
+        # Current-game rank for both systems, batched into one query.
+        cur_ranks = dx.get_player_ranks(ctx["player_id"], [
+            {"game": game, "system": "elo", "min_matches": MIN_MATCHES_ELO},
+            {"game": game, "system": "glicko2", "min_matches": MIN_MATCHES_GLICKO2},
+        ])
+        ctx["rank_elo"] = cur_ranks.get((game, "elo"))
+        ctx["rank_glicko"] = cur_ranks.get((game, "glicko2"))
+        ctx["summary"] = dx.get_player_summary(name, ratings=ctx["ratings"])
         # Resolve canonical name from first rating row if available
         if ctx["ratings"]:
             ctx["player_name"] = ctx["ratings"][0]["name"]

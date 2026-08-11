@@ -1404,6 +1404,9 @@ class DataProvider:
         else:
             peak_map = {r[0]: (round(r[1], 1), r[2], None) for r in peak_rows}
         countries = self._countries(player_ids)
+        # Pre-fetch canonical names ONCE (batched) — calling _canonical_name per
+        # player in the merge loop below would issue one query per player (N+1).
+        canon_names = self._canonical_names(player_ids)
 
         # Step 2: Fetch current ratings from player_ratings for those player_ids
         rating_query = """
@@ -1441,7 +1444,7 @@ class DataProvider:
             if r:
                 results.append({
                     "player_id": r[0],
-                    "name": self._canonical_name(r[0]),
+                    "name": canon_names.get(r[0], self._canonical_name(r[0])),
                     "country": countries.get(r[0], ""),
                     "rating": round(r[2], 1),
                     "rd": round(r[3], 1) if r[3] else None,
@@ -1459,7 +1462,7 @@ class DataProvider:
                 })
             else:
                 # Player has history but no current rating (e.g. retired)
-                name = self._canonical_name(pid)
+                name = canon_names.get(pid, self._canonical_name(pid))
                 results.append({
                     "player_id": pid,
                     "name": name,
@@ -2646,6 +2649,147 @@ class DataProvider:
             "game": game or "All Games",
         }
 
+    def get_player_ranks(self, player_id: int, combos: list[dict]) -> dict:
+        """Batched rank + total for multiple (game, system) leaderboards.
+
+        Each combo is a dict: {game, system, min_matches}. The player's exact
+        rating/rd for each (game, system) is fetched internally (one query), so
+        the rank comparison uses the un-rounded stored value — matching
+        get_player_rank exactly. Returns {(game, system): {'rank': int,
+        'total': int}} for combos where the player qualifies (meets
+        min_matches), else None for that key.
+
+        Replaces the previous N+1 pattern of calling get_player_rank once per
+        rating row (3 queries each). This runs a single query for the player's
+        ratings, one for the distinct rank-values per (game, system), and one
+        for the totals, then uses a binary search per combo — the same batching
+        trick used for tournament rating deltas.
+        """
+        if not combos:
+            return {}
+        # Normalize game: '' (All Games) is stored as '' in the DB.
+        norm = [
+            {"game": c.get("game", ""), "system": c.get("system", "elo"),
+             "min_matches": c.get("min_matches", 0)}
+            for c in combos
+        ]
+        # Distinct (game, system) pairs we need values for.
+        pairs = sorted({(c["game"], c["system"]) for c in norm})
+        # Max min_matches across combos sharing a (game, system) — a single
+        # value set per pair must satisfy the strictest threshold so every
+        # combo's count is correct.
+        max_mm: dict[tuple, int] = {}
+        for c in norm:
+            k = (c["game"], c["system"])
+            max_mm[k] = max(max_mm.get(k, 0), c.get("min_matches", 0))
+
+        # The player's exact ratings for all pairs (un-rounded, so the rank
+        # comparison matches get_player_rank).
+        pair_conds = []
+        pparams: dict = {"pid": player_id}
+        for i, (g, s) in enumerate(pairs):
+            pair_conds.append(
+                f"(game_name = %(pg{i})s AND rating_system = %(ps{i})s)"
+            )
+            pparams[f"pg{i}"] = g
+            pparams[f"ps{i}"] = s
+        prow = self.db.client.execute(
+            f"""
+            SELECT game_name, rating_system, rating, rd, matches_played
+            FROM player_ratings FINAL
+            WHERE player_id = %(pid)s AND ({' OR '.join(pair_conds)})
+            """,
+            pparams,
+        )
+        player_rat: dict[tuple, tuple] = {}
+        for g, s, rating, rd, matches in prow:
+            player_rat[(g, s)] = (rating, rd, matches)
+
+        # One query: distinct rank-values per (game, system), filtered by the
+        # strictest min_matches for that pair. Glicko-2 uses rating - rd.
+        mm_conds = []
+        params: dict = {}
+        for i, (g, s) in enumerate(pairs):
+            mm = max_mm[(g, s)]
+            if mm > 0:
+                mm_conds.append(
+                    f"(game_name = %(g{i})s AND rating_system = %(s{i})s AND matches_played >= %(mm{i})s)"
+                )
+                params[f"g{i}"] = g
+                params[f"s{i}"] = s
+                params[f"mm{i}"] = mm
+            else:
+                mm_conds.append(
+                    f"(game_name = %(g{i})s AND rating_system = %(s{i})s)"
+                )
+                params[f"g{i}"] = g
+                params[f"s{i}"] = s
+        mm_where = " OR ".join(mm_conds)
+        rows = self.db.client.execute(
+            f"""
+            SELECT game_name, rating_system,
+                   if(rating_system = 'glicko2', rating - rd, rating) AS rv
+            FROM player_ratings FINAL
+            WHERE ({mm_where})
+            """,
+            params,
+        )
+        # Distinct sorted values per (game, system) for bisect.
+        values: dict[tuple, list[float]] = {}
+        for g, s, rv in rows:
+            values.setdefault((g, s), set()).add(rv)
+        for k in values:
+            values[k] = sorted(values[k])
+
+        # Totals per (game, system) — one query.
+        total_conds = []
+        tparams: dict = {}
+        for i, (g, s) in enumerate(pairs):
+            mm = max_mm[(g, s)]
+            if mm > 0:
+                total_conds.append(
+                    f"(game_name = %(tg{i})s AND rating_system = %(ts{i})s AND matches_played >= %(tmm{i})s)"
+                )
+                tparams[f"tg{i}"] = g
+                tparams[f"ts{i}"] = s
+                tparams[f"tmm{i}"] = mm
+            else:
+                total_conds.append(
+                    f"(game_name = %(tg{i})s AND rating_system = %(ts{i})s)"
+                )
+                tparams[f"tg{i}"] = g
+                tparams[f"ts{i}"] = s
+        total_where = " OR ".join(total_conds)
+        trows = self.db.client.execute(
+            f"""
+            SELECT game_name, rating_system, count()
+            FROM player_ratings FINAL
+            WHERE ({total_where})
+            GROUP BY game_name, rating_system
+            """,
+            tparams,
+        )
+        totals = {(g, s): n for g, s, n in trows}
+
+        out: dict[tuple, dict] = {}
+        for c in norm:
+            k = (c["game"], c["system"])
+            pr = player_rat.get(k)
+            if pr is None:
+                out[k] = None
+                continue
+            rating, rd, matches = pr
+            if c.get("min_matches", 0) > 0 and matches < c["min_matches"]:
+                out[k] = None
+                continue
+            rv = _glicko_rank_value(rating, rd) if c["system"] == "glicko2" else rating
+            vals = values.get(k, [])
+            # Dense rank: count distinct values strictly greater than the
+            # player's, +1.
+            rank = len(vals) - bisect.bisect_right(vals, rv) + 1
+            out[k] = {"rank": rank, "total": totals.get(k, 0)}
+        return out
+
     def get_stats(self) -> dict:
         """Overall system stats."""
         total_matches = self.db.client.execute("SELECT count() FROM matches FINAL")[0][0]
@@ -2847,12 +2991,17 @@ class DataProvider:
                 result.append({"game": g, "players": top})
         return result
 
-    def get_player_summary(self, player_name: str) -> dict | None:
-        """Aggregated summary stats for a player."""
+    def get_player_summary(self, player_name: str, ratings: list[dict] | None = None) -> dict | None:
+        """Aggregated summary stats for a player.
+
+        ratings: optional pre-fetched list from get_player_ratings (avoids a
+        redundant re-query when the caller already has the rows, e.g. the
+        player page). If omitted, ratings are fetched here.
+        """
         player_name = self._resolve_name(player_name)
         p_id = self._player_id(player_name)
-        # Get all ratings
-        ratings = self.get_player_ratings(player_name)
+        # Get all ratings (reuse caller's rows when provided)
+        ratings = ratings if ratings is not None else self.get_player_ratings(player_name)
         if not ratings:
             return None
 
