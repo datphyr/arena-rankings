@@ -2747,42 +2747,16 @@ class DataProvider:
             """,
             params,
         )
-        # Distinct sorted values per (game, system) for bisect.
-        values: dict[tuple, list[float]] = {}
+        # Distinct sorted values per (game, system) for bisect, plus the per-
+        # pair row count (total) — both derived from the same single scan,
+        # avoiding a second full pass over player_ratings for the totals.
+        values: dict[tuple, set] = {}
+        totals: dict[tuple, int] = {}
         for g, s, rv in rows:
             values.setdefault((g, s), set()).add(rv)
+            totals[(g, s)] = totals.get((g, s), 0) + 1
         for k in values:
             values[k] = sorted(values[k])
-
-        # Totals per (game, system) — one query.
-        total_conds = []
-        tparams: dict = {}
-        for i, (g, s) in enumerate(pairs):
-            mm = max_mm[(g, s)]
-            if mm > 0:
-                total_conds.append(
-                    f"(game_name = %(tg{i})s AND rating_system = %(ts{i})s AND matches_played >= %(tmm{i})s)"
-                )
-                tparams[f"tg{i}"] = g
-                tparams[f"ts{i}"] = s
-                tparams[f"tmm{i}"] = mm
-            else:
-                total_conds.append(
-                    f"(game_name = %(tg{i})s AND rating_system = %(ts{i})s)"
-                )
-                tparams[f"tg{i}"] = g
-                tparams[f"ts{i}"] = s
-        total_where = " OR ".join(total_conds)
-        trows = self.db.client.execute(
-            f"""
-            SELECT game_name, rating_system, count()
-            FROM player_ratings FINAL
-            WHERE ({total_where})
-            GROUP BY game_name, rating_system
-            """,
-            tparams,
-        )
-        totals = {(g, s): n for g, s, n in trows}
 
         out: dict[tuple, dict] = {}
         for c in norm:
