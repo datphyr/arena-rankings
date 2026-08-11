@@ -450,13 +450,11 @@ def _player_page(request: Request, name: str, game: str = "", limit: int = 50, p
         # get_player_matches(100) re-query inside get_player_summary.
         recent_matches = dx.get_player_matches(name, game=game, limit=100)
         ctx["matches"] = recent_matches[:10]
-        # Current-game rank for both systems, batched into one query.
-        cur_ranks = dx.get_player_ranks(ctx["player_id"], [
-            {"game": game, "system": "elo", "min_matches": MIN_MATCHES_ELO},
-            {"game": game, "system": "glicko2", "min_matches": MIN_MATCHES_GLICKO2},
-        ])
-        ctx["rank_elo"] = cur_ranks.get((game, "elo"))
-        ctx["rank_glicko"] = cur_ranks.get((game, "glicko2"))
+        # Current-game rank for both systems — already computed in the batched
+        # ranks call above (the current game is in ctx["ratings"]), so reuse it
+        # instead of issuing a second get_player_ranks query.
+        ctx["rank_elo"] = ranks.get((game, "elo"))
+        ctx["rank_glicko"] = ranks.get((game, "glicko2"))
         ctx["summary"] = dx.get_player_summary(name, ratings=ctx["ratings"], recent_matches=recent_matches)
         # Resolve canonical name from first rating row if available
         if ctx["ratings"]:
