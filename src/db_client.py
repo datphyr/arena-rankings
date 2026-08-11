@@ -1,6 +1,7 @@
 """ClickHouse database client for Arena Rankings System."""
 
 import logging
+import threading
 from datetime import datetime
 from typing import Optional
 
@@ -13,6 +14,14 @@ from config import (
     CLICKHOUSE_PORT,
     CLICKHOUSE_USER,
 )
+
+# The schema (CREATE DATABASE + CREATE TABLE IF NOT EXISTS) only needs to run
+# once per process. Every request constructs a fresh Database/DataProvider, and
+# re-running the 9 schema round-trips on each one added ~9ms of overhead per
+# page. A module-level flag (guarded by a lock) skips the no-op DDL after the
+# first successful initialization.
+_schema_ready = False
+_schema_lock = threading.Lock()
 
 from src.db_schema import DDL_STATEMENTS
 
@@ -62,17 +71,21 @@ class Database:
         self.user = user or CLICKHOUSE_USER
         self.password = password or CLICKHOUSE_PASSWORD
 
-        # Ensure the database exists (connect to default first)
-        default_client = Client(
-            host=self.host,
-            port=self.port,
-            user=self.user,
-            password=self.password,
-        )
-        default_client.execute(
-            f"CREATE DATABASE IF NOT EXISTS {self.database}"
-        )
-        default_client.disconnect()
+        # Ensure the database exists (connect to default first). Only needed
+        # once per process — after the first init the database is guaranteed to
+        # exist, so skip the extra default-client round-trip on later requests.
+        global _schema_ready
+        if not _schema_ready:
+            default_client = Client(
+                host=self.host,
+                port=self.port,
+                user=self.user,
+                password=self.password,
+            )
+            default_client.execute(
+                f"CREATE DATABASE IF NOT EXISTS {self.database}"
+            )
+            default_client.disconnect()
 
         # Connect to the target database
         self.client = Client(
@@ -82,7 +95,14 @@ class Database:
             user=self.user,
             password=self.password,
         )
-        self._init_schema()
+        # Run the CREATE TABLE IF NOT EXISTS DDL only once per process (see
+        # module docstring). The tables already exist after the first init, so
+        # skipping the no-op round-trips on every request is safe.
+        if not _schema_ready:
+            with _schema_lock:
+                if not _schema_ready:
+                    self._init_schema()
+                    _schema_ready = True
 
     def _init_schema(self):
         """Create tables if they don't exist."""
