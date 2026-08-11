@@ -1,6 +1,6 @@
 # Arena Rankings
 
-Automated esports player rankings for the Quake Champions competitive scene. The project continuously discovers matches from [PlusForward](https://www.plusforward.net), downloads the match pages, parses them, and computes **Elo** and **Glicko-2** ratings that are served through a web site, a JSON API, and Discord/Twitch chat bots.
+Automated esports player rankings for competitive arena shooters. The project continuously discovers matches from [PlusForward](https://www.plusforward.net), downloads the match pages, parses them, and computes **Elo** and **Glicko-2** ratings that are served through a web site, a JSON API, and Discord/Twitch chat bots. It is game-agnostic and tracks multiple titles side by side (e.g. Quake Champions, Quake Live, Quake 3 Arena, Quake 3 CPMA, Quake 4, Quake World), each with its own leaderboards and ratings.
 
 ## Overview
 
