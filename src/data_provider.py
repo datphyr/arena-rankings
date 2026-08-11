@@ -499,6 +499,9 @@ class DataProvider:
         # Cache of resolved player_id per name (avoids repeated _player_id
         # lookups across the many methods that each resolve the same name).
         self._player_id_cache: dict[str, Optional[int]] = {}
+        # Cache of the games list (queried by _base_context on every page and
+        # again inside get_stats).
+        self._games_cache: Optional[list[str]] = None
 
     def close(self):
         if self._owns_db:
@@ -685,10 +688,12 @@ class DataProvider:
 
     def get_games(self) -> list[str]:
         """Return list of game names (excluding all-games aggregate)."""
-        rows = self.db.client.execute(
-            "SELECT DISTINCT game_name FROM matches WHERE game_name != '' ORDER BY game_name"
-        )
-        return [r[0] for r in rows]
+        if self._games_cache is None:
+            rows = self.db.client.execute(
+                "SELECT DISTINCT game_name FROM matches WHERE game_name != '' ORDER BY game_name"
+            )
+            self._games_cache = [r[0] for r in rows]
+        return self._games_cache
 
     def autocomplete(self, kind: str, q: str, limit: int = 20) -> list[dict] | list[str]:
         """Return matching names for autocomplete dropdowns.
