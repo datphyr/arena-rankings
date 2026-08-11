@@ -496,6 +496,9 @@ class DataProvider:
         self._canonical_cache: dict[int, str] = {}
         # Cache of country code per player_id (from the players table).
         self._country_cache: dict[int, str] = {}
+        # Cache of resolved player_id per name (avoids repeated _player_id
+        # lookups across the many methods that each resolve the same name).
+        self._player_id_cache: dict[str, Optional[int]] = {}
 
     def close(self):
         if self._owns_db:
@@ -627,12 +630,15 @@ class DataProvider:
         falls back to case-insensitive matching (so 'PTHY' resolves to 'pthy').
         Prefers player_ratings (players with ratings), then the matches table.
         """
+        if name in self._player_id_cache:
+            return self._player_id_cache[name]
         # 1. Exact-case match in player_ratings.
         row = self.db.client.execute(
             "SELECT player_id FROM player_ratings FINAL WHERE player_name = %(n)s LIMIT 1",
             {"n": name},
         )
         if row:
+            self._player_id_cache[name] = row[0][0]
             return row[0][0]
         # 2. Case-insensitive match in player_ratings.
         row = self.db.client.execute(
@@ -640,6 +646,7 @@ class DataProvider:
             {"n": name},
         )
         if row:
+            self._player_id_cache[name] = row[0][0]
             return row[0][0]
         # 3. Exact-case match in matches (players without ratings yet).
         row = self.db.client.execute(
@@ -647,12 +654,14 @@ class DataProvider:
             {"n": name},
         )
         if row:
+            self._player_id_cache[name] = row[0][0]
             return row[0][0]
         row = self.db.client.execute(
             "SELECT player2_id FROM matches WHERE player2_name = %(n)s LIMIT 1",
             {"n": name},
         )
         if row:
+            self._player_id_cache[name] = row[0][0]
             return row[0][0]
         # 4. Case-insensitive match in matches.
         row = self.db.client.execute(
@@ -660,13 +669,16 @@ class DataProvider:
             {"n": name},
         )
         if row:
+            self._player_id_cache[name] = row[0][0]
             return row[0][0]
         row = self.db.client.execute(
             "SELECT player2_id FROM matches WHERE lowerUTF8(player2_name) = lowerUTF8(%(n)s) LIMIT 1",
             {"n": name},
         )
         if row:
+            self._player_id_cache[name] = row[0][0]
             return row[0][0]
+        self._player_id_cache[name] = None
         return None
 
     # --- Games ---
