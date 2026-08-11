@@ -2027,7 +2027,7 @@ class DataProvider:
             f"""
             SELECT m.match_id, m.player1_name, m.player2_name, m.player1_score, m.player2_score,
                    m.player1_id, m.player2_id, m.winner_id, m.game_name, m.tournament_name,
-                   m.stage_name, m.played_at, t.tier
+                   m.stage_name, m.played_at, t.tier, m.tournament_id
             FROM matches m FINAL
             LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
             WHERE {where}
@@ -2038,7 +2038,7 @@ class DataProvider:
         )
         matches = []
         for r in rows:
-            (mid, p1n, p2n, s1, s2, p1id, p2id, wid, gn, tn, st, pa, tier) = r
+            (mid, p1n, p2n, s1, s2, p1id, p2id, wid, gn, tn, st, pa, tier, tid) = r
             # Authoritative winner from winner_id (a player_id).
             if wid is not None and wid == p1id:
                 w = p1n
@@ -2079,6 +2079,7 @@ class DataProvider:
                 "winner": w,
                 "game": gn,
                 "tournament": tn,
+                "tournament_id": tid,
                 "stage": st,
                 "played_at": pa,
                 "tier": tier,
@@ -2446,7 +2447,7 @@ class DataProvider:
             """
             SELECT m.match_id, m.player1_name, m.player2_name, m.player1_score, m.player2_score,
                    m.player1_id, m.player2_id, m.winner_id, m.game_name, m.tournament_name,
-                   m.stage_name, m.played_at, m.match_format, t.tier
+                   m.stage_name, m.played_at, m.match_format, t.tier, m.tournament_id
             FROM matches m FINAL
             LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
             WHERE m.match_id = %(mid)s
@@ -2519,6 +2520,7 @@ class DataProvider:
             "played_at": r[11],
             "format": r[12],
             "tier": r[13],
+            "tournament_id": r[14],
             "maps": maps,
         }
 

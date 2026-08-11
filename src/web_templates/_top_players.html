@@ -1,5 +1,5 @@
 <table class="top-players-table auto-cols">
-  <thead><tr><th class="num col-num" style="width:44px">#</th><th class="col-flex">Player</th><th class="col-main-game">Main Game</th><th class="num col-rating {{ 'sort-desc' if top_sort == 'elo' }}"><a class="sort-link {{ 'active' if top_sort == 'elo' }}" href="?sort=elo" data-sort="elo">Elo</a></th><th class="num col-rating {{ 'sort-desc' if top_sort == 'glicko2' }}"><a class="sort-link {{ 'active' if top_sort == 'glicko2' }}" href="?sort=glicko2" data-sort="glicko2">Glicko-2</a></th></tr></thead>
+  <thead><tr><th class="num col-num">#</th><th class="col-flex">Player</th><th class="col-main-game">Main Game</th><th class="num col-rating {{ 'sort-desc' if top_sort == 'elo' }}"><a class="sort-link {{ 'active' if top_sort == 'elo' }}" href="?sort=elo" data-sort="elo">Elo</a></th><th class="num col-rating {{ 'sort-desc' if top_sort == 'glicko2' }}"><a class="sort-link {{ 'active' if top_sort == 'glicko2' }}" href="?sort=glicko2" data-sort="glicko2">Glicko-2</a></th></tr></thead>
   <tbody>
     {% for p in top_players %}
     <tr>

@@ -48,7 +48,7 @@
   {% if match.tournament %}
   <div class="highlight-box">
     <div class="label">Tournament</div>
-    <div class="value" style="font-size:0.95rem;"><a class="tournament-link" href="/matches?{{ qs(tournament=match.tournament) }}">{{ match.tournament }}</a></div>
+    <div class="value" style="font-size:0.95rem;">{% if match.tournament_id %}<a class="player-link" href="/tournament/{{ match.tournament_id }}/{{ slug(match.tournament) }}">{{ match.tournament }}</a>{% else %}<a class="player-link" href="/matches?{{ qs(tournament=match.tournament) }}">{{ match.tournament }}</a>{% endif %}</div>
   </div>
   {% endif %}
   {% if match.stage %}

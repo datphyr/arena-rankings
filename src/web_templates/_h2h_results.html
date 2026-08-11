@@ -56,7 +56,7 @@
           <td class="center col-score"><span class="{{ 'win' if m.winner == m.player1 else 'loss' }}">{{ m.score1 }}</span> : <span class="{{ 'win' if m.winner == m.player2 else 'loss' }}">{{ m.score2 }}</span></td>
           <td class="col-flex"><span class="player-name">{% if m.player2_country %}<span class="flag" title="{{ m.player2_country|upper }}">{{ m.player2_country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ m.player2_id }}/{{ slug(m.player2) }}">{{ m.player2 }}</a></span></td>
           <td class="col-game">{% if m.game %}<a class="game-link" href="/leaderboard?game={{ m.game }}">{{ m.game }}</a>{% else %}—{% endif %}</td>
-          <td class="col-tournament tournament-cell">{{ m.tournament or '—' }}</td>
+          <td class="col-tournament tournament-cell">{% if m.tournament and m.tournament_id %}<a class="tournament-link" href="/tournament/{{ m.tournament_id }}/{{ slug(m.tournament) }}">{{ m.tournament }}</a>{% elif m.tournament %}<a class="tournament-link" href="/matches?{{ qs(tournament=m.tournament) }}">{{ m.tournament }}</a>{% else %}—{% endif %}</td>
           <td class="col-tier">{% if m.tier %}<span class="tag tag-{{ m.tier }}">{{ m.tier }}</span>{% else %}—{% endif %}</td>
         </tr>
         {% else %}

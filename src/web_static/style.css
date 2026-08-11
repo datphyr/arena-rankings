@@ -509,7 +509,7 @@ td.col-flex { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 td.col-flex .player-name { display: inline-flex; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 
 /* Shared narrow fixed widths for non-flex columns. */
-th.col-num, td.col-num { width: 48px; }        /* generic narrow number */
+th.col-num, td.col-num { width: 56px; }        /* generic narrow number (matches lb rank col) */
 th.col-rating, td.col-rating { width: 64px; }  /* rating / peak rating */
 th.col-peak, td.col-peak { width: 120px; }     /* peak rating + date under it */
 th.col-rd, td.col-rd { width: 48px; }          /* glicko RD */
@@ -641,7 +641,11 @@ td.num { padding-left: 4px; padding-right: 18px; }
 table.lb-table td.num:first-child,
 table.lb-table th.num:first-child,
 table.player-ratings-table td.num:first-child,
-table.player-ratings-table th.num:first-child { padding-left: 10px; padding-right: 4px; }
+table.player-ratings-table th.num:first-child,
+table.top-players-table td.num:first-child,
+table.top-players-table th.num:first-child,
+table.auto-cols td.num:first-child,
+table.auto-cols th.num:first-child { padding-left: 10px; padding-right: 4px; }
 table.lb-table th:nth-child(1),
 table.player-ratings-table th:nth-child(1) { width: 56px; }
 /* Match header padding to data cells so header labels sit flush with the
@@ -756,6 +760,17 @@ a.tournament-link {
   font-weight: 500;
 }
 a.tournament-link:hover { color: var(--copper); text-decoration: underline; }
+
+/* Tournaments page: tournament name column reads like player/match links
+   (bold, non-dim), while the first/last match date columns stay dim 500. */
+table.tournaments-table a.tournament-link {
+  color: var(--text);
+  font-weight: 600;
+}
+table.tournaments-table td.col-date {
+  color: var(--text-dim);
+  font-weight: 500;
+}
 
 a.tier-link { text-decoration: none; }
 a.tier-link:hover .tag { filter: brightness(1.2); }
@@ -996,10 +1011,9 @@ a.page-link:hover {
 }
 .map-link:hover { color: var(--accent); border-bottom-color: var(--accent); }
 .match-link {
-  color: var(--text);
+  color: var(--text-dim);
   text-decoration: none;
-  font-weight: 600;
-  transition: color 0.12s ease;
+  font-weight: 500;
 }
 .match-link:hover { color: var(--copper); text-decoration: underline; }
 
