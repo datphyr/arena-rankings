@@ -1225,30 +1225,14 @@ class DataProvider:
 
         if not game:
             # All Games: fetch main game per player via separate query.
-            # Dedupe player_ratings with GROUP BY + argMax (latest row per
-            # player_id) instead of FINAL — FINAL forces a full merge of the
-            # ReplacingMergeTree which is ~2x slower for this hot query.
             query = """
                 SELECT player_id, player_name, rating, rd, vol, wins, losses, matches_played,
                        last_match_date, first_match_date
-                FROM (
-                    SELECT player_id,
-                           argMax(player_name, last_match_id) AS player_name,
-                           argMax(rating, last_match_id) AS rating,
-                           argMax(rd, last_match_id) AS rd,
-                           argMax(vol, last_match_id) AS vol,
-                           argMax(wins, last_match_id) AS wins,
-                           argMax(losses, last_match_id) AS losses,
-                           argMax(matches_played, last_match_id) AS matches_played,
-                           argMax(last_match_date, last_match_id) AS last_match_date,
-                           argMax(first_match_date, last_match_id) AS first_match_date
-                    FROM player_ratings
-                    WHERE rating_system = %(sys)s AND game_name = ''
-                    GROUP BY player_id
-                )
+                FROM player_ratings FINAL
+                WHERE rating_system = %(sys)s AND game_name = ''
             """
             if min_matches > 0:
-                query += " WHERE matches_played >= %(mm)s"
+                query += " AND matches_played >= %(mm)s"
             # Glicko-2: sort by rating - RD (conservative lower bound) to demote uncertain players
             if system == "glicko2":
                 query += f" ORDER BY {_glicko_rank_sql()} DESC LIMIT %(lim)s"
@@ -1301,24 +1285,11 @@ class DataProvider:
             query = """
                 SELECT player_id, player_name, rating, rd, vol, wins, losses, matches_played,
                        last_match_date, first_match_date
-                FROM (
-                    SELECT player_id,
-                           argMax(player_name, last_match_id) AS player_name,
-                           argMax(rating, last_match_id) AS rating,
-                           argMax(rd, last_match_id) AS rd,
-                           argMax(vol, last_match_id) AS vol,
-                           argMax(wins, last_match_id) AS wins,
-                           argMax(losses, last_match_id) AS losses,
-                           argMax(matches_played, last_match_id) AS matches_played,
-                           argMax(last_match_date, last_match_id) AS last_match_date,
-                           argMax(first_match_date, last_match_id) AS first_match_date
-                    FROM player_ratings
-                    WHERE rating_system = %(sys)s AND game_name = %(game)s
-                    GROUP BY player_id
-                )
+                FROM player_ratings FINAL
+                WHERE rating_system = %(sys)s AND game_name = %(game)s
             """
             if min_matches > 0:
-                query += " WHERE matches_played >= %(mm)s"
+                query += " AND matches_played >= %(mm)s"
             # Glicko-2: sort by rating - RD (conservative lower bound)
             if system == "glicko2":
                 query += f" ORDER BY {_glicko_rank_sql()} DESC LIMIT %(lim)s"
