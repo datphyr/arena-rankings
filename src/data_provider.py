@@ -1368,8 +1368,7 @@ class DataProvider:
                            argMax(rh.played_at, rh.rating) AS peak_date,
                            argMax(rh.rd, rh.rating) AS rd_at_peak
                     FROM rating_history rh
-                    INNER JOIN (SELECT player_id FROM player_ratings FINAL WHERE rating_system = %(rs)s AND {game_filter} AND matches_played >= %(mm)s) pr ON rh.player_id = pr.player_id
-                    WHERE rh.rating_system = %(rs)s AND rh.{game_filter}
+                    WHERE rh.rating_system = %(rs)s AND rh.{game_filter} AND rh.matches_played >= %(mm)s
                     GROUP BY rh.player_id
                 """
             peak_query += " ORDER BY peak - rd_at_peak DESC LIMIT %(lim)s"
@@ -1388,8 +1387,7 @@ class DataProvider:
                            max(rh.rating) AS peak,
                            argMax(rh.played_at, rh.rating) AS peak_date
                     FROM rating_history rh
-                    INNER JOIN (SELECT player_id FROM player_ratings FINAL WHERE rating_system = %(rs)s AND {game_filter} AND matches_played >= %(mm)s) pr ON rh.player_id = pr.player_id
-                    WHERE rh.rating_system = %(rs)s AND rh.{game_filter}
+                    WHERE rh.rating_system = %(rs)s AND rh.{game_filter} AND rh.matches_played >= %(mm)s
                     GROUP BY rh.player_id
                 """
             peak_query += " ORDER BY peak DESC LIMIT %(lim)s"
@@ -1735,8 +1733,14 @@ class DataProvider:
 
     # --- Player lookup ---
 
-    def get_player_ratings(self, player_name: str) -> list[dict]:
-        """All ratings for a player across games and systems."""
+    def get_player_ratings(self, player_name: str, min_matches: dict | int = 0) -> list[dict]:
+        """All ratings for a player across games and systems.
+
+        min_matches: either an int (applied to all systems) or a dict mapping
+        system name -> threshold. If a threshold > 0, the displayed peak is the
+        highest peak reached at a moment when the player had at least that many
+        matches (matching the leaderboard and home page peak semantics).
+        """
         player_id = self._player_id(player_name)
         if player_id is None:
             return []
@@ -1757,30 +1761,34 @@ class DataProvider:
         if player_id:
             # For glicko2 the displayed peak is the conservative lower bound
             # (peak - rd_at_peak), matching the leaderboard and home page plaque.
+            mm_g = min_matches.get("glicko2", 0) if isinstance(min_matches, dict) else min_matches
+            mm_other = min_matches.get("elo", 0) if isinstance(min_matches, dict) else min_matches
+            g_filter = "AND matches_played >= %(mm)s" if mm_g > 0 else ""
             peak_rows = self.db.client.execute(
-                """
+                f"""
                 SELECT rating_system, game_name,
                        max(rating) - argMax(rd, rating) AS peak,
                        argMax(played_at, rating) AS peak_date,
                        argMax(rd, rating) AS rd_at_peak
                 FROM rating_history
-                WHERE player_id = %(pid)s AND rating_system = 'glicko2'
+                WHERE player_id = %(pid)s AND rating_system = 'glicko2' {g_filter}
                 GROUP BY rating_system, game_name
                 """,
-                {"pid": player_id},
+                {"pid": player_id, "mm": mm_g} if mm_g > 0 else {"pid": player_id},
             )
             for r in peak_rows:
                 peaks[(r[0], r[1])] = (round(r[2], 1), r[3], round(r[4], 1))
+            o_filter = "AND matches_played >= %(mm)s" if mm_other > 0 else ""
             peak_rows = self.db.client.execute(
-                """
+                f"""
                 SELECT rating_system, game_name,
                        max(rating) AS peak,
                        argMax(played_at, rating) AS peak_date
                 FROM rating_history
-                WHERE player_id = %(pid)s AND rating_system != 'glicko2'
+                WHERE player_id = %(pid)s AND rating_system != 'glicko2' {o_filter}
                 GROUP BY rating_system, game_name
                 """,
-                {"pid": player_id},
+                {"pid": player_id, "mm": mm_other} if mm_other > 0 else {"pid": player_id},
             )
             for r in peak_rows:
                 peaks[(r[0], r[1])] = (round(r[2], 1), r[3], None)
@@ -2754,8 +2762,9 @@ class DataProvider:
 
         For glicko2, the peak is computed with RD removed (rating - rd, the
         conservative lower bound), matching the leaderboard sort behavior.
-        If min_matches > 0, only players with at least that many matches are
-        considered (matching the leaderboard's min-matches filter).
+        If min_matches > 0, only players with at least that many matches at
+        the moment they reached their peak are considered (matching the
+        leaderboard's min-matches filter).
         """
         if system == "glicko2":
             rank_expr = _glicko_rank_sql("h")

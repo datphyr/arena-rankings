@@ -419,7 +419,7 @@ def _player_page(request: Request, name: str, game: str = "", limit: int = 50, p
         ctx["period"] = "all"
         ctx["player_name"] = name
         ctx["player_id"] = dx._player_id(name)
-        ctx["ratings"] = dx.get_player_ratings(name)
+        ctx["ratings"] = dx.get_player_ratings(name, min_matches={"glicko2": MIN_MATCHES_GLICKO2, "elo": MIN_MATCHES_ELO})
         # Games the player actually has ratings for (for the history game selector)
         ctx["player_games"] = sorted({r["game"] for r in ctx["ratings"] if r["game"] != "All Games"})
         # Compute per-game rank for each rating row (for the rank column)

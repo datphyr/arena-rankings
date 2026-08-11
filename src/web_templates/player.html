@@ -194,14 +194,16 @@ function buildChart(history) {
   // (A category scale would space every match equally, distorting gaps.)
   const pts = history.map(h => ({
     x: new Date(h.played_at || '').getTime(),
-    y: h.elo
+    y: h.elo,
+    matches: h.matches
   })).reverse();
   const ptsG = history.map(h => ({
     x: new Date(h.played_at || '').getTime(),
     // Conservative Glicko-2: rating - rd (RD removed), matching the leaderboard
     // and the peak plaque. The line plots the RD-stripped value, not raw rating.
     y: (h.glicko2 != null && h.rd != null) ? h.glicko2 - h.rd : h.glicko2,
-    rd: h.rd
+    rd: h.rd,
+    matches: h.matches
   })).reverse();
   if (chart) { chart.destroy(); chart = null; }
 
@@ -341,14 +343,17 @@ function renderPeakPlaques(pts, ptsG) {
   const wrap = document.getElementById('peak-plaques');
   if (!wrap) return;
   const series = [
-    { label: 'Elo Peak', pts: pts, color: 'var(--accent)' },
-    { label: 'Glicko-2 Peak', pts: ptsG, color: 'var(--plum)' }
+    { label: 'Elo Peak', pts: pts, color: 'var(--accent)', minMatches: 0 },
+    { label: 'Glicko-2 Peak', pts: ptsG, color: 'var(--plum)', minMatches: 30 }
   ];
   const html = series.map(function (s) {
     let peak = null;
     for (let i = 0; i < s.pts.length; i++) {
       const p = s.pts[i];
       if (!p || p.y === null) continue;
+      // Only count a peak if the player had enough matches at that moment
+      // (matching the leaderboard / home page min-matches semantics).
+      if (p.matches != null && p.matches < s.minMatches) continue;
       if (!peak || p.y >= peak.y) peak = p;
     }
     if (!peak) return '';
@@ -368,19 +373,23 @@ const peakMarker = {
   afterDatasetsDraw(chart) {
     const ctx = chart.ctx;
     const series = [
-      { idx: 0, color: '#ef4444' },  // Elo
-      { idx: 1, color: '#7c3aed' }   // Glicko-2 (already conservative: rating - rd)
+      { idx: 0, color: '#ef4444', minMatches: 0 },  // Elo
+      { idx: 1, color: '#7c3aed', minMatches: 30 }  // Glicko-2 (already conservative: rating - rd)
     ];
     const area = chart.chartArea;
     for (const s of series) {
       const ds = chart.data.datasets[s.idx];
       if (!ds || !ds.data.length) continue;
-      let peakIdx = 0;
-      for (let i = 1; i < ds.data.length; i++) {
-        const cur = ds.data[i], best = ds.data[peakIdx];
+      let peakIdx = -1;
+      for (let i = 0; i < ds.data.length; i++) {
+        const cur = ds.data[i];
         if (!cur || cur.y === null) continue;
-        if (cur.y >= best.y) peakIdx = i;
+        // Only count a peak if the player had enough matches at that moment
+        // (matching the leaderboard / home page min-matches semantics).
+        if (cur.matches != null && cur.matches < s.minMatches) continue;
+        if (peakIdx === -1 || cur.y >= ds.data[peakIdx].y) peakIdx = i;
       }
+      if (peakIdx === -1) continue;
       const meta = chart.getDatasetMeta(s.idx);
       const pt = meta.data[peakIdx];
       if (!pt) continue;

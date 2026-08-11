@@ -58,7 +58,7 @@
 <div class="highlight-row" style="margin-top:12px;">
   <div class="highlight-box" style="padding:16px;padding-bottom:24px;overflow:visible;grid-column:1 / -1;">
     <div class="label">Maps</div>
-    <div class="value" style="display:flex;flex-wrap:wrap;gap:0;justify-content:center;align-items:flex-start;font-size:0.85rem;font-weight:400;flex:0 0 auto;">
+    <div class="value" style="display:flex;flex-direction:row;flex-wrap:wrap;gap:0;justify-content:center;align-items:flex-start;font-size:0.85rem;font-weight:400;flex:0 0 auto;">
       {% for mp in maplist %}
       {% set img = map_images.get(mp, '') %}{% set img_src = 'https://www.plusforward.net' + img if img else '/static/map-unknown.svg' %}
       <div class="map-thumb-wrap" title="{{ mp }}" style="text-align:center;flex:1 1 0;min-width:0;align-self:stretch;">
