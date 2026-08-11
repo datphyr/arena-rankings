@@ -1242,11 +1242,15 @@ class DataProvider:
             main_games = {}
             peaks = {}
             if player_ids:
+                # Per-game elo rows have zero duplicates (FINAL is a no-op and
+                # costs a sort); glicko2 per-game rows have duplicates, so keep
+                # FINAL only for glicko2.
+                mg_final = " FINAL" if system == "glicko2" else ""
                 mg_rows = self.db.client.execute(
-                    "SELECT player_id, argMax(game_name, matches_played) AS main_game "
-                    "FROM player_ratings FINAL "
-                    "WHERE rating_system = %(sys)s AND game_name != '' AND player_id IN %(ids)s "
-                    "GROUP BY player_id",
+                    f"SELECT player_id, argMax(game_name, matches_played) AS main_game "
+                    f"FROM player_ratings{mg_final} "
+                    f"WHERE rating_system = %(sys)s AND game_name != '' AND player_id IN %(ids)s "
+                    f"GROUP BY player_id",
                     {"sys": system, "ids": tuple(player_ids)},
                 )
                 main_games = {r[0]: r[1] for r in mg_rows}
