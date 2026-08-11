@@ -28,14 +28,14 @@
 </div>
 
 <div class="card">
-  <div class="card-title"><span class="dot"></span>Tier Breakdown</div>
+  <div class="card-title"><span class="dot"></span>Tiers</div>
   <div class="table-wrap">
     <table class="tier-table sortable auto-cols" data-default-sort="2" data-default-dir="desc">
       <thead><tr><th class="col-flex">Tier</th><th class="num col-m">Tournaments</th><th class="num col-m">Matches</th></tr></thead>
       <tbody>
         {% for t in tier_stats.tiers %}
         <tr>
-          <td class="col-flex">{% if t.tier %}<a class="tier-link" href="/matches?tier={{ t.tier }}"><span class="tag tag-{{ t.tier }}">{{ t.tier }}</span></a>{% else %}{% endif %}</td>
+          <td class="col-flex">{% if t.tier %}<a class="tier-link" href="?{{ qs(tier=t.tier, game=game, limit=limit) }}"><span class="tag tag-{{ t.tier }}">{{ t.tier }}</span></a>{% else %}{% endif %}</td>
           <td class="num col-m">{{ t.tournaments }}</td>
           <td class="num col-m">{{ "{:,}".format(t.matches) }}</td>
         </tr>

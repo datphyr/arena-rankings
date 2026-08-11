@@ -57,7 +57,7 @@
 {% if maplist %}
 <div class="highlight-row" style="margin-top:12px;">
   <div class="highlight-box" style="padding:16px;padding-bottom:24px;overflow:visible;grid-column:1 / -1;">
-    <div class="label">Maps</div>
+    <div class="card-title"><span class="dot"></span>Maps</div>
     <div class="value" style="display:flex;flex-direction:row;flex-wrap:wrap;gap:12px;justify-content:center;align-items:flex-start;font-size:0.85rem;font-weight:400;flex:0 0 auto;">
       {% for mp in maplist %}
       {% set img = map_images.get(mp, '') %}{% set img_src = 'https://www.plusforward.net' + img if img else '/static/map-unknown.svg' %}
@@ -73,8 +73,8 @@
 {% endif %}
 
 {% if rankings %}
-<div class="section-head"><h2>Final Standings</h2></div>
 <div class="card">
+  <div class="card-title"><span class="dot"></span>Final Standings</div>
   <div class="table-wrap" style="overflow:visible;">
     <table class="player-ratings-table auto-cols">
       <thead>
@@ -105,8 +105,8 @@
 </div>
 {% endif %}
 
-<div class="section-head"><h2>Matches</h2></div>
 <div class="card">
+  <div class="card-title"><span class="dot"></span>Matches</div>
   <div class="table-wrap">
     <table class="matches-table auto-cols">
       <thead><tr>

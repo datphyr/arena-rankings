@@ -46,8 +46,8 @@
 
 <div class="dash-grid">
   <div>
-    <div class="section-head"><h2><a class="game-link" href="/leaderboard">Top Players</a></h2></div>
     <div class="card">
+      <div class="card-title"><span class="dot"></span><a class="game-link" href="/leaderboard">Top Players</a></div>
       <div class="table-wrap">
         {% include "_top_players.html" %}
       </div>
@@ -55,8 +55,8 @@
   </div>
 
   <div>
-    <div class="section-head"><h2><a class="game-link" href="/leaderboard?sort_col=matches&sort_dir=desc">Most Active</a></h2></div>
     <div class="card">
+      <div class="card-title"><span class="dot"></span><a class="game-link" href="/leaderboard?sort_col=matches&sort_dir=desc">Most Active</a></div>
       <div class="table-wrap">
         <table class="auto-cols">
           <thead><tr><th class="num col-num"><span class="rank-head-box">#</span></th><th class="col-flex">Player</th><th class="num col-m">Matches</th><th class="num col-w">W</th><th class="num col-l">L</th><th class="num col-wr">WR</th></tr></thead>
@@ -78,8 +78,8 @@
   </div>
 </div>
 
-<div class="section-head"><h2>Games</h2></div>
 <div class="card">
+  <div class="card-title"><span class="dot"></span>Games</div>
   <div class="table-wrap">
     <table class="sortable games-table auto-cols" data-default-sort="1" data-default-dir="desc">
       <thead><tr><th class="col-flex">Game</th><th class="num col-m">Matches</th><th class="num col-m">Players</th><th class="num col-m">Tournaments</th></tr></thead>
@@ -97,8 +97,8 @@
   </div>
 </div>
 
-<div class="section-head"><h2>Recent Matches</h2></div>
 <div class="card">
+  <div class="card-title"><span class="dot"></span>Recent Matches</div>
   <div class="table-wrap">
     <table class="auto-cols">
       <thead><tr><th class="col-date">Date</th><th class="right col-flex">Player 1</th><th class="center col-score">Score</th><th class="col-flex">Player 2</th><th class="col-game">Game</th><th class="col-tournament">Tournament</th><th class="col-tier">Tier</th></tr></thead>
