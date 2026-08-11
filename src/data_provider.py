@@ -2805,20 +2805,35 @@ class DataProvider:
 
     def get_stats(self) -> dict:
         """Overall system stats."""
-        total_matches = self.db.client.execute("SELECT count() FROM matches")[0][0]
-        total_players = self.db.client.execute("SELECT count() FROM players FINAL")[0][0]
-        total_downloaded = self.db.client.execute(
-            "SELECT count() FROM match_registry WHERE status = 'parsed'"
-        )[0][0]
-        total_discovered = self.db.client.execute(
-            "SELECT uniqExact(match_id) FROM match_registry"
-        )[0][0]
-        games = self.get_games()
-
-        # Date range from matches
-        date_range = self.db.client.execute(
-            "SELECT min(played_at), max(played_at) FROM matches"
+        # Combine the matches-table aggregates (count, date range, tournament
+        # count) into a single scan instead of three separate round-trips.
+        mrow = self.db.client.execute(
+            """
+            SELECT
+                count() AS total_matches,
+                min(played_at) AS first_match,
+                max(played_at) AS last_match,
+                count(DISTINCT tournament_id) AS tournaments
+            FROM matches
+            """
         )[0]
+        total_matches = mrow[0]
+        date_range = (mrow[1], mrow[2])
+        tournaments = mrow[3]
+        total_players = self.db.client.execute("SELECT count() FROM players FINAL")[0][0]
+        # Combine the match_registry counts (downloaded + discovered) into one
+        # query instead of two round-trips.
+        reg = self.db.client.execute(
+            """
+            SELECT
+                countIf(status = 'parsed') AS downloaded,
+                uniqExact(match_id) AS discovered
+            FROM match_registry
+            """
+        )[0]
+        total_downloaded = reg[0]
+        total_discovered = reg[1]
+        games = self.get_games()
 
         # Matches and tournaments per game
         per_game = self.db.client.execute(
@@ -2859,11 +2874,6 @@ class DataProvider:
 
         # Avg matches per player
         avg_matches = round(total_matches / total_players, 1) if total_players > 0 else 0
-
-        # Tournaments
-        tournaments = self.db.client.execute(
-            "SELECT count(DISTINCT tournament_id) FROM matches"
-        )[0][0]
 
         # Countries (union of player1 and player2 countries)
         countries = self.db.client.execute(
