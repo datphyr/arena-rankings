@@ -13,13 +13,13 @@
       <tbody>
         {% for t in tournaments %}
         <tr>
-          <td class="col-tier">{% if t.tier %}<span class="tag tag-{{ t.tier }}">{{ t.tier }}</span>{% else %}—{% endif %}</td>
+          <td class="col-tier">{% if t.tier %}<span class="tag tag-{{ t.tier }}">{{ t.tier }}</span>{% else %}{% endif %}</td>
           <td class="col-flex"><a class="tournament-link" href="/tournament/{{ t.tournament_id }}/{{ slug(t.name) }}">{{ t.name }}</a></td>
-          <td class="col-game">{% if t.game %}<a class="game-link" href="/leaderboard?game={{ t.game }}">{{ t.game }}</a>{% else %}—{% endif %}</td>
+          <td class="col-game">{% if t.game %}<a class="game-link" href="/leaderboard?game={{ t.game }}">{{ t.game }}</a>{% else %}{% endif %}</td>
           <td class="num col-m">{{ t.players }}</td>
           <td class="num col-m">{{ t.matches }}</td>
-          <td class="col-date">{{ t.first_match|dt if t.first_match else "—" }}</td>
-          <td class="col-date">{{ t.last_match|dt if t.last_match else "—" }}</td>
+          <td class="col-date">{{ t.first_match|dt if t.first_match else "" }}</td>
+          <td class="col-date">{{ t.last_match|dt if t.last_match else "" }}</td>
         </tr>
         {% else %}
         <tr><td colspan="7" class="empty">No tournaments found.</td></tr>

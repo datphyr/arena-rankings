@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ t.name if t else 'Tournament not found' }} — Arena Rankings{% endblock %}
+{% block title %}{{ t.name if t else 'Tournament not found' }}{% if t and t.game %} — {{ t.game }}{% endif %} — Arena Rankings{% endblock %}
 {% block content %}
 {% if not t %}
 <div class="section-head"><h2>Tournament not found</h2></div>
@@ -58,7 +58,7 @@
 <div class="highlight-row" style="margin-top:12px;">
   <div class="highlight-box" style="padding:16px;padding-bottom:24px;overflow:visible;grid-column:1 / -1;">
     <div class="label">Maps</div>
-    <div class="value" style="display:flex;flex-direction:row;flex-wrap:wrap;gap:0;justify-content:center;align-items:flex-start;font-size:0.85rem;font-weight:400;flex:0 0 auto;">
+    <div class="value" style="display:flex;flex-direction:row;flex-wrap:wrap;gap:12px;justify-content:center;align-items:flex-start;font-size:0.85rem;font-weight:400;flex:0 0 auto;">
       {% for mp in maplist %}
       {% set img = map_images.get(mp, '') %}{% set img_src = 'https://www.plusforward.net' + img if img else '/static/map-unknown.svg' %}
       <div class="map-thumb-wrap" title="{{ mp }}" style="text-align:center;flex:1 1 0;min-width:0;align-self:stretch;">
@@ -79,7 +79,7 @@
     <table class="player-ratings-table auto-cols">
       <thead>
         <tr>
-          <th class="num col-num">#</th>
+          <th class="num col-num"><span class="rank-head-box">#</span></th>
           <th class="col-flex">Player</th>
           <th class="num col-delta">Rating</th>
           <th class="num col-wr">Prize</th>
@@ -93,8 +93,8 @@
             <span class="rank-badge {{ 'rank-1' if pos == 1 else 'rank-2' if pos == 2 else 'rank-3' if pos == 3 else 'rank-4' if pos == 4 else 'rank-5' if pos == 5 }}">{{ pos }}</span>
           </td>
           <td class="col-flex"><span class="player-name">{% if r.country %}<span class="flag" title="{{ r.country|upper }}">{{ r.country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ r.player_id }}/{{ slug(r.player_name) }}">{{ r.player_name }}</a></span></td>
-          <td class="num col-delta">{% if r.elo_delta is not none %}<span class="{{ 'win' if r.elo_delta > 0 else 'loss' if r.elo_delta < 0 }}">{{ '%+.1f'|format(r.elo_delta) }}</span>{% else %}—{% endif %}</td>
-          <td class="num col-wr">{{ r.prize if r.prize else '—' }}</td>
+          <td class="num col-delta">{% if r.elo_delta is not none %}<span class="{{ 'win' if r.elo_delta > 0 else 'loss' if r.elo_delta < 0 }}">{{ '%+.1f'|format(r.elo_delta) }}</span>{% else %}{% endif %}</td>
+          <td class="num col-wr">{{ r.prize if r.prize else '' }}</td>
         </tr>
         {% else %}
         <tr><td colspan="4" class="empty">No final standings recorded.</td></tr>
@@ -122,12 +122,12 @@
         {% for m in matches %}
         <tr>
           <td class="col-date"><a class="match-link" href="/match/{{ m.match_id }}" title="Match details">{{ m.played_at_str }}</a></td>
-          <td class="col-stage">{{ m.stage or '—' }}</td>
-          <td class="num col-delta">{% if m.p1_elo_delta is not none %}<span class="{{ 'win' if m.p1_elo_delta > 0 else 'loss' if m.p1_elo_delta < 0 }}">{{ '%+.1f'|format(m.p1_elo_delta) }}</span>{% else %}—{% endif %}</td>
+          <td class="col-stage">{{ m.stage or '' }}</td>
+          <td class="num col-delta">{% if m.p1_elo_delta is not none %}<span class="{{ 'win' if m.p1_elo_delta > 0 else 'loss' if m.p1_elo_delta < 0 }}">{{ '%+.1f'|format(m.p1_elo_delta) }}</span>{% else %}{% endif %}</td>
           <td class="right col-flex"><span class="player-name"><a class="player-link" href="/player/{{ m.player1_id }}/{{ slug(m.player1) }}">{{ m.player1 }}</a>{% if m.player1_country %}<span class="flag" title="{{ m.player1_country|upper }}">{{ m.player1_country|flag }}</span>{% endif %}</span></td>
           <td class="center col-score"><a class="score-link" href="/h2h?p1={{ m.player1 }}&p2={{ m.player2 }}" title="Head-to-head"><span class="{{ 'win' if m.winner == m.player1 else 'loss' }}">{{ m.score1 }}</span> : <span class="{{ 'win' if m.winner == m.player2 else 'loss' }}">{{ m.score2 }}</span></a></td>
           <td class="col-flex"><span class="player-name">{% if m.player2_country %}<span class="flag" title="{{ m.player2_country|upper }}">{{ m.player2_country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ m.player2_id }}/{{ slug(m.player2) }}">{{ m.player2 }}</a></span></td>
-          <td class="left col-delta">{% if m.p2_elo_delta is not none %}<span class="{{ 'win' if m.p2_elo_delta > 0 else 'loss' if m.p2_elo_delta < 0 }}">{{ '%+.1f'|format(m.p2_elo_delta) }}</span>{% else %}—{% endif %}</td>
+          <td class="left col-delta">{% if m.p2_elo_delta is not none %}<span class="{{ 'win' if m.p2_elo_delta > 0 else 'loss' if m.p2_elo_delta < 0 }}">{{ '%+.1f'|format(m.p2_elo_delta) }}</span>{% else %}{% endif %}</td>
         </tr>
         {% else %}
         <tr><td colspan="7" class="empty">No matches found for this tournament.</td></tr>
