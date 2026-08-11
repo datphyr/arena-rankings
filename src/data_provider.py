@@ -2156,13 +2156,25 @@ class DataProvider:
         """
         player_match = player_match or match
         tournament_match = tournament_match or match
-        query = """
-            SELECT m.match_id, m.player1_name, m.player2_name, m.player1_score, m.player2_score,
-                   m.player1_id, m.player2_id, m.winner_id, m.game_name, m.tournament_name, m.stage_name, m.played_at, t.tier,
-                   m.tournament_id
-            FROM matches m
-            LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
-        """
+        # The tier filter needs the tournaments JOIN; when no tier filter is
+        # present we drop the JOIN (it roughly doubles the query cost on the
+        # full matches sort) and fetch tiers for the returned rows separately.
+        need_join = bool(tier)
+        if need_join:
+            query = """
+                SELECT m.match_id, m.player1_name, m.player2_name, m.player1_score, m.player2_score,
+                       m.player1_id, m.player2_id, m.winner_id, m.game_name, m.tournament_name, m.stage_name, m.played_at, t.tier,
+                       m.tournament_id
+                FROM matches m
+                LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
+            """
+        else:
+            query = """
+                SELECT m.match_id, m.player1_name, m.player2_name, m.player1_score, m.player2_score,
+                       m.player1_id, m.player2_id, m.winner_id, m.game_name, m.tournament_name, m.stage_name, m.played_at, '' AS tier,
+                       m.tournament_id
+                FROM matches m
+            """
         params = {"lim": limit, "off": offset}
         where = []
         if game:
@@ -2203,6 +2215,18 @@ class DataProvider:
             query += " ORDER BY m.played_at DESC, m.match_id DESC LIMIT %(lim)s OFFSET %(off)s"
 
         rows = self.db.client.execute(query, params)
+        # When the JOIN was dropped (no tier filter), fetch tiers for the
+        # returned tournament_ids in one small query and fill them in.
+        if not need_join and rows:
+            tids = {r[13] for r in rows if r[13]}
+            tier_map = {}
+            if tids:
+                trows = self.db.client.execute(
+                    "SELECT tournament_id, tier FROM tournaments WHERE tournament_id IN %(ids)s",
+                    {"ids": tuple(tids)},
+                )
+                tier_map = {r[0]: r[1] for r in trows}
+            rows = [r[:12] + (tier_map.get(r[13], ""),) + (r[13],) for r in rows]
         ids = {r[5] for r in rows} | {r[6] for r in rows}
         canon = self._canonical_names(list(ids))
         countries = self._countries(list(ids))
