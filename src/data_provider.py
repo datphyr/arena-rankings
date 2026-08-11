@@ -2867,54 +2867,46 @@ class DataProvider:
         total_discovered = reg[1]
         games = self.get_games()
 
-        # Matches and tournaments per game
+        # Combined: per-game matches/tournaments/players in one query (saves 1
+        # round-trip vs separate per_game + players_per_game queries).
         per_game = self.db.client.execute(
             """
             SELECT
                 game_name,
-                count() AS matches,
-                count(DISTINCT tournament_id) AS tournaments
-            FROM matches
+                count(DISTINCT match_id) AS matches,
+                count(DISTINCT tournament_id) AS tournaments,
+                count(DISTINCT player_id) AS players
+            FROM (
+                SELECT game_name, match_id, tournament_id, player1_id AS player_id FROM matches
+                UNION ALL
+                SELECT game_name, match_id, tournament_id, player2_id AS player_id FROM matches
+            )
             GROUP BY game_name
             ORDER BY matches DESC
             """
         )
-        matches_per_game = {name: matches for name, matches, _ in per_game}
-        tournaments_per_game = {name: tcnt for name, _, tcnt in per_game}
+        matches_per_game = {name: matches for name, matches, _, _ in per_game}
+        tournaments_per_game = {name: tcnt for name, _, tcnt, _ in per_game}
+        players_per_game = {name: pcount for name, _, _, pcount in per_game}
 
-        # Players per game (distinct players who played each game)
-        players_per_game = {}
-        for row in self.db.client.execute(
+        # Combined: active players (last 30 days) + countries in one query.
+        sc = self.db.client.execute(
             """
-            SELECT game_name, count(DISTINCT player_id) AS players FROM (
-                SELECT game_name, player1_id AS player_id FROM matches
+            SELECT
+                count(DISTINCT if(played_at >= now() - INTERVAL 30 DAY, player_id, NULL)) AS active_players,
+                count(DISTINCT if(country != '', country, NULL)) AS countries
+            FROM (
+                SELECT played_at, player1_id AS player_id, player1_country AS country FROM matches
                 UNION ALL
-                SELECT game_name, player2_id AS player_id FROM matches
-            ) GROUP BY game_name
+                SELECT played_at, player2_id AS player_id, player2_country AS country FROM matches
+            )
             """
-        ):
-            players_per_game[row[0]] = row[1]
-
-        # Active players (played in last 30 days)
-        active_players = self.db.client.execute(
-            "SELECT count(DISTINCT player_id) FROM ("
-            "SELECT player1_id AS player_id FROM matches WHERE played_at >= now() - INTERVAL 30 DAY "
-            "UNION ALL "
-            "SELECT player2_id AS player_id FROM matches WHERE played_at >= now() - INTERVAL 30 DAY"
-            ")"
-        )[0][0]
+        )[0]
+        active_players = sc[0]
+        countries = sc[1]
 
         # Avg matches per player
         avg_matches = round(total_matches / total_players, 1) if total_players > 0 else 0
-
-        # Countries (union of player1 and player2 countries)
-        countries = self.db.client.execute(
-            "SELECT count(DISTINCT country) FROM ("
-            "SELECT player1_country AS country FROM matches WHERE player1_country != '' "
-            "UNION ALL "
-            "SELECT player2_country AS country FROM matches WHERE player2_country != ''"
-            ")"
-        )[0][0]
 
         return {
             "total_matches": total_matches,
