@@ -45,13 +45,59 @@
   --glow-sage: rgba(132, 204, 22, 0.45);
   --glow-slate: rgba(100, 116, 139, 0.45);
   --glow-rose: rgba(232, 168, 124, 0.45);
+  /* Single source of truth for the light palette. Both light triggers
+     (manual [data-theme="light"] and OS-following media query) remap the
+     standard tokens to these, so light colors are only ever defined here. */
+  --light-bg: #f6f7f9;
+  --light-bg-soft: rgba(238, 240, 243, 0.72);
+  --light-bg-card: rgba(255, 255, 255, 0.66);
+  --light-bg-hover: rgba(240, 242, 245, 0.6);
+  --light-border: #d4d8de;
+  --light-border-soft: #e3e6ea;
+  --light-text: #1a1d23;
+  --light-text-dim: #4b5563;
+  --light-text-faint: #8a94a0;
+  --light-accent: #dc2626;
+  --light-accent-2: #b91c1c;
+  --light-accent-3: #ef4444;
+  --light-copper: #b45309;
+  --light-burgundy: #7f1d1d;
+  --light-plum: #6d28d9;
+  --light-gold: #d97706;
+  --light-green: #059669;
+  --light-blue: #2563eb;
+  --light-red: #dc2626;
+  --light-silver: #9ca3af;
+  --light-rose-gold: #c2703d;
+  --light-yellow: #ca8a04;
+  --light-magenta: #db2777;
+  --light-orange: #ea580c;
+  --light-blush: #e8b4b4;
+  --light-sage: #65a30d;
+  --light-slate: #64748b;
+  --light-cream: #faf6ec;
+  --light-taupe: #8b7d6b;
+  --light-shadow: 0 8px 30px rgba(0, 0, 0, 0.10);
+  --light-glow-red: rgba(220, 38, 38, 0.45);
+  --light-glow-orange: rgba(234, 88, 12, 0.4);
+  --light-glow-yellow: rgba(217, 119, 6, 0.38);
+  --light-glow-green: rgba(5, 150, 105, 0.4);
+  --light-glow-plum: rgba(109, 40, 217, 0.42);
+  --light-glow-copper: rgba(180, 83, 9, 0.4);
+  --light-glow-silver: rgba(156, 163, 175, 0.42);
+  --light-glow-magenta: rgba(219, 39, 119, 0.42);
+  --light-glow-sage: rgba(101, 163, 13, 0.4);
+  --light-glow-slate: rgba(100, 116, 139, 0.4);
+  --light-glow-rose: rgba(194, 112, 61, 0.4);
 }
 
 /* ─── Light theme ────────────────────────────────────────── */
 /* Two ways to get light mode:
    1. OS is in light mode AND the user hasn't forced dark  (media query below)
    2. User manually picked light via the header toggle     (:root[data-theme="light"])
-   The manual toggle (data-theme attr on <html>) always wins over the OS. */
+   The manual toggle (data-theme attr on <html>) always wins over the OS.
+   Both triggers remap the same --light-* tokens defined once on :root, so
+   there is a single source of truth for light colors. */
 :root[data-theme="light"] { color-scheme: light; }
 :root[data-theme="dark"] { color-scheme: dark; }
 @media (prefers-color-scheme: light) {
@@ -60,93 +106,93 @@
 
 /* Manual light override — applies regardless of OS setting. */
 :root[data-theme="light"] {
-  --bg: #f6f7f9;
-  --bg-soft: rgba(238, 240, 243, 0.72);
-  --bg-card: rgba(255, 255, 255, 0.66);
-  --bg-hover: rgba(240, 242, 245, 0.6);
-  --border: #d4d8de;
-  --border-soft: #e3e6ea;
-  --text: #1a1d23;
-  --text-dim: #4b5563;
-  --text-faint: #8a94a0;
-  --accent: #dc2626;
-  --accent-2: #b91c1c;
-  --accent-3: #ef4444;
-  --copper: #b45309;
-  --burgundy: #7f1d1d;
-  --plum: #6d28d9;
-  --gold: #d97706;
-  --green: #059669;
-  --blue: #2563eb;
-  --red: #dc2626;
-  --silver: #9ca3af;
-  --rose-gold: #c2703d;
-  --yellow: #ca8a04;
-  --magenta: #db2777;
-  --orange: #ea580c;
-  --blush: #e8b4b4;
-  --sage: #65a30d;
-  --slate: #64748b;
-  --cream: #faf6ec;
-  --taupe: #8b7d6b;
-  --shadow: 0 8px 30px rgba(0, 0, 0, 0.10);
-  --glow-red: rgba(220, 38, 38, 0.45);
-  --glow-orange: rgba(234, 88, 12, 0.4);
-  --glow-yellow: rgba(217, 119, 6, 0.38);
-  --glow-green: rgba(5, 150, 105, 0.4);
-  --glow-plum: rgba(109, 40, 217, 0.42);
-  --glow-copper: rgba(180, 83, 9, 0.4);
-  --glow-silver: rgba(156, 163, 175, 0.42);
-  --glow-magenta: rgba(219, 39, 119, 0.42);
-  --glow-sage: rgba(101, 163, 13, 0.4);
-  --glow-slate: rgba(100, 116, 139, 0.4);
-  --glow-rose: rgba(194, 112, 61, 0.4);
+  --bg: var(--light-bg);
+  --bg-soft: var(--light-bg-soft);
+  --bg-card: var(--light-bg-card);
+  --bg-hover: var(--light-bg-hover);
+  --border: var(--light-border);
+  --border-soft: var(--light-border-soft);
+  --text: var(--light-text);
+  --text-dim: var(--light-text-dim);
+  --text-faint: var(--light-text-faint);
+  --accent: var(--light-accent);
+  --accent-2: var(--light-accent-2);
+  --accent-3: var(--light-accent-3);
+  --copper: var(--light-copper);
+  --burgundy: var(--light-burgundy);
+  --plum: var(--light-plum);
+  --gold: var(--light-gold);
+  --green: var(--light-green);
+  --blue: var(--light-blue);
+  --red: var(--light-red);
+  --silver: var(--light-silver);
+  --rose-gold: var(--light-rose-gold);
+  --yellow: var(--light-yellow);
+  --magenta: var(--light-magenta);
+  --orange: var(--light-orange);
+  --blush: var(--light-blush);
+  --sage: var(--light-sage);
+  --slate: var(--light-slate);
+  --cream: var(--light-cream);
+  --taupe: var(--light-taupe);
+  --shadow: var(--light-shadow);
+  --glow-red: var(--light-glow-red);
+  --glow-orange: var(--light-glow-orange);
+  --glow-yellow: var(--light-glow-yellow);
+  --glow-green: var(--light-glow-green);
+  --glow-plum: var(--light-glow-plum);
+  --glow-copper: var(--light-glow-copper);
+  --glow-silver: var(--light-glow-silver);
+  --glow-magenta: var(--light-glow-magenta);
+  --glow-sage: var(--light-glow-sage);
+  --glow-slate: var(--light-glow-slate);
+  --glow-rose: var(--light-glow-rose);
 }
 
 /* OS-following default (no manual override) — same light palette. */
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
-    --bg: #f6f7f9;
-    --bg-soft: rgba(238, 240, 243, 0.72);
-    --bg-card: rgba(255, 255, 255, 0.66);
-    --bg-hover: rgba(240, 242, 245, 0.6);
-    --border: #d4d8de;
-    --border-soft: #e3e6ea;
-    --text: #1a1d23;
-    --text-dim: #4b5563;
-    --text-faint: #8a94a0;
-    --accent: #dc2626;
-    --accent-2: #b91c1c;
-    --accent-3: #ef4444;
-    --copper: #b45309;
-    --burgundy: #7f1d1d;
-    --plum: #6d28d9;
-    --gold: #d97706;
-    --green: #059669;
-    --blue: #2563eb;
-    --red: #dc2626;
-    --silver: #9ca3af;
-    --rose-gold: #c2703d;
-    --yellow: #ca8a04;
-    --magenta: #db2777;
-    --orange: #ea580c;
-    --blush: #e8b4b4;
-    --sage: #65a30d;
-    --slate: #64748b;
-    --cream: #faf6ec;
-    --taupe: #8b7d6b;
-    --shadow: 0 8px 30px rgba(0, 0, 0, 0.10);
-    --glow-red: rgba(220, 38, 38, 0.45);
-    --glow-orange: rgba(234, 88, 12, 0.4);
-    --glow-yellow: rgba(217, 119, 6, 0.38);
-    --glow-green: rgba(5, 150, 105, 0.4);
-    --glow-plum: rgba(109, 40, 217, 0.42);
-    --glow-copper: rgba(180, 83, 9, 0.4);
-    --glow-silver: rgba(156, 163, 175, 0.42);
-    --glow-magenta: rgba(219, 39, 119, 0.42);
-    --glow-sage: rgba(101, 163, 13, 0.4);
-    --glow-slate: rgba(100, 116, 139, 0.4);
-    --glow-rose: rgba(194, 112, 61, 0.4);
+    --bg: var(--light-bg);
+    --bg-soft: var(--light-bg-soft);
+    --bg-card: var(--light-bg-card);
+    --bg-hover: var(--light-bg-hover);
+    --border: var(--light-border);
+    --border-soft: var(--light-border-soft);
+    --text: var(--light-text);
+    --text-dim: var(--light-text-dim);
+    --text-faint: var(--light-text-faint);
+    --accent: var(--light-accent);
+    --accent-2: var(--light-accent-2);
+    --accent-3: var(--light-accent-3);
+    --copper: var(--light-copper);
+    --burgundy: var(--light-burgundy);
+    --plum: var(--light-plum);
+    --gold: var(--light-gold);
+    --green: var(--light-green);
+    --blue: var(--light-blue);
+    --red: var(--light-red);
+    --silver: var(--light-silver);
+    --rose-gold: var(--light-rose-gold);
+    --yellow: var(--light-yellow);
+    --magenta: var(--light-magenta);
+    --orange: var(--light-orange);
+    --blush: var(--light-blush);
+    --sage: var(--light-sage);
+    --slate: var(--light-slate);
+    --cream: var(--light-cream);
+    --taupe: var(--light-taupe);
+    --shadow: var(--light-shadow);
+    --glow-red: var(--light-glow-red);
+    --glow-orange: var(--light-glow-orange);
+    --glow-yellow: var(--light-glow-yellow);
+    --glow-green: var(--light-glow-green);
+    --glow-plum: var(--light-glow-plum);
+    --glow-copper: var(--light-glow-copper);
+    --glow-silver: var(--light-glow-silver);
+    --glow-magenta: var(--light-glow-magenta);
+    --glow-sage: var(--light-glow-sage);
+    --glow-slate: var(--light-glow-slate);
+    --glow-rose: var(--light-glow-rose);
   }
 }
 
@@ -978,7 +1024,7 @@ a.page-link:hover {
   margin: 12px 0 10px;
 }
 .player-avatar {
-  width: 48px; height: 48px;
+  width: 64px; height: 64px;
   border-radius: 12px;
   background: linear-gradient(135deg, var(--accent), var(--orange), var(--gold), var(--plum), var(--magenta));
   display: flex; align-items: center; justify-content: center;

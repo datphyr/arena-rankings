@@ -4,6 +4,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}Arena Rankings{% endblock %}</title>
+  <script>
+    // Set the theme BEFORE first paint to avoid a dark/light flicker on load.
+    // Runs synchronously during HTML parse (not deferred). Mirrors theme.js
+    // logic: a saved choice in localStorage wins; otherwise follow the OS.
+    (function () {
+      var saved = null;
+      try { saved = localStorage.getItem('arena-theme'); } catch (e) {}
+      var theme = (saved === 'light' || saved === 'dark')
+        ? saved
+        : (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+      if (theme) document.documentElement.setAttribute('data-theme', theme);
+    })();
+  </script>
   <link rel="stylesheet" href="/static/style.css?v=20260810ac">
   <script src="/static/chart.umd.min.js"></script>
   <script>
