@@ -170,17 +170,19 @@ Run `python api_web.py` and open `http://localhost:8080`.
 
 ## Screenshots
 
-![Home](screenshots/home.png)
+Screenshots of the running app in its default **dark** theme (toggle to light via the header button).
 
-![Leaderboard](screenshots/leaderboard.png)
+![Home](screenshots/dark/home.png)
 
-![Player page with rating history](screenshots/player.png)
+![Leaderboard](screenshots/dark/leaderboard.png)
 
-![Matches](screenshots/matches.png)
+![Player page with rating history](screenshots/dark/player.png)
 
-![Head-to-head](screenshots/h2h.png)
+![Matches](screenshots/dark/matches.png)
 
-![Tournaments](screenshots/tournaments.png)
+![Head-to-head](screenshots/dark/h2h.png)
+
+![Tournaments](screenshots/dark/tournaments.png)
 
 ## Project layout
 
