@@ -1349,7 +1349,7 @@ class DataProvider:
         rows = self.db.client.execute(
             """
             SELECT player_id, rating
-            FROM player_ratings FINAL
+            FROM player_ratings
             WHERE rating_system = %(sys)s AND game_name = %(game)s
               AND player_id IN %(ids)s
             """,
@@ -2913,7 +2913,7 @@ class DataProvider:
         rows = self.db.client.execute(
             """
             SELECT player_id, player_name, matches_played, wins, losses
-            FROM player_ratings FINAL
+            FROM player_ratings
             WHERE rating_system = 'elo' AND game_name = ''
             ORDER BY matches_played DESC
             LIMIT %(lim)s
