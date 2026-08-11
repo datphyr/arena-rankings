@@ -495,6 +495,7 @@ _CANONICAL_CACHE: dict[int, str] = {}
 _COUNTRY_CACHE: dict[int, str] = {}
 _PLAYER_ID_CACHE: dict[str, Optional[int]] = {}
 _GAMES_CACHE: Optional[list[str]] = None
+_PEAK_OVERALL_CACHE: dict[tuple, dict] = {}
 
 
 class DataProvider:
@@ -3035,12 +3036,19 @@ class DataProvider:
         shape get_peak_rating_overall returns. min_matches may be a dict
         {'elo': n, 'glicko2': n} for per-system thresholds, or a single int
         applied to both.
+
+        Results are cached per (mm_elo, mm_glicko) key at module level — peak
+        ratings only change when new data is imported (separate process).
         """
         if isinstance(min_matches, dict):
             mm_elo = min_matches.get("elo", 0)
             mm_glicko = min_matches.get("glicko2", 0)
         else:
             mm_elo = mm_glicko = min_matches
+        cache_key = (mm_elo, mm_glicko)
+        cached = _PEAK_OVERALL_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
         rows = self.db.client.execute(
             """
             SELECT rating_system, player_id,
@@ -3066,6 +3074,7 @@ class DataProvider:
                 "peak_date": peak_date,
                 "game": peak_game or "All Games",
             }
+        _PEAK_OVERALL_CACHE[cache_key] = out
         return out
 
     def get_top_players_by_game(self, system: str = "elo", limit: int = 5) -> list[dict]:
