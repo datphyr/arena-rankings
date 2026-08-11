@@ -1014,59 +1014,35 @@ class DataProvider:
 
         out: dict[int, dict[str, float | None]] = {p: {"elo": None, "glicko2": None} for p in pids}
         for sys in ("elo", "glicko2"):
-            # Start rating: most recent snapshot strictly before the first match.
-            start_rows = self.db.client.execute(
+            # Fetch each standings player's full history up to the last match in
+            # ONE query, then derive both the start and end snapshots in Python.
+            # This replaces the previous 5 queries (start + fallback_start + end
+            # per system) with 2. The history is small (standings players only).
+            hist_rows = self.db.client.execute(
                 """
-                SELECT player_id, rating
-                FROM rating_history
-                WHERE player_id IN %(ids)s AND rating_system = %(sys)s
-                  AND game_name = %(game)s AND played_at < %(first)s
-                ORDER BY player_id, played_at DESC, match_id DESC
-                LIMIT 1 BY player_id
-                """,
-                {"ids": tuple(pids), "sys": sys, "game": game, "first": first_ts},
-            )
-            # Fallback start rating for players with no snapshot before the
-            # first match (their rating history begins inside this tournament):
-            # use their earliest snapshot within the window as the baseline so
-            # we still report their total change across the event instead of
-            # a blank. Only fills in players missing from start_rows.
-            have_start = {r[0] for r in start_rows}
-            missing = [p for p in pids if p not in have_start]
-            fallback_start = {}
-            if missing:
-                fb_rows = self.db.client.execute(
-                    """
-                    SELECT player_id, rating
-                    FROM rating_history
-                    WHERE player_id IN %(ids)s AND rating_system = %(sys)s
-                      AND game_name = %(game)s
-                      AND played_at >= %(first)s AND played_at <= %(last)s
-                    ORDER BY player_id, played_at ASC, match_id ASC
-                    LIMIT 1 BY player_id
-                    """,
-                    {"ids": tuple(missing), "sys": sys, "game": game,
-                     "first": first_ts, "last": last_ts},
-                )
-                fallback_start = {r[0]: r[1] for r in fb_rows}
-            start_map = {r[0]: r[1] for r in start_rows}
-            start_map.update(fallback_start)
-            # End rating: most recent snapshot at/before the last match.
-            end_rows = self.db.client.execute(
-                """
-                SELECT player_id, rating
+                SELECT player_id, played_at, rating
                 FROM rating_history
                 WHERE player_id IN %(ids)s AND rating_system = %(sys)s
                   AND game_name = %(game)s AND played_at <= %(last)s
-                ORDER BY player_id, played_at DESC, match_id DESC
-                LIMIT 1 BY player_id
+                ORDER BY player_id, played_at, match_id
                 """,
                 {"ids": tuple(pids), "sys": sys, "game": game, "last": last_ts},
             )
-            end_map = {r[0]: r[1] for r in end_rows}
+            hist: dict[int, list[tuple]] = {}
+            for pid, ts, rating in hist_rows:
+                hist.setdefault(pid, []).append((ts, rating))
             for pid in pids:
-                if pid in start_map and pid in end_map:
-                    out[pid][sys] = round(end_map[pid] - start_map[pid], 1)
+                rows = hist.get(pid, [])
+                if not rows:
+                    continue
+                # End rating: most recent snapshot at/before the last match.
+                end_rating = rows[-1][1]
+                # Start rating: most recent snapshot strictly before the first
+                # match; if none (history begins inside the window), use the
+                # earliest in-window snapshot as the baseline.
+                idx = bisect.bisect_left(rows, (first_ts,))
+                start_rating = rows[idx - 1][1] if idx > 0 else rows[0][1]
+                out[pid][sys] = round(end_rating - start_rating, 1)
         return out
 
     def get_matches_rating_deltas(self, match_ids: list[int], game: str = "") -> dict:
