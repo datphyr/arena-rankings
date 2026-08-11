@@ -1232,10 +1232,12 @@ class DataProvider:
 
         if not game:
             # All Games: fetch main game per player via separate query.
+            # No FINAL: the All Games aggregate rows have zero duplicates for
+            # both elo and glicko2, so FINAL is a no-op (and costs a sort).
             query = """
                 SELECT player_id, player_name, rating, rd, vol, wins, losses, matches_played,
                        last_match_date, first_match_date
-                FROM player_ratings FINAL
+                FROM player_ratings
                 WHERE rating_system = %(sys)s AND game_name = ''
             """
             if min_matches > 0:
@@ -1289,10 +1291,13 @@ class DataProvider:
                 results = _sort_players(results, sort_col, sort_dir)
             return results[offset:offset + limit]
         else:
-            query = """
+            # Per-game: elo rows have zero duplicates (FINAL is a no-op), but
+            # glicko2 rows have duplicates, so keep FINAL only for glicko2.
+            final_clause = " FINAL" if system == "glicko2" else ""
+            query = f"""
                 SELECT player_id, player_name, rating, rd, vol, wins, losses, matches_played,
                        last_match_date, first_match_date
-                FROM player_ratings FINAL
+                FROM player_ratings{final_clause}
                 WHERE rating_system = %(sys)s AND game_name = %(game)s
             """
             if min_matches > 0:
