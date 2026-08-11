@@ -1873,27 +1873,56 @@ class DataProvider:
         since_clause = ""
         params: dict = {"pid": player_id, "game": game, "lim": limit}
         if since:
-            since_clause = "AND e.played_at >= %(since)s"
+            since_clause = "AND played_at >= %(since)s"
             params["since"] = since
-        rows = self.db.client.execute(
+        # Fetch the player's ELO rows and Glicko-2 rows separately, then
+        # forward-fill Glicko-2 onto each ELO row in Python by the configured
+        # period. This replaces the previous ASOF self-join (which scanned the
+        # player's full rating_history on both sides and was ~18ms regardless
+        # of limit) with two index-friendly queries + a fast in-memory merge.
+        elo_rows = self.db.client.execute(
             f"""
-            SELECT e.match_id, e.played_at, e.rating,
-                   g.rating, g.rd, g.vol,
-                   e.wins, e.losses, e.matches_played
-            FROM rating_history e
-            ASOF LEFT JOIN rating_history g
-                ON e.player_id = g.player_id
-                AND e.game_name = g.game_name
-                AND g.rating_system = 'glicko2'
-                AND {ch_fn}(e.played_at) >= {ch_fn}(g.played_at)
-            WHERE e.player_id = %(pid)s
-            AND e.rating_system = 'elo' AND e.game_name = %(game)s
-            {since_clause}
-            ORDER BY e.played_at DESC, e.match_id DESC
-            LIMIT %(lim)s
+            SELECT match_id, played_at, rating, wins, losses, matches_played
+            FROM rating_history
+            WHERE player_id = %(pid)s AND rating_system = 'elo'
+              AND game_name = %(game)s {since_clause}
+            ORDER BY played_at, match_id
             """,
             params,
         )
+        glicko_rows = self.db.client.execute(
+            """
+            SELECT played_at, rating, rd, vol
+            FROM rating_history
+            WHERE player_id = %(pid)s AND rating_system = 'glicko2'
+              AND game_name = %(game)s
+            ORDER BY played_at, match_id
+            """,
+            {"pid": player_id, "game": game},
+        )
+        # Period key matching the configured Glicko-2 period function.
+        def _period_key(ts):
+            if ch_fn == "toStartOfYear":
+                return (ts.year,)
+            if ch_fn == "toStartOfMonth":
+                return (ts.year, ts.month)
+            if ch_fn == "toStartOfWeek":
+                iso = ts.isocalendar()
+                return (iso.year, iso.week)
+            return (ts.year, ts.month, ts.day)
+
+        g_keys = [_period_key(r[0]) for r in glicko_rows]
+        rows = []
+        for mid, ts, rating, wins, losses, mp in elo_rows:
+            idx = bisect.bisect_right(g_keys, _period_key(ts)) - 1
+            if idx >= 0:
+                _, gr, grd, gvol = glicko_rows[idx]
+                rows.append((mid, ts, rating, gr, grd, gvol, wins, losses, mp))
+            else:
+                rows.append((mid, ts, rating, None, None, None, wins, losses, mp))
+        # Most recent first, then limit (matches the previous ORDER BY + LIMIT).
+        rows.sort(key=lambda r: (r[1], r[0]), reverse=True)
+        rows = rows[:limit]
         return [
             {
                 "match_id": r[0],
