@@ -170,7 +170,7 @@ Run `python api_web.py` and open `http://localhost:8080`.
 
 ## Screenshots
 
-Screenshots of the running app in its default **dark** theme (toggle to light via the header button).
+Screenshots of the running app in its default **dark** theme (toggle to **light** via the header button). Light-mode captures live under `screenshots/light/`.
 
 ![Home](screenshots/dark/home.png)
 
