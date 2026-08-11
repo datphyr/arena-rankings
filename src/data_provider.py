@@ -485,23 +485,31 @@ def tier_stats_cols() -> list[Col]:
     ]
 
 
+# Module-level caches shared across DataProvider instances (and thus across
+# requests in the long-running web process). The underlying data is static
+# (imported by a separate process), so caching canonical names / countries /
+# player-id lookups / the games list here avoids re-scanning matches on every
+# request. These are small (one entry per player_id) and bounded by the number
+# of players.
+_CANONICAL_CACHE: dict[int, str] = {}
+_COUNTRY_CACHE: dict[int, str] = {}
+_PLAYER_ID_CACHE: dict[str, Optional[int]] = {}
+_GAMES_CACHE: Optional[list[str]] = None
+
+
 class DataProvider:
     """Common data access layer for all consumers."""
 
     def __init__(self, db: Optional[Database] = None):
         self.db = db or Database()
         self._owns_db = db is None
-        # Cache of canonical (most-used) display name per player_id.
-        # Populated lazily by _canonical_name / _canonical_names.
-        self._canonical_cache: dict[int, str] = {}
-        # Cache of country code per player_id (from the players table).
-        self._country_cache: dict[int, str] = {}
-        # Cache of resolved player_id per name (avoids repeated _player_id
-        # lookups across the many methods that each resolve the same name).
-        self._player_id_cache: dict[str, Optional[int]] = {}
-        # Cache of the games list (queried by _base_context on every page and
-        # again inside get_stats).
-        self._games_cache: Optional[list[str]] = None
+        # Caches of canonical (most-used) display name / country / resolved
+        # player_id / games list. Shared module-level so they persist across
+        # requests (the data is static).
+        self._canonical_cache: dict[int, str] = _CANONICAL_CACHE
+        self._country_cache: dict[int, str] = _COUNTRY_CACHE
+        self._player_id_cache: dict[str, Optional[int]] = _PLAYER_ID_CACHE
+        self._games_cache: Optional[list[str]] = _GAMES_CACHE
 
     def close(self):
         if self._owns_db:
@@ -688,11 +696,13 @@ class DataProvider:
 
     def get_games(self) -> list[str]:
         """Return list of game names (excluding all-games aggregate)."""
-        if self._games_cache is None:
+        global _GAMES_CACHE
+        if _GAMES_CACHE is None:
             rows = self.db.client.execute(
                 "SELECT DISTINCT game_name FROM matches WHERE game_name != '' ORDER BY game_name"
             )
-            self._games_cache = [r[0] for r in rows]
+            _GAMES_CACHE = [r[0] for r in rows]
+        self._games_cache = _GAMES_CACHE
         return self._games_cache
 
     def autocomplete(self, kind: str, q: str, limit: int = 20) -> list[dict] | list[str]:
