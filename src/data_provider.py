@@ -1101,27 +1101,14 @@ class DataProvider:
             for mid, (p1, p2, _) in match_info.items()
         }
         for sys in ("elo", "glicko2"):
-            # Rating at each match (snapshot tagged with that match_id).
-            at_rows = self.db.client.execute(
-                """
-                SELECT match_id, player_id, rating
-                FROM rating_history
-                WHERE match_id IN %(ids)s AND rating_system = %(sys)s
-                  AND game_name = %(game)s
-                """,
-                {"ids": tuple(match_ids), "sys": sys, "game": game},
-            )
-            at_map: dict[int, dict[int, float]] = {}
-            for mid, pid, rating in at_rows:
-                at_map.setdefault(mid, {})[pid] = rating
-            # Previous snapshot per player: the max played_at strictly before
-            # each match's played_at. Fetch each player's full history in ONE
-            # query (sorted), then find the previous snapshot per match with a
-            # binary search — avoids the previous N+1 (one query per match,
-            # which made large tournament pages slow).
+            # Fetch each player's full history up to max_ts in ONE query. This
+            # includes the match-tagged snapshots (all have played_at <= max_ts),
+            # so we derive both the rating-at-each-match map and the previous-
+            # snapshot history from the same rows — eliminating the separate
+            # at_rows query per system.
             prev_rows = self.db.client.execute(
                 """
-                SELECT player_id, played_at, rating
+                SELECT player_id, played_at, rating, match_id
                 FROM rating_history
                 WHERE player_id IN %(ids)s AND rating_system = %(sys)s
                   AND game_name = %(game)s AND played_at <= %(max)s
@@ -1129,9 +1116,12 @@ class DataProvider:
                 """,
                 {"ids": tuple(pids), "sys": sys, "game": game, "max": max_ts},
             )
+            at_map: dict[int, dict[int, float]] = {}
             hist: dict[int, list[tuple]] = {}
-            for pid, ts, rating in prev_rows:
+            for pid, ts, rating, mid in prev_rows:
                 hist.setdefault(pid, []).append((ts, rating))
+                if mid in match_info:
+                    at_map.setdefault(mid, {})[pid] = rating
             for mid, (p1, p2, played_at) in match_info.items():
                 prev_map: dict[int, float] = {}
                 for pid in (p1, p2):
