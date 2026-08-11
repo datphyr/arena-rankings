@@ -290,8 +290,12 @@ def home(request: Request, sort: str = Query("elo", pattern="^(elo|glicko2)$")):
         ctx["top_players"] = ctx["top_glicko"] if sort == "glicko2" else ctx["top_elo"]
         ctx["recent_matches"] = dx.get_recent_matches(limit=8)
         ctx["most_active"] = dx.get_most_active_players(limit=10)
-        ctx["peak_info"] = dx.get_peak_rating_overall(system="elo", min_matches=MIN_MATCHES_ELO)
-        ctx["peak_info_glicko"] = dx.get_peak_rating_overall(system="glicko2", min_matches=MIN_MATCHES_GLICKO2)
+        # Both overall peaks in a single rating_history scan.
+        _peaks = dx.get_peak_rating_overall_both(
+            min_matches={"elo": MIN_MATCHES_ELO, "glicko2": MIN_MATCHES_GLICKO2}
+        )
+        ctx["peak_info"] = _peaks.get("elo")
+        ctx["peak_info_glicko"] = _peaks.get("glicko2")
     return templates.TemplateResponse(request, "home.html", ctx)
 
 

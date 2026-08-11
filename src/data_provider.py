@@ -2980,6 +2980,48 @@ class DataProvider:
             "game": peak_game or "All Games",
         }
 
+    def get_peak_rating_overall_both(self, min_matches: dict | int = 0) -> dict:
+        """Elo + Glicko-2 overall peaks in a SINGLE scan of rating_history.
+
+        Equivalent to calling get_peak_rating_overall twice (once per system),
+        but scans rating_history once instead of twice. Returns
+        {'elo': {...}|None, 'glicko2': {...}|None} where each value is the same
+        shape get_peak_rating_overall returns. min_matches may be a dict
+        {'elo': n, 'glicko2': n} for per-system thresholds, or a single int
+        applied to both.
+        """
+        if isinstance(min_matches, dict):
+            mm_elo = min_matches.get("elo", 0)
+            mm_glicko = min_matches.get("glicko2", 0)
+        else:
+            mm_elo = mm_glicko = min_matches
+        rows = self.db.client.execute(
+            """
+            SELECT rating_system, player_id,
+                   max(if(rating_system = 'glicko2', h.rating - h.rd, h.rating)) AS peak,
+                   argMax(h.played_at, if(rating_system = 'glicko2', h.rating - h.rd, h.rating)) AS peak_date,
+                   argMax(h.game_name, if(rating_system = 'glicko2', h.rating - h.rd, h.rating)) AS peak_game
+            FROM rating_history h
+            WHERE h.rating_system IN ('elo', 'glicko2')
+              AND h.matches_played >= if(rating_system = 'glicko2', %(mmg)s, %(mme)s)
+            GROUP BY rating_system, h.player_id
+            ORDER BY peak DESC
+            LIMIT 1 BY rating_system
+            """,
+            {"mme": mm_elo, "mmg": mm_glicko},
+        )
+        out: dict = {}
+        for sys, pid, peak, peak_date, peak_game in rows:
+            out[sys] = {
+                "player_id": pid,
+                "name": self._canonical_name(pid),
+                "country": self._country(pid),
+                "peak": round(peak, 1),
+                "peak_date": peak_date,
+                "game": peak_game or "All Games",
+            }
+        return out
+
     def get_top_players_by_game(self, system: str = "elo", limit: int = 5) -> list[dict]:
         """Top player per game (for dashboard mini-lists)."""
         games = self.get_games()
