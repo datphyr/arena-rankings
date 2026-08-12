@@ -12,6 +12,7 @@
   </select>
   <label>Player</label>
   <input type="text" name="player" value="{{ player }}" placeholder="Player name" style="width:140px" data-autocomplete="player">
+  <input type="hidden" name="player_id" value="{{ player_id or '' }}">
   <label>Tournament</label>
   <input type="text" name="tournament" value="{{ tournament }}" placeholder="Tournament name" style="width:160px" data-autocomplete="tournament">
   <label>Tier</label>

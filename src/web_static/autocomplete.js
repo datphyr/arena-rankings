@@ -77,7 +77,7 @@
         idSpan.textContent = "(" + id + ")";
         div.appendChild(idSpan);
       }
-      div.addEventListener("mousedown", function () { self.pick(name); });
+      div.addEventListener("mousedown", function () { self.pick(item); });
       div.addEventListener("mouseenter", function () {
         self.active = i;
         self.highlight();
@@ -94,8 +94,20 @@
     }, this);
   };
 
-  Autocomplete.prototype.pick = function (name) {
+  Autocomplete.prototype.pick = function (item) {
+    // Player entries are {name, id}; tournaments are plain strings.
+    var name = (typeof item === "string") ? item : item.name;
+    var id = (typeof item === "string") ? null : item.id;
     this.input.value = name;
+    // Carry the resolved player id (when known) so the filter can match by id
+    // instead of by name — avoids name-collision ambiguity (e.g. two "serious").
+    // The hidden input (sibling of the wrap, named <name>_id or player_id)
+    // holds the id. NOTE: the input is wrapped in .ac-wrap, so the hidden
+    // input is a sibling of the WRAP, not of the input itself.
+    var idInput = this.wrap.nextElementSibling;
+    if (idInput && idInput.type === "hidden" && idInput.name) {
+      idInput.value = (id !== null && id !== undefined) ? String(id) : "";
+    }
     this.hide();
     this.input.focus();
     // Auto-submit the parent filter form (matches the Enter/blur behavior in

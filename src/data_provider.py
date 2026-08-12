@@ -1846,15 +1846,19 @@ class DataProvider:
 
     # --- Player lookup ---
 
-    def get_player_ratings(self, player_name: str, min_matches: dict | int = 0) -> list[dict]:
+    def get_player_ratings(self, player_name: str, min_matches: dict | int = 0, player_id: int | None = None) -> list[dict]:
         """All ratings for a player across games and systems.
 
         min_matches: either an int (applied to all systems) or a dict mapping
         system name -> threshold. If a threshold > 0, the displayed peak is the
         highest peak reached at a moment when the player had at least that many
         matches (matching the leaderboard and home page peak semantics).
+
+        player_id: optional explicit id. When provided (e.g. from an id-based
+        URL), it is used instead of resolving player_name, which avoids picking
+        the wrong player when two players share the same name.
         """
-        player_id = self._player_id(player_name)
+        player_id = player_id if player_id is not None else self._player_id(player_name)
         if player_id is None:
             return []
         canon = self._canonical_name(player_id)
@@ -1964,13 +1968,14 @@ class DataProvider:
         game: str = "",
         limit: int = 50,
         since: str = "",
+        player_id: int | None = None,
     ) -> list[dict]:
         """Rating history for a player with both ELO and Glicko-2 per row.
 
         Uses ASOF join on the configured Glicko-2 period function so Glicko-2 ratings
         forward-fill onto every ELO match row within the same period.
         """
-        player_id = self._player_id(player_name)
+        player_id = player_id if player_id is not None else self._player_id(player_name)
         if player_id is None:
             return []
         ch_fn = _glicko_period_ch_fn()
@@ -2052,6 +2057,8 @@ class DataProvider:
         limit: int = 100000,
         match: str = "exact",
         match2: Optional[str] = None,
+        p1_id: Optional[int] = None,
+        p2_id: Optional[int] = None,
     ) -> dict:
         """Head-to-head record between two players.
 
@@ -2067,6 +2074,9 @@ class DataProvider:
           - 'exact'   : case-insensitive exact name match (default)
           - 'partial' : case-insensitive substring match
           - 'regex'   : case-insensitive regular expression match
+        `p1_id`/`p2_id`: optional explicit ids (from autocomplete). When
+        provided they take precedence over the names and match by id
+        (unambiguous even for name collisions).
         """
         match2 = match2 or match
 
@@ -2079,8 +2089,9 @@ class DataProvider:
 
         # Build per-player conditions. For exact mode resolve to player_id so
         # the match is robust to name-spelling variations (canonical name).
-        p1_id = self._player_id(player1) if match == "exact" else None
-        p2_id = self._player_id(player2) if match2 == "exact" else None
+        # Explicit ids (from autocomplete) take precedence over name resolution.
+        p1_id = p1_id if p1_id is not None else (self._player_id(player1) if match == "exact" else None)
+        p2_id = p2_id if p2_id is not None else (self._player_id(player2) if match2 == "exact" else None)
         if match == "exact" and match2 == "exact" and p1_id is not None and p2_id is not None:
             # Both resolved to ids: match by player_id (handles any spelling).
             where = (
@@ -2255,6 +2266,7 @@ class DataProvider:
         match: str = "exact",
         player_match: Optional[str] = None,
         tournament_match: Optional[str] = None,
+        player_id: Optional[int] = None,
     ) -> list[dict]:
         """Recent matches (newest first).
 
@@ -2267,6 +2279,9 @@ class DataProvider:
         smart auto-detection where player and tournament may need different
         modes). When sort_col is set, ALL matching rows are fetched and sorted
         in Python so the sort applies to the full dataset, not just the page.
+        `player_id`: optional explicit id (from autocomplete). When provided it
+        takes precedence over `player` and matches by id (unambiguous even for
+        name collisions).
         """
         player_match = player_match or match
         tournament_match = tournament_match or match
@@ -2294,8 +2309,12 @@ class DataProvider:
         if game:
             where.append("m.game_name = %(game)s")
             params["game"] = game
-        if player:
-            if player_match == "regex":
+        if player or player_id:
+            if player_id is not None:
+                # Explicit id (from autocomplete) — match by id, unambiguous.
+                where.append("(m.player1_id = %(pid)s OR m.player2_id = %(pid)s)")
+                params["pid"] = player_id
+            elif player_match == "regex":
                 where.append("(match(lowerUTF8(m.player1_name), lowerUTF8(%(player)s)) OR match(lowerUTF8(m.player2_name), lowerUTF8(%(player)s)))")
                 params["player"] = player
             elif player_match == "partial":
@@ -2380,8 +2399,13 @@ class DataProvider:
         match: str = "exact",
         player_match: Optional[str] = None,
         tournament_match: Optional[str] = None,
+        player_id: Optional[int] = None,
     ) -> int:
-        """Total number of matches matching the given filters (for pagination)."""
+        """Total number of matches matching the given filters (for pagination).
+
+        `player_id`: optional explicit id (from autocomplete). When provided it
+        takes precedence over `player` and matches by id (unambiguous).
+        """
         player_match = player_match or match
         tournament_match = tournament_match or match
         query = """
@@ -2394,8 +2418,11 @@ class DataProvider:
         if game:
             where.append("m.game_name = %(game)s")
             params["game"] = game
-        if player:
-            if player_match == "regex":
+        if player or player_id:
+            if player_id is not None:
+                where.append("(m.player1_id = %(pid)s OR m.player2_id = %(pid)s)")
+                params["pid"] = player_id
+            elif player_match == "regex":
                 where.append("(match(lowerUTF8(m.player1_name), lowerUTF8(%(player)s)) OR match(lowerUTF8(m.player2_name), lowerUTF8(%(player)s)))")
                 params["player"] = player
             elif player_match == "partial":
@@ -2555,9 +2582,10 @@ class DataProvider:
         game: str = "",
         limit: int = 20,
         tournament: str = "",
+        player_id: int | None = None,
     ) -> list[dict]:
         """Recent matches for a specific player."""
-        player_id = self._player_id(player_name)
+        player_id = player_id if player_id is not None else self._player_id(player_name)
         if player_id is None:
             return []
         query = """
@@ -3210,6 +3238,7 @@ class DataProvider:
         player_name: str,
         ratings: list[dict] | None = None,
         recent_matches: list[dict] | None = None,
+        player_id: int | None = None,
     ) -> dict | None:
         """Aggregated summary stats for a player.
 
@@ -3218,11 +3247,15 @@ class DataProvider:
         player page). If omitted, ratings are fetched here.
         recent_matches: optional pre-fetched list from get_player_matches
         (limit >= 100) used for streak detection. If omitted, fetched here.
+        player_id: optional explicit id (see get_player_ratings).
         """
-        player_name = self._resolve_name(player_name)
-        p_id = self._player_id(player_name)
+        p_id = player_id if player_id is not None else self._player_id(player_name)
+        # Canonical display name for the resolved player (use the explicit id's
+        # canonical name when provided, so a name collision can't pull in the
+        # wrong player's spelling for streak/winner comparisons).
+        player_name = self._canonical_name(p_id) if p_id is not None else self._resolve_name(player_name)
         # Get all ratings (reuse caller's rows when provided)
-        ratings = ratings if ratings is not None else self.get_player_ratings(player_name)
+        ratings = ratings if ratings is not None else self.get_player_ratings(player_name, player_id=p_id)
         if not ratings:
             return None
 
@@ -3259,7 +3292,7 @@ class DataProvider:
                     worst_game = r
 
         # Current streak from recent matches (scan enough to catch long streaks)
-        recent = recent_matches if recent_matches is not None else self.get_player_matches(player_name, limit=100)
+        recent = recent_matches if recent_matches is not None else self.get_player_matches(player_name, limit=100, player_id=p_id)
         streak = 0
         streak_type = ""
         for m in recent:

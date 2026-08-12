@@ -5,8 +5,10 @@
 <form class="filters section-filters" method="get" action="/h2h">
   <label>Player 1</label>
   <input type="text" name="p1" value="{{ p1 }}" placeholder="e.g. rapha" data-autocomplete="player">
+  <input type="hidden" name="p1_id" value="{{ p1_id or '' }}">
   <label>Player 2</label>
   <input type="text" name="p2" value="{{ p2 }}" placeholder="e.g. cYpheR" data-autocomplete="player">
+  <input type="hidden" name="p2_id" value="{{ p2_id or '' }}">
   <label>Game</label>
   <select name="game">
     <option value="">All games</option>
@@ -18,4 +20,27 @@
 </div>
 
 {% include "_h2h_results.html" %}
+
+<script>
+// Rewrite the h2h form action to the readable slug URL on submit, so the
+// address bar shows /h2h/{p1}-vs-{p2}?p1={id}&p2={id} (ids authoritative).
+// Runs before ajax-filters.js's submit handler (registered earlier), which
+// reads form.getAttribute('action') at submit time.
+(function () {
+  var form = document.querySelector('form.filters[action="/h2h"]');
+  if (!form) return;
+  form.addEventListener("submit", function () {
+    var p1 = form.querySelector('input[name="p1"]');
+    var p2 = form.querySelector('input[name="p2"]');
+    var p1id = form.querySelector('input[name="p1_id"]');
+    var p2id = form.querySelector('input[name="p2_id"]');
+    if (!p1 || !p2 || !p1.value || !p2.value) return;
+    var slug = (p1.value + "-vs-" + p2.value)
+      .toLowerCase().replace(/[^\w\- ]/g, "").replace(/[\s_]+/g, "-");
+    var qs = "p1=" + encodeURIComponent(p1id && p1id.value ? p1id.value : p1.value)
+           + "&p2=" + encodeURIComponent(p2id && p2id.value ? p2id.value : p2.value);
+    form.setAttribute("action", "/h2h/" + slug + "?" + qs);
+  });
+})();
+</script>
 {% endblock %}

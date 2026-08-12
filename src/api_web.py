@@ -75,6 +75,15 @@ def _slug(name: str) -> str:
 templates.env.globals["slug"] = _slug
 
 
+def _match_slug(p1: str, p2: str) -> str:
+    """Readability slug for a match URL: '{p1}-vs-{p2}' (lowercase, dashes).
+    Used only for display; resolution is by match_id."""
+    return f"{_slug(p1)}-vs-{_slug(p2)}"
+
+
+templates.env.globals["match_slug"] = _match_slug
+
+
 def _mapname(name: str) -> str:
     """Display name for a map. Unknown maps are stored as '?' — show 'unknown'."""
     name = (name or "").strip()
@@ -428,7 +437,7 @@ def player_by_id(
     # stale or wrong. (Single-segment /player/{name} stays name-based.)
     with DataProvider() as dx:
         canonical = dx._canonical_name(player_id)
-    return _player_page(request, canonical, game=game, limit=limit, period=period)
+    return _player_page(request, canonical, game=game, limit=limit, period=period, player_id=player_id)
 
 
 @app.get("/player/{player_id}", response_class=HTMLResponse)
@@ -444,10 +453,10 @@ def player_by_id_short(
     # is still reachable via its two-segment id URL /player/1077/2.
     with DataProvider() as dx:
         name = dx._canonical_name(player_id)
-    return _player_page(request, name, game=game, limit=limit, period=period)
+    return _player_page(request, name, game=game, limit=limit, period=period, player_id=player_id)
 
 
-def _player_page(request: Request, name: str, game: str = "", limit: int = 50, period: str = "all"):
+def _player_page(request: Request, name: str, game: str = "", limit: int = 50, period: str = "all", player_id: int | None = None):
     game = _resolve_game(game)
     # Rating history is always all-time (no period filter on the page).
     since = ""
@@ -458,8 +467,11 @@ def _player_page(request: Request, name: str, game: str = "", limit: int = 50, p
         ctx["limit"] = limit
         ctx["period"] = "all"
         ctx["player_name"] = name
-        ctx["player_id"] = dx._player_id(name)
-        ctx["ratings"] = dx.get_player_ratings(name, min_matches={"glicko2": MIN_MATCHES_GLICKO2, "elo": MIN_MATCHES_ELO})
+        # Use the explicit id when known (id-based URL) so a name collision
+        # between two players (e.g. two "serious") doesn't resolve to the wrong
+        # player. Falls back to name resolution for name-based URLs.
+        ctx["player_id"] = player_id if player_id is not None else dx._player_id(name)
+        ctx["ratings"] = dx.get_player_ratings(name, min_matches={"glicko2": MIN_MATCHES_GLICKO2, "elo": MIN_MATCHES_ELO}, player_id=ctx["player_id"])
         # Games the player actually has ratings for (for the history game selector)
         ctx["player_games"] = sorted({r["game"] for r in ctx["ratings"] if r["game"] != "All Games"})
         # Compute per-game rank for each rating row (for the rank column) in a
@@ -478,7 +490,7 @@ def _player_page(request: Request, name: str, game: str = "", limit: int = 50, p
                 r["rank_total"] = rk["total"] if rk else None
         # Rating history is always all-time (no truncation).
         hist_limit = 100000
-        ctx["history"] = dx.get_player_history_both(name, game=game, limit=hist_limit, since=since)
+        ctx["history"] = dx.get_player_history_both(name, game=game, limit=hist_limit, since=since, player_id=ctx["player_id"])
         # Convert datetimes to ISO strings for JSON serialization in the chart
         # (keep the full timestamp so same-day matches spread by time-of-day)
         for h in ctx["history"]:
@@ -487,14 +499,14 @@ def _player_page(request: Request, name: str, game: str = "", limit: int = 50, p
         # Fetch recent matches once (limit 100) and reuse for both the matches
         # list (sliced to 10) and the summary streak scan — avoids a redundant
         # get_player_matches(100) re-query inside get_player_summary.
-        recent_matches = dx.get_player_matches(name, game=game, limit=100)
+        recent_matches = dx.get_player_matches(name, game=game, limit=100, player_id=ctx["player_id"])
         ctx["matches"] = recent_matches[:10]
         # Current-game rank for both systems — already computed in the batched
         # ranks call above (the current game is in ctx["ratings"]), so reuse it
         # instead of issuing a second get_player_ranks query.
         ctx["rank_elo"] = ranks.get((game, "elo"))
         ctx["rank_glicko"] = ranks.get((game, "glicko2"))
-        ctx["summary"] = dx.get_player_summary(name, ratings=ctx["ratings"], recent_matches=recent_matches)
+        ctx["summary"] = dx.get_player_summary(name, ratings=ctx["ratings"], recent_matches=recent_matches, player_id=ctx["player_id"])
         # Resolve canonical name from first rating row if available
         if ctx["ratings"]:
             ctx["player_name"] = ctx["ratings"][0]["name"]
@@ -504,9 +516,27 @@ def _player_page(request: Request, name: str, game: str = "", limit: int = 50, p
     return templates.TemplateResponse(request, "player.html", ctx)
 
 
+@app.get("/match/{match_id}/{p1_slug}-vs-{p2_slug}/{tournament_slug}/{stage_slug}", response_class=HTMLResponse)
+def match_details_slug(
+    request: Request,
+    match_id: int,
+    p1_slug: str,
+    p2_slug: str,
+    tournament_slug: str,
+    stage_slug: str,
+):
+    # Slug segments are readability only — resolution is by match_id, so the
+    # URL works even if the slug is stale/wrong. Same page as /match/{id}.
+    return _match_page(request, match_id)
+
+
 @app.get("/match/{match_id}", response_class=HTMLResponse)
 def match_details(request: Request, match_id: int):
     """Single match details page: header scoreboard + per-map breakdown."""
+    return _match_page(request, match_id)
+
+
+def _match_page(request: Request, match_id: int):
     with DataProvider() as dx:
         ctx = _base_context(request, dx)
         ctx["active"] = "matches"
@@ -530,6 +560,7 @@ def matches(
     request: Request,
     game: str = Query("", description="Game name or alias (empty = all)"),
     player: str = Query("", description="Filter by player name"),
+    player_id: int | None = Query(None, description="Filter by player id (from autocomplete; takes precedence over player)"),
     tournament: str = Query("", description="Filter by tournament name"),
     tier: str = Query("", pattern="^(|premier|major|minor)$", description="Filter by tournament tier"),
     limit: str = Query("100", pattern="^(100|1000|all)$", description="Rows to show"),
@@ -542,6 +573,7 @@ def matches(
     # "Clear filters" button resets all filters
     if clear:
         game = player = tournament = tier = ""
+        player_id = None
     game = _resolve_game(game)
     # Map limit: 'all' -> large number, else int
     limit_n = 100000 if limit == "all" else int(limit)
@@ -555,13 +587,14 @@ def matches(
         ctx["active"] = "matches"
         ctx["game"] = game
         ctx["player"] = player
+        ctx["player_id"] = player_id
         ctx["tournament"] = tournament
         ctx["tier"] = tier
         ctx["limit"] = limit
         ctx["sort_col"] = sort_col
         ctx["sort_dir"] = sort_dir
-        ctx["matches"] = dx.get_recent_matches(game=game, limit=per_page, player=player, tournament=tournament, tier=tier, offset=offset, sort_col=sort_col, sort_dir=sort_dir, player_match=player_match, tournament_match=tournament_match)
-        total = dx.count_recent_matches(game=game, player=player, tournament=tournament, tier=tier, player_match=player_match, tournament_match=tournament_match)
+        ctx["matches"] = dx.get_recent_matches(game=game, limit=per_page, player=player, tournament=tournament, tier=tier, offset=offset, sort_col=sort_col, sort_dir=sort_dir, player_match=player_match, tournament_match=tournament_match, player_id=player_id)
+        total = dx.count_recent_matches(game=game, player=player, tournament=tournament, tier=tier, player_match=player_match, tournament_match=tournament_match, player_id=player_id)
         # Stable column widths computed from the FULL (unfiltered) dataset so
         # fixed-layout columns don't shift when sorting/paginating/filtering.
         _cw = dx.matches_col_widths()
@@ -751,11 +784,34 @@ def _tournament_page(request: Request, tournament_id: int):
     return templates.TemplateResponse(request, "tournament.html", ctx)
 
 
+@app.get("/h2h/{p1_slug}-vs-{p2_slug}", response_class=HTMLResponse)
+def h2h_slug(
+    request: Request,
+    p1_slug: str,
+    p2_slug: str,
+    p1: int | None = Query(None, description="Player 1 id (authoritative)"),
+    p2: int | None = Query(None, description="Player 2 id (authoritative)"),
+    game: str = Query("", description="Game name or alias (empty = all)"),
+    partial: int = Query(0, ge=0, le=1, description="Return only the results partial (AJAX)"),
+    sort_col: str = Query("date", description="Column to sort match history by"),
+    sort_dir: str = Query("desc", pattern="^(asc|desc)$", description="Sort direction"),
+):
+    # Slug segments are readability only — resolution is by p1/p2 ids in the
+    # query string, so the URL works even if the slug is stale/wrong.
+    # p1/p2 here are ids; resolve them to canonical names for display/lookup.
+    with DataProvider() as dx:
+        p1_name = dx._canonical_name(p1) if p1 is not None else ""
+        p2_name = dx._canonical_name(p2) if p2 is not None else ""
+    return _h2h_page(request, p1_name, p2_name, p1_id=p1, p2_id=p2, game=game, partial=partial, sort_col=sort_col, sort_dir=sort_dir)
+
+
 @app.get("/h2h", response_class=HTMLResponse)
 def h2h(
     request: Request,
     p1: str = Query("", description="Player 1 name"),
     p2: str = Query("", description="Player 2 name"),
+    p1_id: int | None = Query(None, description="Player 1 id (from autocomplete; takes precedence over p1)"),
+    p2_id: int | None = Query(None, description="Player 2 id (from autocomplete; takes precedence over p2)"),
     game: str = Query("", description="Game name or alias (empty = all)"),
     partial: int = Query(0, ge=0, le=1, description="Return only the results partial (AJAX)"),
     sort_col: str = Query("date", description="Column to sort match history by"),
@@ -765,6 +821,11 @@ def h2h(
     # "Clear filters" button resets all filters
     if clear:
         p1 = p2 = game = ""
+        p1_id = p2_id = None
+    return _h2h_page(request, p1, p2, p1_id=p1_id, p2_id=p2_id, game=game, partial=partial, sort_col=sort_col, sort_dir=sort_dir)
+
+
+def _h2h_page(request: Request, p1, p2, p1_id=None, p2_id=None, game="", partial=0, sort_col="date", sort_dir="desc"):
     game = _resolve_game(game)
     with DataProvider() as dx:
         ctx = _base_context(request, dx)
@@ -772,6 +833,8 @@ def h2h(
         ctx["game"] = game
         ctx["p1"] = p1
         ctx["p2"] = p2
+        ctx["p1_id"] = p1_id
+        ctx["p2_id"] = p2_id
         ctx["sort_col"] = sort_col
         ctx["sort_dir"] = sort_dir
         ctx["result"] = None
@@ -779,7 +842,7 @@ def h2h(
             # Smart match-mode auto-detection per player (no manual selector).
             p1_match = _smart_match_mode(p1, dx.name_exists)
             p2_match = _smart_match_mode(p2, dx.name_exists)
-            ctx["result"] = dx.get_head_to_head(p1, p2, game=game, match=p1_match, match2=p2_match)
+            ctx["result"] = dx.get_head_to_head(p1, p2, game=game, match=p1_match, match2=p2_match, p1_id=p1_id, p2_id=p2_id)
             # Server-side sort of the match history (consistent with matches/tournaments).
             ctx["result"]["matches"] = _sort_matches(ctx["result"]["matches"], sort_col, sort_dir)
             # Convert match datetimes for template use
@@ -847,7 +910,7 @@ def api_player_history(player_id: int, game: str = ""):
     game = _resolve_game(game)
     with DataProvider() as dx:
         name = dx._canonical_name(player_id)
-        hist = dx.get_player_history_both(name, game=game, limit=100000)
+        hist = dx.get_player_history_both(name, game=game, limit=100000, player_id=player_id)
         # Convert datetimes to ISO strings for JSON serialization (matches page shape)
         for h in hist:
             if hasattr(h.get("played_at"), "isoformat"):
