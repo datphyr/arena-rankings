@@ -16,7 +16,7 @@
 {% set p2d = match_deltas.get(match.player2_id, {}) %}
 
 <div class="section-head"><h2>Match</h2><div class="rank-pills" style="margin-top:0;">
-  <span class="rank-pill">Game: <strong>{{ match.game or '' }}</strong></span>
+  <span class="rank-pill">Game: <strong>{{ match.game|game_icon }}{{ match.game or '' }}</strong></span>
   <span class="rank-pill">Date: <strong>{{ played_at_str }}</strong></span>
 </div></div>
 

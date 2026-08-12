@@ -18,7 +18,7 @@
       <span class="rank-pill">Tier: <span class="tag tag-{{ t.tier }}">{{ t.tier }}</span></span>
       {% endif %}
       {% if t.game %}
-      <span class="rank-pill">Game: <a class="game-link" href="/leaderboard?game={{ t.game }}">{{ t.game }}</a></span>
+      <span class="rank-pill">Game: <a class="game-link" href="/leaderboard?game={{ t.game }}">{{ t.game|game_icon }}{{ t.game }}</a></span>
       {% endif %}
       {% if t.prize_money %}
       <span class="rank-pill">Prize pool: <strong>{{ t.prize_money }}</strong></span>

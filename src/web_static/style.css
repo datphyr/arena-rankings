@@ -254,6 +254,7 @@
   height: 20px;
   flex: 0 0 auto;
   vertical-align: middle;
+  margin-right: 3px;
 }
 
 html { scroll-behavior: smooth; font-size: 14px; scrollbar-gutter: stable; }
@@ -928,6 +929,7 @@ a.tier-link:hover .tag { filter: brightness(1.2); }
   line-height: 1;
   vertical-align: middle;
   white-space: nowrap;
+  margin-right: 7px;
 }
 .tag-premier { background: rgba(251, 191, 36, 0.15); color: var(--gold); border: 1px solid rgba(251, 191, 36, 0.3); background-image: linear-gradient(120deg, var(--gold), var(--orange)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
 .tag-major { background: rgba(239, 68, 68, 0.15); color: var(--accent); border: 1px solid rgba(239, 68, 68, 0.25); background-image: linear-gradient(120deg, var(--accent), var(--orange)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
@@ -951,7 +953,6 @@ a.tier-link:hover .tag { filter: brightness(1.2); }
 .tier-prefix {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
   max-width: 100%;
 }
 .tier-prefix a.tier-link { flex: 0 0 auto; }

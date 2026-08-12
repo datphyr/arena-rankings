@@ -35,13 +35,13 @@
   {% if summary.best_game %}
   <div class="highlight-box">
     <div class="label">Best Game</div>
-    <div class="value gold" style="font-size:1rem;"><a class="game-link" href="/leaderboard?game={{ summary.best_game.game }}">{{ summary.best_game.game }}</a></div>
+    <div class="value gold" style="font-size:1rem;"><a class="game-link" href="/leaderboard?game={{ summary.best_game.game }}">{{ summary.best_game.game|game_icon }}{{ summary.best_game.game }}</a></div>
   </div>
   {% endif %}
   {% if summary.worst_game and summary.worst_game.game != summary.best_game.game %}
   <div class="highlight-box">
     <div class="label">Worst Game</div>
-    <div class="value slate" style="font-size:1rem;"><a class="game-link" href="/leaderboard?game={{ summary.worst_game.game }}">{{ summary.worst_game.game }}</a></div>
+    <div class="value slate" style="font-size:1rem;"><a class="game-link" href="/leaderboard?game={{ summary.worst_game.game }}">{{ summary.worst_game.game|game_icon }}{{ summary.worst_game.game }}</a></div>
   </div>
   {% endif %}
 </div>
@@ -58,7 +58,7 @@
         {% for r in ratings if r.system == 'elo' %}
         <tr>
           <td class="num col-num">{% if r.rank %}<span class="rank-badge {{ 'rank-1' if r.rank == 1 else 'rank-2' if r.rank == 2 else 'rank-3' if r.rank == 3 else 'rank-4' if r.rank == 4 else 'rank-5' if r.rank == 5 }}">{{ r.rank }}</span>{% endif %}</td>
-          <td class="col-flex">{% if r.game != 'All Games' %}<a class="game-link" href="/leaderboard?game={{ r.game }}">{{ r.game }}</a>{% else %}<a class="game-link" href="/leaderboard">{{ r.game }}</a>{% endif %}</td>
+          <td class="col-flex">{% if r.game != 'All Games' %}<a class="game-link" href="/leaderboard?game={{ r.game }}">{{ r.game|game_icon }}{{ r.game }}</a>{% else %}<a class="game-link" href="/leaderboard">{{ r.game }}</a>{% endif %}</td>
           <td class="num col-rating rating rating-elo">{{ "%.0f"|format(r.rating) }}</td>
           <td class="num col-peak" style="color:var(--gold);">{{ "%.0f"|format(r.peak) if r.peak else '' }}</td>
           <td class="center col-peak-date" style="color:var(--text-faint);font-size:0.85rem;">{{ r.peak_date|dt if r.peak_date else '' }}</td>
@@ -87,7 +87,7 @@
         {% for r in ratings if r.system == 'glicko2' %}
         <tr>
           <td class="num col-num">{% if r.rank %}<span class="rank-badge {{ 'rank-1' if r.rank == 1 else 'rank-2' if r.rank == 2 else 'rank-3' if r.rank == 3 else 'rank-4' if r.rank == 4 else 'rank-5' if r.rank == 5 }}">{{ r.rank }}</span>{% endif %}</td>
-          <td class="col-flex">{% if r.game != 'All Games' %}<a class="game-link" href="/leaderboard?game={{ r.game }}&system=glicko2">{{ r.game }}</a>{% else %}<a class="game-link" href="/leaderboard?system=glicko2">{{ r.game }}</a>{% endif %}</td>
+          <td class="col-flex">{% if r.game != 'All Games' %}<a class="game-link" href="/leaderboard?game={{ r.game }}&system=glicko2">{{ r.game|game_icon }}{{ r.game }}</a>{% else %}<a class="game-link" href="/leaderboard?system=glicko2">{{ r.game }}</a>{% endif %}</td>
           <td class="num col-rating rating rating-glicko2">{{ "%.0f"|format(r.rating) }}</td>
           <td class="num col-peak" style="color:var(--gold);">{{ "%.0f"|format(r.peak) if r.peak else '' }}</td>
           <td class="center col-peak-date" style="color:var(--text-faint);font-size:0.85rem;">{{ r.peak_date|dt if r.peak_date else '' }}</td>
