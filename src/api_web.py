@@ -198,6 +198,41 @@ def _flag(code: str) -> str:
 
 templates.env.filters["flag"] = _flag
 
+# Map a game name to its plusforward.net category-icon class (pf_categories font).
+# Keys are the canonical game names used across the app. Unknown games render
+# nothing (no icon) rather than a broken glyph.
+_GAME_ICON_CLASS = {
+    "Blood Run": "pfcat-br",
+    "Diabotical": "pfcat-db",
+    "Quake 2": "pfcat-q2",
+    "Quake 3 Arena": "pfcat-q3a",
+    "Quake 3 CPMA": "pfcat-cpma",
+    "Quake 4": "pfcat-q4",
+    "Quake Champions": "pfcat-qc",
+    "Quake Live": "pfcat-ql",
+    "Quake World": "pfcat-q1",
+    "Reflex": "pfcat-rflx",
+    "Unreal Tournament": "pfcat-ut",
+    "Xonotic": "pfcat-xon",
+}
+
+
+def _game_icon(game: str) -> Markup:
+    """Return a <i> game-icon glyph for a game name, or empty if unknown.
+
+    Rendered as safe HTML (Markup). The glyph color follows the theme via CSS
+    (white in dark mode, black in light mode).
+    """
+    if not game:
+        return Markup("")
+    cls = _GAME_ICON_CLASS.get(game.strip())
+    if not cls:
+        return Markup("")
+    return Markup(f'<i class="game-icon {cls}" title="{game}"></i>')
+
+
+templates.env.filters["game_icon"] = _game_icon
+
 # Defaults
 DEFAULT_LIMIT = 20
 
@@ -532,17 +567,19 @@ def matches(
         _cw = dx.matches_col_widths()
         _CH = 7.8  # approx monospace char width (px) at 0.92rem JetBrains Mono (measured 7.75)
         _PAD = 16  # cell padding + breathing room
-        # Cap the tournament column so a single very long tournament name
-        # doesn't blow out the layout. The tier pill is shown as a prefix
-        # inside this same column and clips (truncation-OK) with the name.
-        _MAX_TOURNAMENT = 300
+        # Cap the flexible/truncatable columns (stage, tournament) so the
+        # table fits a ~1280px viewport while player names keep full width.
+        # Player names (player1/player2) are NOT capped — they must never crop.
+        # Caps chosen so total fits 1280px container (~960px):
+        #   date149 + p1(≤195) + score71 + p2(≤172) + stage100 + tourn220
+        _MAX_STAGE = 100      # 'Grand Final Match #1' rare, truncation-OK
+        _MAX_TOURNAMENT = 220 # game icon + tier pill prefix + name, truncation-OK
         ctx["col_widths"] = {
             "date": 17 * _CH + _PAD,          # 'YYYY-MM-DD, HH:MM' = 17 chars
             "player1": _cw.get("player1", 0) * _CH + _PAD,
             "player2": _cw.get("player2", 0) * _CH + _PAD,
             "score": 7 * _CH + _PAD,          # '999 : 999' worst case
-            "game": _cw.get("game", 0) * _CH + _PAD,
-            "stage": _cw.get("stage", 0) * _CH + _PAD,
+            "stage": min(_cw.get("stage", 0) * _CH + _PAD, _MAX_STAGE),
             "tournament": min(_cw.get("tournament", 0) * _CH + _PAD, _MAX_TOURNAMENT),
         }
         ctx["page"] = page
@@ -623,7 +660,6 @@ def tournaments(
         _MAX_NAME = 300
         ctx["col_widths"] = {
             "name": min(_cw.get("name", 0) * _CH + _PAD, _MAX_NAME),
-            "game": _cw.get("game", 0) * _CH + _PAD,
             "matches": max(_cw.get("matches", 0), len("Matches")) * _CH + _PAD,
             "players": max(_cw.get("players", 0), len("Players")) * _CH + _PAD,
             "maps": max(_cw.get("maps", 0), len("Maps")) * _CH + _PAD,

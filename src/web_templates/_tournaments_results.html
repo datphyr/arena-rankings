@@ -4,7 +4,6 @@
     <table class="tournaments-table" style="table-layout: fixed">
       <thead><tr>
         <th class="col-flex {{ 'sort-asc' if sort_col=='name' and sort_dir=='asc' else 'sort-desc' if sort_col=='name' and sort_dir=='desc' }}" style="width: {{ col_widths.name }}px"><a class="sort-link {{ 'active' if sort_col == 'name' }}" href="?{{ qs(tier=tier, game=game, limit=limit, sort_col='name', sort_dir='desc' if sort_col=='name' and sort_dir=='asc' else 'asc') }}">Tournament</a></th>
-        <th class="col-game {{ 'sort-asc' if sort_col=='game' and sort_dir=='asc' else 'sort-desc' if sort_col=='game' and sort_dir=='desc' }}" style="width: {{ col_widths.game }}px"><a class="sort-link {{ 'active' if sort_col == 'game' }}" href="?{{ qs(tier=tier, game=game, limit=limit, sort_col='game', sort_dir='desc' if sort_col=='game' and sort_dir=='asc' else 'asc') }}">Game</a></th>
         <th class="num col-m {{ 'sort-asc' if sort_col=='maps' and sort_dir=='asc' else 'sort-desc' if sort_col=='maps' and sort_dir=='desc' }}" style="width: {{ col_widths.maps }}px"><a class="sort-link {{ 'active' if sort_col == 'maps' }}" href="?{{ qs(tier=tier, game=game, limit=limit, sort_col='maps', sort_dir='asc' if sort_col=='maps' and sort_dir=='desc' else 'desc') }}">Maps</a></th>
         <th class="num col-m {{ 'sort-asc' if sort_col=='players' and sort_dir=='asc' else 'sort-desc' if sort_col=='players' and sort_dir=='desc' }}" style="width: {{ col_widths.players }}px"><a class="sort-link {{ 'active' if sort_col == 'players' }}" href="?{{ qs(tier=tier, game=game, limit=limit, sort_col='players', sort_dir='asc' if sort_col=='players' and sort_dir=='desc' else 'desc') }}">Players</a></th>
         <th class="num col-m {{ 'sort-asc' if sort_col=='matches' and sort_dir=='asc' else 'sort-desc' if sort_col=='matches' and sort_dir=='desc' }}" style="width: {{ col_widths.matches }}px"><a class="sort-link {{ 'active' if sort_col == 'matches' }}" href="?{{ qs(tier=tier, game=game, limit=limit, sort_col='matches', sort_dir='asc' if sort_col=='matches' and sort_dir=='desc' else 'desc') }}">Matches</a></th>
@@ -14,8 +13,7 @@
       <tbody>
         {% for t in tournaments %}
         <tr>
-          <td class="col-flex"><span class="tier-prefix">{% if t.tier %}<a class="tier-link" href="?{{ qs(tier=t.tier, game=game, limit=limit) }}" title="Filter by {{ t.tier }}"><span class="tag tag-{{ t.tier }}">{{ t.tier }}</span></a>{% endif %}<a class="tournament-link" href="/tournament/{{ t.tournament_id }}/{{ slug(t.name) }}">{{ t.name }}</a></span></td>
-          <td class="col-game">{% if t.game %}<a class="game-link" href="?{{ qs(tier=tier, game=t.game, limit=limit) }}">{{ t.game }}</a>{% else %}{% endif %}</td>
+          <td class="col-flex"><span class="tier-prefix">{{ t.game|game_icon }}{% if t.tier %}<a class="tier-link" href="?{{ qs(tier=t.tier, game=game, limit=limit) }}" title="Filter by {{ t.tier }}"><span class="tag tag-{{ t.tier }}">{{ t.tier }}</span></a>{% endif %}<a class="tournament-link" href="/tournament/{{ t.tournament_id }}/{{ slug(t.name) }}">{{ t.name }}</a></span></td>
           <td class="num col-m">{% if t.maps %}{{ t.maps }}{% endif %}</td>
           <td class="num col-m">{{ t.players }}</td>
           <td class="num col-m">{{ t.matches }}</td>
@@ -23,7 +21,7 @@
           <td class="col-date">{{ t.last_match|dt if t.last_match else "" }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="8" class="empty">No tournaments found.</td></tr>
+        <tr><td colspan="7" class="empty">No tournaments found.</td></tr>
         {% endfor %}
       </tbody>
     </table>

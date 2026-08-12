@@ -198,6 +198,64 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* ─── Game category icon font (from plusforward.net /icomoon) ──────────────
+   Monochrome glyphs for each game. Color is driven by `color`, so it follows
+   the theme automatically: white in dark mode, black in light mode (flat). */
+@font-face {
+  font-family: 'pf_categories';
+  src: url('/static/fonts/pf_categories.woff') format('woff'),
+       url('/static/fonts/pf_categories.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+
+[class^="pfcat-"], [class*=" pfcat-"] {
+  font-family: 'pf_categories' !important;
+  speak: none;
+  font-style: normal;
+  font-weight: normal;
+  font-variant: normal;
+  text-transform: none;
+  line-height: 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color: var(--text);
+}
+
+.pfcat-18:before, .pfcat-xon:before { content: "\e60f"; }  /* Xonotic */
+.pfcat-17:before, .pfcat-db:before  { content: "\e600"; }  /* Diabotical */
+.pfcat-8:before,  .pfcat-dbtcl:before { content: "\e601"; } /* Diabotical TCL */
+.pfcat-9:before,  .pfcat-doom:before { content: "\e602"; }  /* Doom */
+.pfcat-14:before, .pfcat-gg:before { content: "\e603"; }
+.pfcat-11:before, .pfcat-hw:before { content: "\e604"; }
+.pfcat-13:before, .pfcat-ow:before { content: "\e605"; }  /* Overwatch */
+.pfcat-1:before, .pfcat-12:before, .pfcat-2:before, .pfcat-pf:before { content: "\e606"; }
+.pfcat-7:before,  .pfcat-q1:before { content: "\e607"; }  /* Quake World */
+.pfcat-6:before,  .pfcat-q2:before { content: "\e608"; }  /* Quake 2 */
+.pfcat-5:before,  .pfcat-q3a:before { content: "\e609"; } /* Quake 3 Arena */
+.pfcat-23:before, .pfcat-br:before { content: "\e609"; }  /* Blood Run */
+.pfcat-4:before,  .pfcat-q4:before { content: "\e60a"; }  /* Quake 4 */
+.pfcat-19:before, .pfcat-qlstats:before, .pfcat-3:before, .pfcat-ql:before { content: "\e60b"; } /* Quake Live */
+.pfcat-10:before, .pfcat-rflx:before { content: "\e60c"; } /* Reflex */
+.pfcat-15:before, .pfcat-ut:before { content: "\e60d"; }  /* Unreal Tournament */
+.pfcat-16:before, .pfcat-wsw:before { content: "\e60e"; }
+.pfcat-20:before, .pfcat-qc:before { content: "\e901"; }  /* Quake Champions */
+.pfcat-21:before, .pfcat-cpma:before { content: "\e900"; } /* Quake 3 CPMA */
+.pfcat-22:before, .pfcat-dmb:before { content: "\e902"; }
+
+/* Game icon shown as a prefix inside the tournament cell, before the tier tag. */
+.game-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  vertical-align: middle;
+}
+
 html { scroll-behavior: smooth; font-size: 14px; scrollbar-gutter: stable; }
 
 body {
@@ -568,7 +626,7 @@ th.col-delta, td.col-delta { width: 76px; }    /* rating delta (Elo / Glicko-2) 
 th.col-date, td.col-date { width: 110px; }     /* date */
 th.col-stage, td.col-stage { width: 100px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* match stage */
 th.col-score, td.col-score { width: 70px; }    /* match score */
-th.col-game, td.col-game { width: 120px; }     /* game name */
+th.col-game, td.col-game { width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }     /* game name */
 th.col-tier, td.col-tier { width: 80px; text-align: center; }      /* tier tag */
 th.col-main-game, td.col-main-game { width: 150px; } /* main game */
 th.col-tournament, td.col-tournament { width: 200px; } /* tournament */
@@ -861,31 +919,31 @@ a.tier-link:hover .tag { filter: brightness(1.2); }
    in page headers. */
 .tag {
   display: inline-block;
-  padding: 2px 10px;
-  border-radius: 20px;
+  padding: 1px 8px;
+  border-radius: var(--radius-sm);
   font-size: 0.72rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  line-height: 1.4;
+  line-height: 1;
   vertical-align: middle;
   white-space: nowrap;
 }
-.tag-premier { background: rgba(245, 197, 66, 0.15); color: var(--gold); }
-.tag-major { background: rgba(124, 92, 255, 0.18); color: var(--accent); }
-.tag-minor { background: rgba(34, 211, 238, 0.12); color: var(--accent-2); }
+.tag-premier { background: rgba(251, 191, 36, 0.15); color: var(--gold); border: 1px solid rgba(251, 191, 36, 0.3); background-image: linear-gradient(120deg, var(--gold), var(--orange)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.tag-major { background: rgba(239, 68, 68, 0.15); color: var(--accent); border: 1px solid rgba(239, 68, 68, 0.25); background-image: linear-gradient(120deg, var(--accent), var(--orange)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.tag-minor { background: rgba(163, 163, 163, 0.12); color: var(--text-dim); border: 1px solid rgba(163, 163, 163, 0.2); }
 .tag-none { background: var(--bg-hover); color: var(--text-faint); }
 /* Extended tier/tag color variants (used when data has these tiers) */
-.tag-qualifier { background: rgba(148, 163, 184, 0.16); color: var(--silver); }
-.tag-online { background: rgba(52, 211, 153, 0.14); color: var(--green); }
-.tag-showmatch { background: rgba(244, 114, 182, 0.14); color: var(--magenta); }
-.tag-frag { background: rgba(251, 146, 60, 0.15); color: var(--orange); }
-.tag-plum { background: rgba(167, 139, 250, 0.16); color: var(--plum); }
-.tag-copper { background: rgba(184, 134, 11, 0.15); color: var(--copper); }
-.tag-silver { background: rgba(148, 163, 184, 0.16); color: var(--slate); }
-.tag-rose { background: rgba(244, 114, 182, 0.14); color: var(--rose-gold); }
-.tag-yellow { background: rgba(250, 204, 21, 0.14); color: var(--yellow); }
-.tag-burgundy { background: rgba(185, 28, 28, 0.16); color: var(--burgundy); }
+.tag-qualifier { background: rgba(192, 192, 192, 0.15); color: var(--silver); border: 1px solid rgba(192, 192, 192, 0.28); }
+.tag-online { background: rgba(16, 185, 129, 0.14); color: var(--green); border: 1px solid rgba(16, 185, 129, 0.28); }
+.tag-showmatch { background: rgba(236, 72, 153, 0.14); color: var(--magenta); border: 1px solid rgba(236, 72, 153, 0.28); }
+.tag-frag { background: rgba(249, 115, 22, 0.15); color: var(--orange); border: 1px solid rgba(249, 115, 22, 0.3); }
+.tag-plum { background: rgba(124, 58, 237, 0.16); color: var(--plum); border: 1px solid rgba(124, 58, 237, 0.3); }
+.tag-copper { background: rgba(217, 119, 6, 0.15); color: var(--copper); border: 1px solid rgba(217, 119, 6, 0.3); }
+.tag-silver { background: rgba(100, 116, 139, 0.16); color: var(--slate); border: 1px solid rgba(100, 116, 139, 0.3); }
+.tag-rose { background: rgba(232, 168, 124, 0.14); color: var(--rose-gold); border: 1px solid rgba(232, 168, 124, 0.28); }
+.tag-yellow { background: rgba(234, 179, 8, 0.14); color: var(--yellow); border: 1px solid rgba(234, 179, 8, 0.28); }
+.tag-burgundy { background: rgba(127, 29, 29, 0.18); color: var(--burgundy); border: 1px solid rgba(127, 29, 29, 0.32); }
 
 /* Tier pill shown as an inline prefix before a tournament name. Keeps the
    pill and the name on one line with a small gap; the whole prefix clips
@@ -897,7 +955,7 @@ a.tier-link:hover .tag { filter: brightness(1.2); }
   max-width: 100%;
 }
 .tier-prefix a.tier-link { flex: 0 0 auto; }
-.tier-prefix a.tournament-link { overflow: hidden; text-overflow: ellipsis; }
+.tier-prefix a.tournament-link { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; min-width: 0; }
 
 .win { color: var(--green); font-weight: 600; }
 .loss { color: var(--red); font-weight: 600; }

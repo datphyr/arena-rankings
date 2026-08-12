@@ -44,7 +44,6 @@
         <th class="right col-flex">Player 1</th>
         <th class="center col-score {{ 'sort-asc' if sort_col=='score' and sort_dir=='asc' else 'sort-desc' if sort_col=='score' and sort_dir=='desc' }}"><a class="sort-link {{ 'active' if sort_col == 'score' }}" href="?{{ qs(p1=p1, p2=p2, game=game, sort_col='score', sort_dir='asc' if sort_col=='score' and sort_dir=='desc' else 'desc') }}">Score</a></th>
         <th class="col-flex">Player 2</th>
-        <th class="col-game {{ 'sort-asc' if sort_col=='game' and sort_dir=='asc' else 'sort-desc' if sort_col=='game' and sort_dir=='desc' }}"><a class="sort-link {{ 'active' if sort_col == 'game' }}" href="?{{ qs(p1=p1, p2=p2, game=game, sort_col='game', sort_dir='desc' if sort_col=='game' and sort_dir=='asc' else 'asc') }}">Game</a></th>
         <th class="col-stage {{ 'sort-asc' if sort_col=='stage' and sort_dir=='asc' else 'sort-desc' if sort_col=='stage' and sort_dir=='desc' }}"><a class="sort-link {{ 'active' if sort_col == 'stage' }}" href="?{{ qs(p1=p1, p2=p2, game=game, sort_col='stage', sort_dir='desc' if sort_col=='stage' and sort_dir=='asc' else 'asc') }}">Stage</a></th>
         <th class="col-tournament {{ 'sort-asc' if sort_col=='tournament' and sort_dir=='asc' else 'sort-desc' if sort_col=='tournament' and sort_dir=='desc' }}"><a class="sort-link {{ 'active' if sort_col == 'tournament' }}" href="?{{ qs(p1=p1, p2=p2, game=game, sort_col='tournament', sort_dir='desc' if sort_col=='tournament' and sort_dir=='asc' else 'asc') }}">Tournament</a></th>
       </tr></thead>
@@ -55,12 +54,11 @@
           <td class="right col-flex"><span class="player-name"><a class="player-link" href="/player/{{ m.player1_id }}/{{ slug(m.player1) }}">{{ m.player1 }}</a>{% if m.player1_country %}<span class="flag" title="{{ m.player1_country|upper }}">{{ m.player1_country|flag }}</span>{% endif %}</span></td>
           <td class="center col-score"><span class="{{ 'win' if m.winner == m.player1 else 'loss' }}">{{ m.score1 }}</span> : <span class="{{ 'win' if m.winner == m.player2 else 'loss' }}">{{ m.score2 }}</span></td>
           <td class="col-flex"><span class="player-name">{% if m.player2_country %}<span class="flag" title="{{ m.player2_country|upper }}">{{ m.player2_country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ m.player2_id }}/{{ slug(m.player2) }}">{{ m.player2 }}</a></span></td>
-          <td class="col-game">{% if m.game %}<a class="game-link" href="/leaderboard?game={{ m.game }}">{{ m.game }}</a>{% else %}{% endif %}</td>
           <td class="col-stage">{{ m.stage or '' }}</td>
-          <td class="col-tournament tournament-cell"><span class="tier-prefix">{% if m.tier %}<span class="tag tag-{{ m.tier }}" title="{{ m.tier }}">{{ m.tier }}</span>{% endif %}{% if m.tournament and m.tournament_id %}<a class="tournament-link" href="/tournament/{{ m.tournament_id }}/{{ slug(m.tournament) }}">{{ m.tournament }}</a>{% elif m.tournament %}<a class="tournament-link" href="/matches?{{ qs(tournament=m.tournament) }}">{{ m.tournament }}</a>{% else %}{% endif %}</span></td>
+          <td class="col-tournament tournament-cell"><span class="tier-prefix">{{ m.game|game_icon }}{% if m.tier %}<span class="tag tag-{{ m.tier }}" title="{{ m.tier }}">{{ m.tier }}</span>{% endif %}{% if m.tournament and m.tournament_id %}<a class="tournament-link" href="/tournament/{{ m.tournament_id }}/{{ slug(m.tournament) }}">{{ m.tournament }}</a>{% elif m.tournament %}<a class="tournament-link" href="/matches?{{ qs(tournament=m.tournament) }}">{{ m.tournament }}</a>{% else %}{% endif %}</span></td>
         </tr>
         {% else %}
-        <tr><td colspan="7" class="empty">No matches between these players.</td></tr>
+        <tr><td colspan="6" class="empty">No matches between these players.</td></tr>
         {% endfor %}
       </tbody>
     </table>
