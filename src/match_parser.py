@@ -29,6 +29,7 @@ class MapResult:
     player2_score: int
     player1_name: str = ""
     player2_name: str = ""
+    map_id: int = 0
 
 
 @dataclass
@@ -260,6 +261,8 @@ class MatchDetailParser:
         # Map name cell is either a known map (span with data-name) or an
         # unknown map shown as a bare "?" (td with title="unknown map").
         # Match both so the ? maps are still captured with their scores.
+        # The known-map span also carries data-image="/files/images/maps/{id}_..."
+        # from which we extract the PlusForward map ID (0 if absent).
         map_cell = (
             r'(?:'
             r'<td class="map">\s*<span[^>]*data-name="([^"]+)"[^>]*>[^<]*</span>\s*</td>'
@@ -284,12 +287,21 @@ class MatchDetailParser:
             p1_score = int(m.group(4))
             p2_score = int(m.group(5))
             p2_name = m.group(6).strip()
+            # Map ID: extract from the data-image attribute of this row's span.
+            # The span is the first <span ...> inside the <td class="map">.
+            map_id = 0
+            span = re.search(r'<td class="map">\s*<span[^>]*>', m.group(0))
+            if span:
+                img = re.search(r'data-image="[^"]*/maps/(\d+)_[^"]*"', span.group(0))
+                if img:
+                    map_id = int(img.group(1))
             maps.append(MapResult(
                 map_name=map_name,
                 player1_score=p1_score,
                 player2_score=p2_score,
                 player1_name=p1_name,
                 player2_name=p2_name,
+                map_id=map_id,
             ))
 
         return maps

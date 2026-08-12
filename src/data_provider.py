@@ -499,6 +499,8 @@ _PEAK_OVERALL_CACHE: dict[tuple, dict] = {}
 _STATS_CACHE: Optional[dict] = None
 _TOURNAMENT_STATS_CACHE: Optional[dict] = None
 _MAIN_GAMES_CACHE: dict[str, dict[int, str]] = {}
+_MAP_IMAGE_CACHE: dict[int, str] = {}  # map_id -> image path (from maps table)
+_MAP_NAME_CACHE: dict[str, str] = {}  # canonical map name -> image path
 
 
 class DataProvider:
@@ -589,6 +591,39 @@ class DataProvider:
     def _country(self, player_id: int) -> str:
         """ISO country code for a single player_id ('' if unknown)."""
         return self._countries([player_id])[player_id]
+
+    # --- Map images (from the maps lookup table) ---
+
+    def _load_map_images(self):
+        """Load the full maps table (map_id -> image, name -> image) once."""
+        if not _MAP_IMAGE_CACHE:
+            rows = self.db.client.execute(
+                "SELECT map_id, name, image FROM maps FINAL WHERE image != ''"
+            )
+            for mid, name, image in rows:
+                _MAP_IMAGE_CACHE[mid] = image
+                if name:
+                    _MAP_NAME_CACHE.setdefault(name, image)
+
+    def map_image_by_id(self, map_id: int) -> str:
+        """Image path for a map_id ('' if unknown). From the maps table."""
+        self._load_map_images()
+        return _MAP_IMAGE_CACHE.get(map_id, "")
+
+    def map_image_by_name(self, name: str) -> str:
+        """Image path for a canonical map name ('' if unknown)."""
+        self._load_map_images()
+        return _MAP_NAME_CACHE.get(name, "")
+
+    def map_images_by_ids(self, map_ids: list[int]) -> dict[int, str]:
+        """{map_id: image} for the given ids ('' for unknown)."""
+        self._load_map_images()
+        return {mid: _MAP_IMAGE_CACHE.get(mid, "") for mid in map_ids}
+
+    def map_images_by_names(self, names: list[str]) -> dict[str, str]:
+        """{name: image} for the given canonical names ('' for unknown)."""
+        self._load_map_images()
+        return {n: _MAP_NAME_CACHE.get(n, "") for n in names}
 
     def _aliases(self, player_id: int) -> list[str]:
         """All distinct name spellings for a player_id, most-used first,
@@ -940,19 +975,45 @@ class DataProvider:
 
     def get_tournament_map_images(self, tournament_id: int) -> dict:
         """Return {map_name: image_path} for maps in this tournament.
-        Extracts data-image attributes from the tournament's own raw_html."""
-        rows = self.db.client.execute(
-            "SELECT raw_html FROM tournaments WHERE tournament_id = %(t)s",
+
+        Images come from the maps lookup table (by canonical name). Names are
+        gathered from the tournament's match_maps rows; for tournaments whose
+        matches have no map data, fall back to the tournament's own maplist
+        (parsed from raw_html). Any name still missing falls back to data-image
+        attributes extracted from the tournament's raw_html.
+        """
+        # Canonical map names for this tournament (from its matches' maps).
+        names = [r[0] for r in self.db.client.execute(
+            """
+            SELECT DISTINCT mm.map_name FROM match_maps mm
+            JOIN matches m ON m.match_id = mm.match_id
+            WHERE m.tournament_id = %(t)s AND mm.map_name != ''
+            """,
             {"t": tournament_id},
-        )
-        if not rows or not rows[0][0]:
+        )]
+        # Fall back to the tournament's own maplist (parsed from raw_html) when
+        # its matches have no map data.
+        if not names:
+            det = self.db.get_tournament_details(tournament_id)
+            if det and det.get("maplist"):
+                names = list(det["maplist"])
+        if not names:
             return {}
-        raw = rows[0][0]
-        images: dict[str, str] = {}
-        for m in re.finditer(
-            r'data-image="([^"]+)"[^>]*data-name="([^"]+)"', raw
-        ):
-            images[m.group(2)] = m.group(1)
+        self._load_map_images()
+        images = {n: _MAP_NAME_CACHE.get(n, "") for n in names}
+        # Fall back to raw_html for names missing from the maps table.
+        missing = [n for n in names if not images[n]]
+        if missing:
+            rows = self.db.client.execute(
+                "SELECT raw_html FROM tournaments WHERE tournament_id = %(t)s",
+                {"t": tournament_id},
+            )
+            if rows and rows[0][0]:
+                for m in re.finditer(
+                    r'data-image="([^"]+)"[^>]*data-name="([^"]+)"', rows[0][0]
+                ):
+                    if m.group(2) in missing:
+                        images[m.group(2)] = m.group(1)
         return images
 
     def get_tournament_matches(self, tournament_id: int, limit: int = 20) -> list[dict]:
@@ -2529,8 +2590,8 @@ class DataProvider:
         Returns a dict with the match header (players, score, game, tournament,
         stage, tier, date, countries) and a `maps` list, each map carrying its
         name, per-player score, the winner name, and the hover image path
-        (extracted from the raw HTML `data-image` attribute). Returns None if
-        the match_id doesn't exist.
+        (from the maps lookup table by map_id; raw HTML fallback for unknown
+        maps). Returns None if the match_id doesn't exist.
         """
         rows = self.db.client.execute(
             """
@@ -2554,33 +2615,41 @@ class DataProvider:
         winner = _winner_from_ids(r[5], r[6], r[7], p1, p2)
 
         # Per-map breakdown (may be empty for matches without map data).
+        # FINAL dedups ReplacingMergeTree rows (backfill re-inserts can leave
+        # duplicate (played_at, match_id, map_index) rows until a merge).
         map_rows = self.db.client.execute(
             """
-            SELECT map_index, map_name, player1_name, player2_name, player1_score, player2_score
-            FROM match_maps
+            SELECT map_index, map_name, player1_name, player2_name, player1_score, player2_score, map_id
+            FROM match_maps FINAL
             WHERE match_id = %(mid)s
             ORDER BY map_index
             """,
             {"mid": match_id},
         )
-        # Map hover images live in the raw HTML as data-image attributes.
+        # Map hover images come from the maps lookup table (by map_id). For
+        # unknown maps (map_id=0) fall back to the raw HTML data-image.
+        self._load_map_images()
         images: dict[str, str] = {}
-        reg = self.db.client.execute(
-            "SELECT raw_html FROM match_registry WHERE match_id = %(mid)s", {"mid": match_id}
-        )
-        if reg and reg[0][0]:
-            for m in re.finditer(
-                r'data-image="([^"]+)"[^>]*data-name="([^"]+)"', reg[0][0]
-            ):
-                images[m.group(2)] = m.group(1)
+        unknown_ids = [mr[6] for mr in map_rows if mr[6] == 0]
+        if unknown_ids:
+            reg = self.db.client.execute(
+                "SELECT raw_html FROM match_registry WHERE match_id = %(mid)s", {"mid": match_id}
+            )
+            if reg and reg[0][0]:
+                for m in re.finditer(
+                    r'data-image="([^"]+)"[^>]*data-name="([^"]+)"', reg[0][0]
+                ):
+                    images[m.group(2)] = m.group(1)
 
         maps = []
         for mr in map_rows:
             mp1 = mr[2]
             mp2 = mr[3]
             s1, s2 = mr[4], mr[5]
+            mid = mr[6]
             # Map-level winner: higher frag score wins the map (draws -> None).
             mwin = mp1 if s1 > s2 else (mp2 if s2 > s1 else None)
+            img = _MAP_IMAGE_CACHE.get(mid, "") if mid else images.get(mr[1], "")
             maps.append({
                 "index": mr[0],
                 "name": mr[1],
@@ -2589,7 +2658,7 @@ class DataProvider:
                 "score1": s1,
                 "score2": s2,
                 "winner": mwin,
-                "image": images.get(mr[1], ""),
+                "image": img,
             })
 
         return {

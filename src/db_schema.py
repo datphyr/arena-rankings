@@ -6,6 +6,7 @@ Tables:
   - tournaments: tournament metadata (ID, name, tier)
   - matches: parsed match details (players, scores, tournament, date, maps)
   - match_maps: per-map results for each match
+  - maps: map lookup table (map_id -> canonical name, slug, image, game)
   - player_ratings: computed ratings (Elo, Glicko-2) per player per game
 """
 
@@ -15,6 +16,7 @@ CREATE_DATABASE = "CREATE DATABASE arena_rankings"
 
 # Individual DROP TABLE statements (for idempotent re-init)
 DROP_TABLES = [
+    "DROP TABLE IF EXISTS arena_rankings.maps",
     "DROP TABLE IF EXISTS arena_rankings.match_maps",
     "DROP TABLE IF EXISTS arena_rankings.matches",
     "DROP TABLE IF EXISTS arena_rankings.tournaments",
@@ -113,10 +115,12 @@ DDL_STATEMENTS = [
 
     # match_maps — Per-map results for each match
     # match_id + map_index uniquely identifies a map within a match
+    # map_id is the PlusForward map ID (from the map image URL). 0 = unknown.
     """
     CREATE TABLE IF NOT EXISTS arena_rankings.match_maps (
         match_id UInt64,
         map_index UInt8,
+        map_id UInt32 DEFAULT 0,
         map_name LowCardinality(String),
         player1_name String,
         player2_name String,
@@ -126,6 +130,24 @@ DDL_STATEMENTS = [
     )
     ENGINE = ReplacingMergeTree()
     ORDER BY (played_at, match_id, map_index)
+    """,
+
+    # maps — Map lookup table. map_id is the PlusForward map ID (primary key),
+    # extracted from the map image URL /files/images/maps/{map_id}_{slug}.jpg.
+    # name is the canonical display name; slug is the URL slug (cosmetic, like
+    # players). image is the PlusForward image path ('' if unknown). game is the
+    # single game this map is played in (from match_maps, with tournament data
+    # as fallback for maps never played).
+    """
+    CREATE TABLE IF NOT EXISTS arena_rankings.maps (
+        map_id UInt32,
+        name String DEFAULT '',
+        slug String DEFAULT '',
+        image String DEFAULT '',
+        game String DEFAULT ''
+    )
+    ENGINE = ReplacingMergeTree()
+    ORDER BY map_id
     """,
 
     # discovery_state — Track discovery progress for resume support

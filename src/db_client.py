@@ -338,7 +338,7 @@ class Database:
             return
         data = [
             (
-                match_id, i, m.map_name,
+                match_id, i, m.map_id, m.map_name,
                 m.player1_name, m.player2_name,
                 m.player1_score, m.player2_score,
                 played_at,
@@ -347,7 +347,7 @@ class Database:
         ]
         self.client.execute(
             "INSERT INTO match_maps "
-            "(match_id, map_index, map_name, player1_name, player2_name, "
+            "(match_id, map_index, map_id, map_name, player1_name, player2_name, "
             "player1_score, player2_score, played_at) VALUES",
             data,
         )
