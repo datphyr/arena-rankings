@@ -2449,7 +2449,8 @@ class DataProvider:
                 max(length(m.player2_name)),
                 max(length(m.game_name)),
                 max(length(m.tournament_name)),
-                max(length(t.tier))
+                max(length(t.tier)),
+                max(length(m.stage_name))
             FROM matches m
             LEFT JOIN tournaments t ON m.tournament_id = t.tournament_id
         """
@@ -2496,6 +2497,7 @@ class DataProvider:
             "game": r[2] or 0,
             "tournament": r[3] or 0,
             "tier": r[4] or 0,
+            "stage": r[5] or 0,
         }
 
     def tournaments_col_widths(self) -> dict:
