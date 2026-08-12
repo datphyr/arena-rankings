@@ -630,6 +630,32 @@ def matches(
     return templates.TemplateResponse(request, "matches.html", ctx)
 
 
+@app.get("/rivals", response_class=HTMLResponse)
+def rivals(
+    request: Request,
+    player: str = Query("", description="Filter by player name"),
+    player_id: int | None = Query(None, description="Filter by player id (from autocomplete; takes precedence over player)"),
+    partial: int = Query(0, ge=0, le=1, description="Return only the results partial (AJAX)"),
+):
+    with DataProvider() as dx:
+        ctx = _base_context(request, dx)
+        ctx["active"] = "rivals"
+        ctx["player"] = player
+        ctx["player_id"] = player_id
+        # Resolve the player for the header/name display (id-authoritative).
+        resolved_id = player_id if player_id is not None else dx._player_id(player)
+        ctx["rivals_player_id"] = resolved_id
+        ctx["rivals_player_name"] = dx._canonical_name(resolved_id) if resolved_id else player
+        ctx["total"] = 0
+        ctx["rivals"] = []
+        if resolved_id:
+            ctx["rivals"] = dx.get_player_rivals(ctx["rivals_player_name"], player_id=resolved_id, limit=100000)
+            ctx["total"] = len(ctx["rivals"])
+    if partial:
+        return templates.TemplateResponse(request, "_rivals_results.html", ctx)
+    return templates.TemplateResponse(request, "rivals.html", ctx)
+
+
 @app.get("/autocomplete", response_class=JSONResponse)
 def autocomplete(
     request: Request,

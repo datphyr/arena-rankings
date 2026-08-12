@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Rivals — Arena Rankings{% endblock %}
+{% block content %}
+<div class="section-head"><h2>Rivals</h2>
+<form class="filters section-filters" method="get" action="/rivals">
+  <label>Player</label>
+  <input type="text" name="player" value="{{ player }}" placeholder="Player name" style="width:180px" data-autocomplete="player">
+  <input type="hidden" name="player_id" value="{{ player_id or '' }}">
+  <button type="submit" class="btn">Filter</button>
+</form>
+</div>
+
+{% include "_rivals_results.html" %}
+{% endblock %}

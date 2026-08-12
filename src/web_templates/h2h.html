@@ -38,6 +38,10 @@
     var slug = (p1.value + "-vs-" + p2.value)
       .toLowerCase().replace(/[^\w\- ]/g, "").replace(/[\s_]+/g, "-");
     form.setAttribute("action", "/h2h/" + slug);
+    // Drop the redundant p1/p2 name params from the submitted query — the
+    // ids (p1_id/p2_id) are authoritative, so the names are unnecessary.
+    p1.disabled = true;
+    p2.disabled = true;
   });
 })();
 </script>

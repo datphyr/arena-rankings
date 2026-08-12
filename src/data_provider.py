@@ -3337,38 +3337,11 @@ class DataProvider:
         first_match = date_rows[0][0] if date_rows else None
         last_match = date_rows[0][1] if date_rows else None
 
-        # Rivals — top 10 most-faced opponents. Wins use the authoritative
-        # winner_id (a player_id) so draws are handled correctly.
-        rival_rows = self.db.client.execute(
-            """
-            SELECT
-                CASE WHEN player1_id = %(pid)s THEN player2_id ELSE player1_id END AS opp_id,
-                count() AS matches,
-                sum(CASE WHEN winner_id = %(pid)s THEN 1 ELSE 0 END) AS wins
-            FROM matches
-            WHERE player1_id = %(pid)s OR player2_id = %(pid)s
-            GROUP BY opp_id
-            ORDER BY matches DESC
-            LIMIT 10
-            """,
-            {"pid": p_id},
-        )
-        opp_ids = [r[0] for r in rival_rows]
-        opp_canon = self._canonical_names(opp_ids)
-        opp_countries = self._countries(opp_ids)
-        rivals = [
-            {
-                "name": opp_canon.get(r[0], f"player_{r[0]}"),
-                "id": r[0],
-                "country": opp_countries.get(r[0], ""),
-                "matches": r[1],
-                "wins": r[2],
-                "losses": r[1] - r[2],
-            }
-            for r in rival_rows
-        ]
-        # Sort rivals by least win rate first (hardest opponents on top).
-        rivals.sort(key=lambda r: (r["wins"] / r["matches"] if r["matches"] > 0 else 0))
+        # Rivals — top 10 hardest opponents (most Elo rating lost first).
+        # Reuses get_player_rivals so the player page and /rivals page share
+        # identical ranking + columns (matches/wins/losses/rating/
+        # first_match/last_match).
+        rivals = self.get_player_rivals(player_name, player_id=p_id, limit=10)
 
         return {
             "name": ratings[0]["name"],
@@ -3391,7 +3364,97 @@ class DataProvider:
             "aliases": self._aliases(p_id),
         }
 
-    def get_tournament_top_players(self, tournament_name: str, limit: int = 10) -> list[dict]:
+    def get_player_rivals(self, player_name: str, player_id: int | None = None, limit: int = 50) -> list[dict]:
+        """All rivals of a player, hardest first (most rating lost on top).
+
+        For each opponent, reports matches/wins/losses, total Elo rating delta
+        (sum of the player's signed Elo deltas in matches vs that opponent,
+        negative = net rating lost), and first/last match timestamps. Wins use
+        the authoritative winner_id so draws are handled correctly.
+
+        Elo deltas are per-game: a match's delta is the player's Elo snapshot
+        at that match minus their snapshot at the previous match in the same
+        game (mirrors get_matches_rating_deltas). Only per-game rating_history
+        rows are used (game_name != ''), excluding the aggregate 'All Games'
+        rows.
+        """
+        p_id = player_id if player_id is not None else self._player_id(player_name)
+        if p_id is None:
+            return []
+        # All matches with opponent, winner, date, game and match_id.
+        mrows = self.db.client.execute(
+            """
+            SELECT match_id,
+                   CASE WHEN player1_id = %(pid)s THEN player2_id ELSE player1_id END AS opp_id,
+                   winner_id = %(pid)s AS is_win,
+                   played_at,
+                   game_name
+            FROM matches
+            WHERE player1_id = %(pid)s OR player2_id = %(pid)s
+            ORDER BY played_at, match_id
+            """,
+            {"pid": p_id},
+        )
+        if not mrows:
+            return []
+        # Player's per-game Elo snapshots (exclude the '' All-Games rows).
+        hrows = self.db.client.execute(
+            """
+            SELECT match_id, played_at, rating, game_name
+            FROM rating_history
+            WHERE player_id = %(pid)s AND rating_system = 'elo' AND game_name != ''
+            ORDER BY game_name, played_at, match_id
+            """,
+            {"pid": p_id},
+        )
+        # Build rating-at-match map and per-game history for prev-snapshot lookups.
+        at_map: dict[int, float] = {}
+        hist: dict[str, list[tuple]] = {}
+        for mid, ts, rating, game in hrows:
+            at_map[mid] = rating
+            hist.setdefault(game, []).append((ts, rating))
+        # Aggregate per opponent.
+        agg: dict[int, dict] = {}
+        for mid, opp_id, is_win, played_at, game in mrows:
+            a = agg.setdefault(
+                opp_id,
+                {"matches": 0, "wins": 0, "rating": 0.0, "first": played_at, "last": played_at},
+            )
+            a["matches"] += 1
+            if is_win:
+                a["wins"] += 1
+            if played_at < a["first"]:
+                a["first"] = played_at
+            if played_at > a["last"]:
+                a["last"] = played_at
+            cur = at_map.get(mid)
+            if cur is not None:
+                h = hist.get(game, [])
+                idx = bisect.bisect_left(h, (played_at,))
+                prev = h[idx - 1][1] if idx > 0 else None
+                delta = cur - (prev if prev is not None else 1500.0)
+                a["rating"] += delta
+        opp_ids = list(agg.keys())
+        opp_canon = self._canonical_names(opp_ids)
+        opp_countries = self._countries(opp_ids)
+        rivals = [
+            {
+                "name": opp_canon.get(oid, f"player_{oid}"),
+                "id": oid,
+                "country": opp_countries.get(oid, ""),
+                "matches": a["matches"],
+                "wins": a["wins"],
+                "losses": a["matches"] - a["wins"],
+                "rating": a["rating"],
+                "first_match": a["first"],
+                "last_match": a["last"],
+            }
+            for oid, a in agg.items()
+        ]
+        # Hardest rivals first: most rating lost on top. rating is signed
+        # (negative = net loss), so ascending puts the biggest loss first.
+        rivals.sort(key=lambda r: r["rating"])
+        return rivals[:limit]
         """Top players by wins in a specific tournament.
 
         Each match contributes one row per participant; a win is attributed to

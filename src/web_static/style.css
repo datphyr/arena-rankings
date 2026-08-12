@@ -621,10 +621,12 @@ th.col-w, td.col-w { width: 56px; }            /* wins */
 th.col-l, td.col-l { width: 56px; }            /* losses */
 th.col-m, td.col-m { width: 56px; }            /* matches */
 th.col-wr, td.col-wr { width: 56px; }          /* win rate % */
+th.col-rating, td.col-rating { width: 88px; }    /* rating delta (Elo, signed) */
 .rival-link { color: inherit; text-decoration: none; display: block; width: 100%; }
 .rival-link:hover { color: var(--copper); text-decoration: underline; }
 th.col-delta, td.col-delta { width: 76px; }    /* rating delta (Elo / Glicko-2) */
-th.col-date, td.col-date { width: 110px; }     /* date */
+th.col-date, td.col-date { width: 148px; }     /* date / first & last match (YYYY-MM-DD, HH:MM) */
+th.col-date, td.col-date { padding-left: 8px; padding-right: 8px; } /* minimal — just fits 17-char datetime */
 th.col-stage, td.col-stage { width: 100px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* match stage */
 th.col-score, td.col-score { width: 70px; }    /* match score */
 th.col-game, td.col-game { width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }     /* game name */
@@ -637,6 +639,9 @@ th.col-tournament, td.col-tournament { width: 200px; } /* tournament */
    here so they don't fight the natural sizing. */
 table.auto-cols { table-layout: auto; }
 table.auto-cols th, table.auto-cols td { width: auto !important; }
+/* Date columns stay minimal even in auto-layout tables (rivals, player page) —
+   otherwise the 100% table width stretches them past the content. */
+table.auto-cols th.col-date, table.auto-cols td.col-date { width: 148px !important; }
 table.auto-cols td.col-flex { overflow: visible; text-overflow: clip; white-space: normal; }
 table.auto-cols td.col-flex .player-name { max-width: none; overflow: visible; }
 /* In auto-layout tables let the stage column size to its content instead of
@@ -912,6 +917,14 @@ table.tournaments-table td.col-date {
   font-weight: 500;
 }
 
+/* Rivals tables: first/last match dates dimmed like tournaments page. */
+table.rivals-table td.col-date,
+table.player-rivals-table td.col-date {
+  color: var(--text-dim);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
 a.tier-link { text-decoration: none; }
 a.tier-link:hover .tag { filter: brightness(1.2); }
 
@@ -1017,16 +1030,19 @@ a.tier-link:hover .tag { filter: brightness(1.2); }
 }
 .filters button:hover { filter: brightness(1.15); box-shadow: 0 4px 16px var(--glow-orange); }
 .filters button.btn-clear {
-  background: transparent;
+  background: var(--bg-card);
   border: 1px solid var(--border);
   color: var(--text-dim);
   font-weight: 500;
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
 }
 .filters button.btn-clear:hover {
   color: var(--text);
   border-color: var(--accent-2);
-  box-shadow: none;
   filter: none;
+  box-shadow: none;
 }
 .filters label { color: var(--text-dim); font-size: 0.85rem; font-weight: 500; }
 

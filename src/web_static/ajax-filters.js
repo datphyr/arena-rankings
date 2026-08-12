@@ -100,17 +100,12 @@
     });
   }
 
-  // Show the "Clear filters" button only when a real filter is set
-  // (mirrors the template's {% if game or player or tournament %} / tier).
-  var FILTER_FIELDS = ["game", "player", "tournament", "tier", "p1", "p2", "match"];
+  // Keep the "Clear filters" button always visible (per user request), even
+  // when no filter is currently set. It's harmless to click with no filters.
   function updateClearButton(form) {
     var clearBtn = form.querySelector('button[name="clear"]');
     if (!clearBtn) return;
-    var hasFilter = false;
-    form.querySelectorAll("select, input").forEach(function (el) {
-      if (FILTER_FIELDS.indexOf(el.name) !== -1 && el.value) hasFilter = true;
-    });
-    clearBtn.style.display = hasFilter ? "" : "none";
+    clearBtn.style.display = "";
   }
 
   function handle(url, e) {

@@ -17,7 +17,7 @@
       if (theme) document.documentElement.setAttribute('data-theme', theme);
     })();
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=20260810ac">
+  <link rel="stylesheet" href="/static/style.css?v=20260812k">
   <script src="/static/chart.umd.min.js"></script>
   <script>
     // Use the same monospace font for Chart.js as the rest of the site.
@@ -28,7 +28,7 @@
   <script src="/static/theme.js?v=20260809g" defer></script>
   <script src="/static/tables.js?v=20260809g" defer></script>
   <script src="/static/sort-scroll.js?v=20260809g" defer></script>
-  <script src="/static/ajax-filters.js?v=20260810b" defer></script>
+  <script src="/static/ajax-filters.js?v=20260812d" defer></script>
   <script src="/static/autocomplete.js?v=20260812c" defer></script>
   {% block head %}{% endblock %}
 </head>
@@ -41,10 +41,10 @@
           <span class="brand-text">Arena<span class="brand-accent">Rankings</span></span>
         </a>
         <nav class="nav">
-          <a href="/" class="nav-link {{ 'active' if active == 'home' }}">Home</a>
           <a href="/leaderboard" class="nav-link {{ 'active' if active == 'leaderboard' }}">Leaderboard</a>
           <a href="/matches" class="nav-link {{ 'active' if active == 'matches' }}">Matches</a>
           <a href="/tournaments" class="nav-link {{ 'active' if active == 'tournaments' }}">Tournaments</a>
+          <a href="/rivals" class="nav-link {{ 'active' if active == 'rivals' }}">Rivals</a>
           <a href="/h2h" class="nav-link {{ 'active' if active == 'h2h' }}">Head-to-Head</a>
         </nav>
       </div>

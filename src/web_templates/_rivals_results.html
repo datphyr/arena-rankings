@@ -1,0 +1,28 @@
+<div class="card" id="results-container">
+  {% if rivals_player_id %}
+  <div class="table-wrap">
+    <table class="rivals-table sortable auto-cols" data-default-sort="5" data-default-dir="asc">
+      <thead><tr><th class="col-flex">Opponent</th><th class="num col-m">Matches</th><th class="num col-w">Wins</th><th class="num col-l">Losses</th><th class="num col-wr">WR%</th><th class="num col-rating">Rating</th><th class="col-date">First match</th><th class="col-date">Last match</th></tr></thead>
+      <tbody>
+        {% for r in rivals %}
+        <tr>
+          <td class="col-flex"><span class="player-name">{% if r.country %}<span class="flag" title="{{ r.country|upper }}">{{ r.country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ r.id }}/{{ slug(r.name) }}">{{ r.name }}</a></span></td>
+          <td class="num col-m">{{ r.matches }}</td>
+          <td class="num col-w win">{{ r.wins }}</td>
+          <td class="num col-l loss">{{ r.losses }}</td>
+          <td class="num col-wr">{{ "%.0f%%"|format(r.wins / r.matches * 100) if r.matches > 0 else '' }}</td>
+          <td class="num col-rating"><span class="{{ 'loss' if r.rating < 0 else ('win' if r.rating > 0 else '') }}">{{ "%+.0f"|format(r.rating) if r.rating else '0' }}</span></td>
+          <td class="col-date"><a class="rival-link" href="/h2h/{{ match_slug(rivals_player_name, r.name) }}?p1_id={{ rivals_player_id }}&p2_id={{ r.id }}">{{ r.first_match|dt if r.first_match else '' }}</a></td>
+          <td class="col-date"><a class="rival-link" href="/h2h/{{ match_slug(rivals_player_name, r.name) }}?p1_id={{ rivals_player_id }}&p2_id={{ r.id }}">{{ r.last_match|dt if r.last_match else '' }}</a></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="empty">{% if rivals_player_id %}No rivals found for this player.{% else %}Enter a player name to see their rivals.{% endif %}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card-title"><span class="dot"></span>Rivals</div>
+  <div class="empty">Enter a player name above to see all of their rivals (most rating lost first).</div>
+  {% endif %}
+</div>

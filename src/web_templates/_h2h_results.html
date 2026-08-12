@@ -40,12 +40,12 @@
   <div class="table-wrap">
     <table class="matches-table auto-cols">
       <thead><tr>
-        <th class="col-date {{ 'sort-asc' if sort_col=='date' and sort_dir=='asc' else 'sort-desc' if sort_col=='date' and sort_dir=='desc' }}"><a class="sort-link {{ 'active' if sort_col == 'date' }}" href="?{{ qs(p1=p1, p2=p2, game=game, sort_col='date', sort_dir='asc' if sort_col=='date' and sort_dir=='desc' else 'desc') }}">Date</a></th>
+        <th class="col-date {{ 'sort-asc' if sort_col=='date' and sort_dir=='asc' else 'sort-desc' if sort_col=='date' and sort_dir=='desc' }}"><a class="sort-link {{ 'active' if sort_col == 'date' }}" href="?{{ qs(p1_id=p1_id, p2_id=p2_id, game=game, sort_col='date', sort_dir='asc' if sort_col=='date' and sort_dir=='desc' else 'desc') }}">Date</a></th>
         <th class="right col-flex">Player 1</th>
-        <th class="center col-score {{ 'sort-asc' if sort_col=='score' and sort_dir=='asc' else 'sort-desc' if sort_col=='score' and sort_dir=='desc' }}"><a class="sort-link {{ 'active' if sort_col == 'score' }}" href="?{{ qs(p1=p1, p2=p2, game=game, sort_col='score', sort_dir='asc' if sort_col=='score' and sort_dir=='desc' else 'desc') }}">Score</a></th>
+        <th class="center col-score {{ 'sort-asc' if sort_col=='score' and sort_dir=='asc' else 'sort-desc' if sort_col=='score' and sort_dir=='desc' }}"><a class="sort-link {{ 'active' if sort_col == 'score' }}" href="?{{ qs(p1_id=p1_id, p2_id=p2_id, game=game, sort_col='score', sort_dir='asc' if sort_col=='score' and sort_dir=='desc' else 'desc') }}">Score</a></th>
         <th class="col-flex">Player 2</th>
-        <th class="col-stage {{ 'sort-asc' if sort_col=='stage' and sort_dir=='asc' else 'sort-desc' if sort_col=='stage' and sort_dir=='desc' }}"><a class="sort-link {{ 'active' if sort_col == 'stage' }}" href="?{{ qs(p1=p1, p2=p2, game=game, sort_col='stage', sort_dir='desc' if sort_col=='stage' and sort_dir=='asc' else 'asc') }}">Stage</a></th>
-        <th class="col-tournament {{ 'sort-asc' if sort_col=='tournament' and sort_dir=='asc' else 'sort-desc' if sort_col=='tournament' and sort_dir=='desc' }}"><a class="sort-link {{ 'active' if sort_col == 'tournament' }}" href="?{{ qs(p1=p1, p2=p2, game=game, sort_col='tournament', sort_dir='desc' if sort_col=='tournament' and sort_dir=='asc' else 'asc') }}">Tournament</a></th>
+        <th class="col-stage {{ 'sort-asc' if sort_col=='stage' and sort_dir=='asc' else 'sort-desc' if sort_col=='stage' and sort_dir=='desc' }}"><a class="sort-link {{ 'active' if sort_col == 'stage' }}" href="?{{ qs(p1_id=p1_id, p2_id=p2_id, game=game, sort_col='stage', sort_dir='desc' if sort_col=='stage' and sort_dir=='asc' else 'asc') }}">Stage</a></th>
+        <th class="col-tournament {{ 'sort-asc' if sort_col=='tournament' and sort_dir=='asc' else 'sort-desc' if sort_col=='tournament' and sort_dir=='desc' }}"><a class="sort-link {{ 'active' if sort_col == 'tournament' }}" href="?{{ qs(p1_id=p1_id, p2_id=p2_id, game=game, sort_col='tournament', sort_dir='desc' if sort_col=='tournament' and sort_dir=='asc' else 'asc') }}">Tournament</a></th>
       </tr></thead>
       <tbody>
         {% for m in result.matches %}
