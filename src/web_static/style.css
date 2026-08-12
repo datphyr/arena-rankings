@@ -547,7 +547,10 @@ table { table-layout: fixed; }
    pushes the table wider than its container. */
 th.col-flex, td.col-flex { width: auto; }
 td.col-flex { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-td.col-flex .player-name { display: inline-flex; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+/* Player names must never be truncated (only game/tournament names may be).
+   In fixed-layout tables the flex column can shrink, so let long player names
+   wrap to a second line rather than clip with an ellipsis. */
+td.col-flex .player-name { display: inline-flex; max-width: 100%; overflow: visible; text-overflow: clip; white-space: normal; vertical-align: bottom; }
 
 /* Shared narrow fixed widths for non-flex columns. */
 th.col-num, td.col-num { width: 56px; }        /* generic narrow number (matches lb rank col) */
