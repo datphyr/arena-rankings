@@ -539,12 +539,14 @@ def matches(
         # Cap the tournament column so a single very long tournament name
         # doesn't blow out the layout and push the Tier column off-screen.
         _MAX_TOURNAMENT = 300
+        _STAGE = 100  # fixed width for the stage column (short labels)
         ctx["col_widths"] = {
             "date": 17 * _CH + _PAD,          # 'YYYY-MM-DD, HH:MM' = 17 chars
             "player1": _cw.get("player1", 0) * _CH + _PAD,
             "player2": _cw.get("player2", 0) * _CH + _PAD,
             "score": 7 * _CH + _PAD,          # '999 : 999' worst case
             "game": _cw.get("game", 0) * _CH + _PAD,
+            "stage": _STAGE,
             "tournament": min(_cw.get("tournament", 0) * _CH + _PAD, _MAX_TOURNAMENT),
             "tier": _cw.get("tier", 0) * _CH + _PAD + _TIER_TAG_EXTRA,
         }
@@ -630,6 +632,7 @@ def tournaments(
             "game": _cw.get("game", 0) * _CH + _PAD,
             "matches": max(_cw.get("matches", 0), len("Matches")) * _CH + _PAD,
             "players": max(_cw.get("players", 0), len("Players")) * _CH + _PAD,
+            "maps": max(_cw.get("maps", 0), len("Maps")) * _CH + _PAD,
             "date": max(10, len("Last Match")) * _CH + _PAD + 24,  # header 'LAST MATCH' + sort arrow space
         }
         ctx["page"] = page

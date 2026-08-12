@@ -139,7 +139,7 @@ def _sort_tournaments(rows: list, sort_col: str, sort_dir: str = "desc") -> list
 
     Used for server-side column sorting so the sort applies to ALL data,
     not just the current page's rows. sort_col is one of:
-    name, tier, game, matches, last_match, first_match.
+    name, tier, game, maps, matches, players, last_match, first_match.
     """
     if not sort_col:
         return rows
@@ -160,6 +160,8 @@ def _sort_tournaments(rows: list, sort_col: str, sort_dir: str = "desc") -> list
             return r.get("matches") or 0
         if c == "players":
             return r.get("players") or 0
+        if c == "maps":
+            return r.get("maps") or 0
         if c == "last_match":
             return r.get("last_match") or None
         if c == "first_match":
@@ -850,6 +852,7 @@ class DataProvider:
         t_ids = [r[0] for r in rows]
         match_counts = {}
         player_counts = {}
+        map_counts = {}
         if t_ids:
             mc_params = {"ids": tuple(t_ids)}
             mc_query = (
@@ -877,6 +880,19 @@ class DataProvider:
             )
             pc_rows = self.db.client.execute(pc_query, pc_params)
             player_counts = {r[0]: r[1] for r in pc_rows}
+            # Count distinct maps per tournament from the tournament's own
+            # maplist (authoritative per-tournament map rotation; arrayDistinct
+            # removes repeated maps from group-stage rotations). Fall back to 0
+            # for tournaments with no maplist.
+            mcp_params = {"ids": tuple(t_ids)}
+            mcp_query = (
+                "SELECT tournament_id, length(arrayDistinct(any(maplist))) "
+                "FROM tournaments FINAL "
+                "WHERE tournament_id IN %(ids)s "
+                "GROUP BY tournament_id"
+            )
+            mcp_rows = self.db.client.execute(mcp_query, mcp_params)
+            map_counts = {r[0]: r[1] for r in mcp_rows}
         tournaments = [
             {
                 "tournament_id": r[0],
@@ -886,6 +902,7 @@ class DataProvider:
                 "last_match": r[4],
                 "matches": match_counts.get(r[0], 0),
                 "players": player_counts.get(r[0], 0),
+                "maps": map_counts.get(r[0], 0),
                 "game": r[5] or "",
             }
             for r in rows
@@ -2492,14 +2509,16 @@ class DataProvider:
         query = """
             SELECT
                 max(length(name)), max(length(tier)), max(length(game_name)),
-                max(length(toString(cnt))), max(length(toString(pcnt)))
+                max(length(toString(cnt))), max(length(toString(pcnt))),
+                max(mcnt)
             FROM (
                 SELECT
                     t.name AS name,
                     t.tier AS tier,
                     any(m.game_name) AS game_name,
                     count(m.match_id) AS cnt,
-                    p.pcnt AS pcnt
+                    p.pcnt AS pcnt,
+                    length(arrayDistinct(t.maplist)) AS mcnt
                 FROM tournaments t FINAL
                 LEFT JOIN matches m ON m.tournament_id = t.tournament_id
                 LEFT JOIN (
@@ -2510,7 +2529,7 @@ class DataProvider:
                     ) GROUP BY tournament_id
                 ) p ON p.tournament_id = t.tournament_id
                 WHERE t.name != ''
-                GROUP BY t.tournament_id, t.name, t.tier, p.pcnt
+                GROUP BY t.tournament_id, t.name, t.tier, p.pcnt, t.maplist
             )
         """
         rows = self.db.client.execute(query)
@@ -2523,6 +2542,7 @@ class DataProvider:
             "game": r[2] or 0,
             "matches": r[3] or 0,
             "players": r[4] or 0,
+            "maps": r[5] or 0,
         }
 
     # --- Player matches ---

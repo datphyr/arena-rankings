@@ -23,6 +23,9 @@
       {% if t.prize_money %}
       <span class="rank-pill">Prize pool: <strong>{{ t.prize_money }}</strong></span>
       {% endif %}
+      {% if maplist %}
+      <span class="rank-pill">Maps: <strong>{{ "{:,}".format(maplist|length) }}</strong></span>
+      {% endif %}
       {% if t.players_count %}
       <span class="rank-pill">Players: <strong>{{ "{:,}".format(t.players_count) }}</strong></span>
       {% endif %}
@@ -111,23 +114,23 @@
     <table class="matches-table auto-cols">
       <thead><tr>
         <th class="col-date">Date</th>
-        <th class="col-stage">Stage</th>
         <th class="num col-delta">Rating</th>
         <th class="right col-flex">Player 1</th>
         <th class="center col-score">Score</th>
         <th class="col-flex">Player 2</th>
         <th class="left col-delta">Rating</th>
+        <th class="col-stage">Stage</th>
       </tr></thead>
       <tbody>
         {% for m in matches %}
         <tr>
           <td class="col-date"><a class="match-link" href="/match/{{ m.match_id }}" title="Match details">{{ m.played_at_str }}</a></td>
-          <td class="col-stage">{{ m.stage or '' }}</td>
           <td class="num col-delta">{% if m.p1_elo_delta is not none %}<span class="{{ 'win' if m.p1_elo_delta > 0 else 'loss' if m.p1_elo_delta < 0 }}">{{ '%+.1f'|format(m.p1_elo_delta) }}</span>{% else %}{% endif %}</td>
           <td class="right col-flex"><span class="player-name"><a class="player-link" href="/player/{{ m.player1_id }}/{{ slug(m.player1) }}">{{ m.player1 }}</a>{% if m.player1_country %}<span class="flag" title="{{ m.player1_country|upper }}">{{ m.player1_country|flag }}</span>{% endif %}</span></td>
           <td class="center col-score"><a class="score-link" href="/h2h?p1={{ m.player1 }}&p2={{ m.player2 }}" title="Head-to-head"><span class="{{ 'win' if m.winner == m.player1 else 'loss' }}">{{ m.score1 }}</span> : <span class="{{ 'win' if m.winner == m.player2 else 'loss' }}">{{ m.score2 }}</span></a></td>
           <td class="col-flex"><span class="player-name">{% if m.player2_country %}<span class="flag" title="{{ m.player2_country|upper }}">{{ m.player2_country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ m.player2_id }}/{{ slug(m.player2) }}">{{ m.player2 }}</a></span></td>
           <td class="left col-delta">{% if m.p2_elo_delta is not none %}<span class="{{ 'win' if m.p2_elo_delta > 0 else 'loss' if m.p2_elo_delta < 0 }}">{{ '%+.1f'|format(m.p2_elo_delta) }}</span>{% else %}{% endif %}</td>
+          <td class="col-stage">{{ m.stage or '' }}</td>
         </tr>
         {% else %}
         <tr><td colspan="7" class="empty">No matches found for this tournament.</td></tr>
