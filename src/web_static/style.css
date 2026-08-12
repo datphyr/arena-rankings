@@ -577,6 +577,10 @@ table.auto-cols { table-layout: auto; }
 table.auto-cols th, table.auto-cols td { width: auto !important; }
 table.auto-cols td.col-flex { overflow: visible; text-overflow: clip; white-space: normal; }
 table.auto-cols td.col-flex .player-name { max-width: none; overflow: visible; }
+/* In auto-layout tables let the stage column size to its content instead of
+   clipping long stage names (e.g. "Grand Final Match #1") at the fixed width
+   from the global .col-stage rule. */
+table.auto-cols th.col-stage, table.auto-cols td.col-stage { width: auto !important; white-space: normal; overflow: visible; text-overflow: clip; }
 /* In auto-layout standings, keep the rank column narrow and let the Player
    column absorb the leftover space so # and Player stay anchored left instead
    of the extra width being spread across every column. */
