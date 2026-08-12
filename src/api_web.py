@@ -532,12 +532,9 @@ def matches(
         _cw = dx.matches_col_widths()
         _CH = 7.8  # approx monospace char width (px) at 0.92rem JetBrains Mono (measured 7.75)
         _PAD = 16  # cell padding + breathing room
-        # Tier cells render as .tag pills (padding 10px/side + 1px border +
-        # letter-spacing + uppercase). Char-width alone under-sizes them, which
-        # overflows the fixed column and creates a horizontal scrollbar.
-        _TIER_TAG_EXTRA = 24  # extra px beyond raw char width for the tag pill
         # Cap the tournament column so a single very long tournament name
-        # doesn't blow out the layout and push the Tier column off-screen.
+        # doesn't blow out the layout. The tier pill is shown as a prefix
+        # inside this same column and clips (truncation-OK) with the name.
         _MAX_TOURNAMENT = 300
         ctx["col_widths"] = {
             "date": 17 * _CH + _PAD,          # 'YYYY-MM-DD, HH:MM' = 17 chars
@@ -547,7 +544,6 @@ def matches(
             "game": _cw.get("game", 0) * _CH + _PAD,
             "stage": _cw.get("stage", 0) * _CH + _PAD,
             "tournament": min(_cw.get("tournament", 0) * _CH + _PAD, _MAX_TOURNAMENT),
-            "tier": _cw.get("tier", 0) * _CH + _PAD + _TIER_TAG_EXTRA,
         }
         ctx["page"] = page
         ctx["total"] = total
@@ -627,7 +623,6 @@ def tournaments(
         _MAX_NAME = 300
         ctx["col_widths"] = {
             "name": min(_cw.get("name", 0) * _CH + _PAD, _MAX_NAME),
-            "tier": _cw.get("tier", 0) * _CH + _PAD,
             "game": _cw.get("game", 0) * _CH + _PAD,
             "matches": max(_cw.get("matches", 0), len("Matches")) * _CH + _PAD,
             "players": max(_cw.get("players", 0), len("Players")) * _CH + _PAD,

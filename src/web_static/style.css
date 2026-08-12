@@ -856,27 +856,48 @@ table.tournaments-table td.col-date {
 a.tier-link { text-decoration: none; }
 a.tier-link:hover .tag { filter: brightness(1.2); }
 
+/* Tier tag rendered as a pill box (inline-block + padding + radius + tinted
+   background). Used as a prefix before tournament names in match tables and
+   in page headers. */
 .tag {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 20px;
   font-size: 0.72rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  line-height: 1.4;
+  vertical-align: middle;
+  white-space: nowrap;
 }
-.tag-premier { color: var(--gold); background-image: linear-gradient(120deg, var(--gold), var(--orange)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
-.tag-major { color: var(--accent); background-image: linear-gradient(120deg, var(--accent), var(--orange)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
-.tag-minor { color: var(--text-dim); }
-.tag-none { color: var(--text-faint); }
+.tag-premier { background: rgba(245, 197, 66, 0.15); color: var(--gold); }
+.tag-major { background: rgba(124, 92, 255, 0.18); color: var(--accent); }
+.tag-minor { background: rgba(34, 211, 238, 0.12); color: var(--accent-2); }
+.tag-none { background: var(--bg-hover); color: var(--text-faint); }
 /* Extended tier/tag color variants (used when data has these tiers) */
-.tag-qualifier { color: var(--slate); background-image: linear-gradient(120deg, var(--slate), var(--silver)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
-.tag-online { color: var(--sage); background-image: linear-gradient(120deg, var(--sage), var(--green)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
-.tag-showmatch { color: var(--magenta); background-image: linear-gradient(120deg, var(--magenta), var(--plum)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
-.tag-frag { color: var(--orange); background-image: linear-gradient(120deg, var(--orange), var(--gold)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
-.tag-plum { color: var(--plum); background-image: linear-gradient(120deg, var(--plum), var(--magenta)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
-.tag-copper { color: var(--copper); background-image: linear-gradient(120deg, var(--copper), var(--gold)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
-.tag-silver { color: var(--silver); background-image: linear-gradient(120deg, var(--silver), var(--slate)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
-.tag-rose { color: var(--rose-gold); background-image: linear-gradient(120deg, var(--rose-gold), var(--copper)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
-.tag-yellow { color: var(--yellow); background-image: linear-gradient(120deg, var(--yellow), var(--orange)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
-.tag-burgundy { color: var(--burgundy); background-image: linear-gradient(120deg, var(--burgundy), var(--accent)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.tag-qualifier { background: rgba(148, 163, 184, 0.16); color: var(--silver); }
+.tag-online { background: rgba(52, 211, 153, 0.14); color: var(--green); }
+.tag-showmatch { background: rgba(244, 114, 182, 0.14); color: var(--magenta); }
+.tag-frag { background: rgba(251, 146, 60, 0.15); color: var(--orange); }
+.tag-plum { background: rgba(167, 139, 250, 0.16); color: var(--plum); }
+.tag-copper { background: rgba(184, 134, 11, 0.15); color: var(--copper); }
+.tag-silver { background: rgba(148, 163, 184, 0.16); color: var(--slate); }
+.tag-rose { background: rgba(244, 114, 182, 0.14); color: var(--rose-gold); }
+.tag-yellow { background: rgba(250, 204, 21, 0.14); color: var(--yellow); }
+.tag-burgundy { background: rgba(185, 28, 28, 0.16); color: var(--burgundy); }
+
+/* Tier pill shown as an inline prefix before a tournament name. Keeps the
+   pill and the name on one line with a small gap; the whole prefix clips
+   with the tournament name when the column is narrow (truncation-OK). */
+.tier-prefix {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+}
+.tier-prefix a.tier-link { flex: 0 0 auto; }
+.tier-prefix a.tournament-link { overflow: hidden; text-overflow: ellipsis; }
 
 .win { color: var(--green); font-weight: 600; }
 .loss { color: var(--red); font-weight: 600; }

@@ -101,7 +101,7 @@
   <div class="card-title"><span class="dot"></span>Recent Matches</div>
   <div class="table-wrap">
     <table class="auto-cols">
-      <thead><tr><th class="col-date">Date</th><th class="right col-flex">Player 1</th><th class="center col-score">Score</th><th class="col-flex">Player 2</th><th class="col-game">Game</th><th class="col-tournament">Tournament</th><th class="col-tier">Tier</th></tr></thead>
+      <thead><tr><th class="col-date">Date</th><th class="right col-flex">Player 1</th><th class="center col-score">Score</th><th class="col-flex">Player 2</th><th class="col-game">Game</th><th class="col-tournament">Tournament</th></tr></thead>
       <tbody>
         {% for m in recent_matches %}
         <tr>
@@ -110,8 +110,7 @@
           <td class="center col-score"><a class="score-link" href="/h2h?p1={{ m.player1 }}&p2={{ m.player2 }}" title="Head-to-head"><span class="{{ 'win' if m.winner == m.player1 else 'loss' }}">{{ m.score1 }}</span> : <span class="{{ 'win' if m.winner == m.player2 else 'loss' }}">{{ m.score2 }}</span></a></td>
           <td class="col-flex"><span class="player-name">{% if m.player2_country %}<span class="flag" title="{{ m.player2_country|upper }}">{{ m.player2_country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ m.player2_id }}/{{ slug(m.player2) }}">{{ m.player2 }}</a></span></td>
           <td class="col-game">{% if m.game %}<a class="game-link" href="/leaderboard?game={{ m.game }}">{{ m.game }}</a>{% else %}{% endif %}</td>
-          <td class="col-tournament tournament-cell">{% if m.tournament and m.tournament_id %}<a class="tournament-link" href="/tournament/{{ m.tournament_id }}/{{ slug(m.tournament) }}">{{ m.tournament }}</a>{% elif m.tournament %}<a class="tournament-link" href="/matches?tournament={{ m.tournament }}">{{ m.tournament }}</a>{% else %}{% endif %}</td>
-          <td class="col-tier">{% if m.tier %}<span class="tag tag-{{ m.tier }}">{{ m.tier }}</span>{% else %}{% endif %}</td>
+          <td class="col-tournament tournament-cell"><span class="tier-prefix">{% if m.tier %}<span class="tag tag-{{ m.tier }}" title="{{ m.tier }}">{{ m.tier }}</span>{% endif %}{% if m.tournament and m.tournament_id %}<a class="tournament-link" href="/tournament/{{ m.tournament_id }}/{{ slug(m.tournament) }}">{{ m.tournament }}</a>{% elif m.tournament %}<a class="tournament-link" href="/matches?tournament={{ m.tournament }}">{{ m.tournament }}</a>{% else %}{% endif %}</span></td>
         </tr>
         {% endfor %}
       </tbody>
