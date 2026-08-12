@@ -789,20 +789,30 @@ def h2h_slug(
     request: Request,
     p1_slug: str,
     p2_slug: str,
-    p1: int | None = Query(None, description="Player 1 id (authoritative)"),
-    p2: int | None = Query(None, description="Player 2 id (authoritative)"),
+    p1_id: int | None = Query(None, description="Player 1 id (authoritative)"),
+    p2_id: int | None = Query(None, description="Player 2 id (authoritative)"),
+    p1: str = Query("", description="Player 1 name (fallback when id absent)"),
+    p2: str = Query("", description="Player 2 name (fallback when id absent)"),
     game: str = Query("", description="Game name or alias (empty = all)"),
     partial: int = Query(0, ge=0, le=1, description="Return only the results partial (AJAX)"),
     sort_col: str = Query("date", description="Column to sort match history by"),
     sort_dir: str = Query("desc", pattern="^(asc|desc)$", description="Sort direction"),
 ):
-    # Slug segments are readability only — resolution is by p1/p2 ids in the
+    # Slug segments are readability only — resolution is by p1_id/p2_id in the
     # query string, so the URL works even if the slug is stale/wrong.
-    # p1/p2 here are ids; resolve them to canonical names for display/lookup.
+    # p1_id/p2_id are authoritative; fall back to name resolution when absent.
     with DataProvider() as dx:
-        p1_name = dx._canonical_name(p1) if p1 is not None else ""
-        p2_name = dx._canonical_name(p2) if p2 is not None else ""
-    return _h2h_page(request, p1_name, p2_name, p1_id=p1, p2_id=p2, game=game, partial=partial, sort_col=sort_col, sort_dir=sort_dir)
+        if p1_id is not None:
+            p1_name = dx._canonical_name(p1_id)
+        else:
+            p1_name = p1
+            p1_id = dx._player_id(p1) if p1 else None
+        if p2_id is not None:
+            p2_name = dx._canonical_name(p2_id)
+        else:
+            p2_name = p2
+            p2_id = dx._player_id(p2) if p2 else None
+    return _h2h_page(request, p1_name, p2_name, p1_id=p1_id, p2_id=p2_id, game=game, partial=partial, sort_col=sort_col, sort_dir=sort_dir)
 
 
 @app.get("/h2h", response_class=HTMLResponse)

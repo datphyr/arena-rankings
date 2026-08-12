@@ -23,23 +23,21 @@
 
 <script>
 // Rewrite the h2h form action to the readable slug URL on submit, so the
-// address bar shows /h2h/{p1}-vs-{p2}?p1={id}&p2={id} (ids authoritative).
+// address bar shows /h2h/{p1}-vs-{p2}?... (ids authoritative).
 // Runs before ajax-filters.js's submit handler (registered earlier), which
-// reads form.getAttribute('action') at submit time.
+// reads form.getAttribute('action') at submit time and appends the full form
+// query (p1/p1_id/p2/p2_id/game). We set only the slug path here; the ids
+// come from the form's hidden p1_id/p2_id inputs, which the route reads.
 (function () {
   var form = document.querySelector('form.filters[action="/h2h"]');
   if (!form) return;
   form.addEventListener("submit", function () {
     var p1 = form.querySelector('input[name="p1"]');
     var p2 = form.querySelector('input[name="p2"]');
-    var p1id = form.querySelector('input[name="p1_id"]');
-    var p2id = form.querySelector('input[name="p2_id"]');
     if (!p1 || !p2 || !p1.value || !p2.value) return;
     var slug = (p1.value + "-vs-" + p2.value)
       .toLowerCase().replace(/[^\w\- ]/g, "").replace(/[\s_]+/g, "-");
-    var qs = "p1=" + encodeURIComponent(p1id && p1id.value ? p1id.value : p1.value)
-           + "&p2=" + encodeURIComponent(p2id && p2id.value ? p2id.value : p2.value);
-    form.setAttribute("action", "/h2h/" + slug + "?" + qs);
+    form.setAttribute("action", "/h2h/" + slug);
   });
 })();
 </script>
