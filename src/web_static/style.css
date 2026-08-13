@@ -1184,6 +1184,7 @@ a.page-link:hover {
 .rank-pill {
   display: inline-flex;
   align-items: center;
+  gap: 4px;
   background: linear-gradient(135deg, var(--bg-card), var(--bg-hover));
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
