@@ -485,6 +485,8 @@ def _player_page(request: Request, name: str, game: str = "", limit: int = 50, p
         ctx["ratings"] = dx.get_player_ratings(name, min_matches={"glicko2": MIN_MATCHES_GLICKO2, "elo": MIN_MATCHES_ELO}, player_id=ctx["player_id"])
         ctx["placements"] = dx.get_player_tournament_placements(ctx["player_id"]) if ctx["player_id"] else []
         ctx["map_edges"] = dx.get_player_map_edges(ctx["player_id"]) if ctx["player_id"] else {"overall": 0, "maps": []}
+        # Games the player actually has map data for (for the map win-rate filter).
+        ctx["map_games"] = sorted({m["game"] for m in ctx["map_edges"]["maps"] if m.get("game")})
         # Games the player actually has ratings for (for the history game selector)
         ctx["player_games"] = sorted({r["game"] for r in ctx["ratings"] if r["game"] != "All Games"})
         # Compute per-game rank for each rating row (for the rank column) in a
@@ -974,6 +976,16 @@ def api_player_history(player_id: int, game: str = ""):
             if hasattr(h.get("played_at"), "isoformat"):
                 h["played_at"] = h["played_at"].isoformat()
         return {"history": hist}
+
+
+@app.get("/api/player/{player_id}/map-edges")
+def api_player_map_edges(player_id: int, game: str = ""):
+    """Per-map win-rate edges for the player chart, filtered by game.
+    Returns the same shape as the page's `map_edges` JSON so the chart can be
+    re-rendered in place when the game filter changes."""
+    game = _resolve_game(game)
+    with DataProvider() as dx:
+        return dx.get_player_map_edges(player_id, game=game)
 
 
 @app.get("/api/matches")

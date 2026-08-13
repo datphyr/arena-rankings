@@ -3319,7 +3319,7 @@ class DataProvider:
                         counts[place] = counts.get(place, 0) + 1
         return [{"place": p, "count": counts[p]} for p in sorted(counts)]
 
-    def get_player_map_edges(self, player_id: int, min_games: int = 5) -> dict:
+    def get_player_map_edges(self, player_id: int, min_games: int = 5, game: str = "") -> dict:
         """Per-map win-rate edge for a player, centered on their overall win rate.
 
         For each map the player has played (>= min_games), computes:
@@ -3328,23 +3328,29 @@ class DataProvider:
           - edge = win_rate - overall_win_rate (signed, in fraction)
         Returns {"overall": float, "maps": [{name, wins, losses, win_rate, edge}]}
         sorted by games played descending. edge > 0 = overperforms on that map
-        (green), edge < 0 = underperforms (red).
+        (green), edge < 0 = underperforms (red). `game` filters to one game
+        (empty = all games).
         """
+        game_cond = " AND mp.game = %(game)s" if game else ""
         rows = self.db.client.execute(
             """
-            SELECT mp.name, mm.player1_score, mm.player2_score, m.player1_id, m.player2_id
+            SELECT mp.name, mp.image, mp.game, mm.player1_score, mm.player2_score, m.player1_id, m.player2_id
             FROM match_maps mm FINAL
             LEFT JOIN matches m ON m.match_id = mm.match_id
             LEFT JOIN maps mp FINAL ON mp.map_id = mm.map_id
             WHERE (m.player1_id = %(pid)s OR m.player2_id = %(pid)s) AND mm.map_id != 0
-            """,
-            {"pid": player_id},
+            """ + game_cond,
+            {"pid": player_id, **({"game": game} if game else {})},
         )
         stats: dict[str, dict] = {}
-        for name, s1, s2, p1, p2 in rows:
+        images: dict[str, str] = {}
+        games: dict[str, str] = {}
+        for name, image, game, s1, s2, p1, p2 in rows:
             if not name:
                 continue
             st = stats.setdefault(name, {"wins": 0, "losses": 0})
+            images.setdefault(name, image or "")
+            games.setdefault(name, game or "")
             if p1 == player_id:
                 if s1 > s2:
                     st["wins"] += 1
@@ -3360,12 +3366,14 @@ class DataProvider:
         overall = total_w / (total_w + total_l) if (total_w + total_l) else 0.0
         maps = []
         for name, s in stats.items():
-            games = s["wins"] + s["losses"]
-            if games < min_games:
+            games_n = s["wins"] + s["losses"]
+            if games_n < min_games:
                 continue
-            wr = s["wins"] / games
+            wr = s["wins"] / games_n
             maps.append({
                 "name": name,
+                "image": images.get(name, ""),
+                "game": games.get(name, ""),
                 "wins": s["wins"],
                 "losses": s["losses"],
                 "win_rate": round(wr, 4),
