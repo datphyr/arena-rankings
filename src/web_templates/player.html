@@ -545,7 +545,9 @@ function buildPlacementsChart() {
   // base rank color (the 6th+ rank-badge color, --bg-hover) and the 5th-place
   // slate, fading down to the base rank color at the player's worst finish.
   // So the darkest part of the bar is the lowest place, matching the leaderboard.
-  const baseRank = cssVar('--bg-hover', 'rgba(30,30,30,0.6)');
+  // Fixed to the DARK theme's --bg-hover (not theme-aware) so the 6+ colors
+  // stay consistent regardless of the site theme.
+  const baseRank = 'rgba(30,30,30,0.6)';
   const slate5 = '#64748b';
   // Parse a hex (#rrggbb) or rgba()/rgb() color into [r,g,b].
   const parseRGB = function (c) {
@@ -607,6 +609,7 @@ function buildPlacementsChart() {
         return g;
       },
       borderWidth: 0,
+      borderColor: 'transparent',
       borderRadius: 0,
       borderSkipped: false,
     };
@@ -617,10 +620,40 @@ function buildPlacementsChart() {
       labels: games,
       datasets: datasets,
     },
+    // Redraw the stacked segments from their full element bounds (y -> base)
+    // so the sub-pixel gaps Chart.js leaves between stacked bars are filled.
+    // Each segment is extended 1px toward the stack so boundaries fully overlap.
+    plugins: [{
+      id: 'fillStackGaps',
+      afterDatasetsDraw: function (chart) {
+        const ctx = chart.ctx;
+        chart.data.datasets.forEach(function (ds, di) {
+          const meta = chart.getDatasetMeta(di);
+          meta.data.forEach(function (bar) {
+            if (!bar || bar.height <= 0) return;
+            const x = bar.x - bar.width / 2;
+            const w = bar.width;
+            // Extend 1px toward the stack base so the boundary gap is covered.
+            const top = Math.min(bar.y, bar.base);
+            const bottom = Math.max(bar.y, bar.base);
+            const y = top - 1;
+            const h = (bottom - top) + 2;
+            ctx.save();
+            ctx.fillStyle = ds.backgroundColor({ chart: chart, dataIndex: bar.index, dataset: ds });
+            ctx.fillRect(x, y, w, h);
+            ctx.restore();
+          });
+        });
+      }
+    }],
     options: {
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
+      // Force zero border on all bars so stacked segments touch with no gap.
+      elements: {
+        bar: { borderWidth: 0, borderColor: 'transparent', borderSkipped: false }
+      },
       plugins: {
         legend: { display: false },
         tooltip: {
@@ -687,6 +720,7 @@ function buildPlacementsChart() {
           beginAtZero: true,
           min: 0,
           stacked: true,
+          border: { display: false },
           ticks: { precision: 0, color: text, font: { family: "'JetBrains Mono', monospace" } },
           grid: { color: grid },
         },
@@ -836,6 +870,7 @@ function buildMapEdgeChart() {
         y: {
           min: -50,
           max: 50,
+          border: { display: false },
           grid: { color: grid },
           ticks: {
             color: text,
