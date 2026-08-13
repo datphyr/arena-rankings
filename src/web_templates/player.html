@@ -47,6 +47,13 @@
 </div>
 {% endif %}
 
+{% if placements %}
+<div class="card">
+  <div class="card-title"><span class="dot"></span>Tournament Placements</div>
+  <div class="chart-box"><canvas id="placementsChart"></canvas></div>
+</div>
+{% endif %}
+
 <div class="card">
   <div class="card-title"><span class="dot"></span>Elo Ratings</div>
   <div class="table-wrap">
@@ -377,6 +384,9 @@ function renderPeakPlaques(pts, ptsG) {
 const peakMarker = {
   id: 'peakMarker',
   afterDatasetsDraw(chart) {
+    // Only apply to the rating-history line chart, not bar charts (e.g. the
+    // tournament placements chart), which would otherwise get stray peak lines.
+    if (chart.config.type !== 'line') return;
     const ctx = chart.ctx;
     const series = [
       { idx: 0, color: '#ef4444', minMatches: 0 },  // Elo
@@ -432,6 +442,108 @@ const peakMarker = {
 Chart.register(peakMarker);
 
 buildChart(hist);
+
+// Tournament placements bar chart (distribution of 1st/2nd/3rd... places).
+const placements = {{ placements | tojson }};
+const placementsEl = document.getElementById('placementsChart');
+function buildPlacementsChart() {
+  if (!placementsEl || !placements.length) return;
+  // Show 1st-5th as individual bars, group 6th+ into a single "6+" bar
+  // (bracket standings only have meaningful positions at 1,2,3,4,5,7,9,13,17...).
+  const CAP = 5;
+  const countOf = {};
+  let beyond = 0;
+  placements.forEach(function (p) {
+    if (p.place <= CAP) countOf[p.place] = p.count;
+    else beyond += p.count;
+  });
+  const labels = [];
+  const data = [];
+  const places = [];
+  for (let i = 1; i <= CAP; i++) {
+    labels.push(i + suffix(i));
+    data.push(countOf[i] || 0);
+    places.push(i);
+  }
+  labels.push('6+');
+  data.push(beyond);
+  places.push(CAP + 1);
+  // Bar colors match the rank-badge gradients (gold 1st, copper 2nd, red 3rd,
+  // silver 4th, slate 5th+, default dim). Built as canvas gradients per bar so
+  // they render like the rank badges. No borders -> no stray line.
+  const rankGrads = {
+    1: ['#fde68a', '#fbbf24', '#f59e0b'],
+    2: ['#fca5a5', '#ef4444', '#b91c1c'],
+    3: ['#b91c1c', '#7f1d1d', '#4a0e0e'],
+    4: ['#c0c0c0', '#8a8a8a'],
+    5: ['#64748b', '#475569'],
+  };
+  // Base gradient for placements beyond 5th (matches the flat .rank-badge
+  // default --bg-hover look, just slightly lifted so bars stay visible).
+  const baseGrad = ['#3f3f46', '#27272a'];
+  const gradFor = function (place) {
+    return rankGrads[place] || baseGrad;
+  };
+  const grid = cssVar('--border', 'rgba(128,128,128,0.2)');
+  const text = cssVar('--text-dim', '#888');
+  if (window.__placementsChart) window.__placementsChart.destroy();
+  window.__placementsChart = new Chart(placementsEl, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Tournament placements',
+        data: data,
+        backgroundColor: function (c) {
+          const p = places[c.dataIndex];
+          const cols = gradFor(p);
+          if (cols.length === 1) return cols[0];
+          const ctx = c.chart.ctx;
+          const h = placementsEl.height || 300;
+          const g = ctx.createLinearGradient(0, h, 0, 0);
+          cols.forEach(function (col, i) { g.addColorStop(i / (cols.length - 1), col); });
+          return g;
+        },
+        borderWidth: 0,
+        borderRadius: { topLeft: 6, topRight: 6 },
+        // Subtle glow on the top placements, echoing the rank-badge shadows.
+        borderSkipped: false,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          intersect: false,
+          mode: 'index',
+          callbacks: {
+            label: function (c) { return c.parsed.y + ' tournament' + (c.parsed.y === 1 ? '' : 's'); }
+          }
+        }
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          ticks: { precision: 0, color: text, font: { family: "'JetBrains Mono', monospace" } },
+          grid: { color: grid },
+        },
+        x: {
+          ticks: { color: text, font: { family: "'JetBrains Mono', monospace" } },
+          grid: { display: false },
+        }
+      }
+    }
+  });
+}
+function suffix(n) {
+  if (n % 100 >= 11 && n % 100 <= 13) return 'th';
+  return ['th','st','nd','rd'][n % 10] || 'th';
+}
+buildPlacementsChart();
+document.addEventListener('themechange', function () { buildPlacementsChart(); });
 
 // Rebuild the chart when the theme changes so grid/axis colors (read from
 // CSS vars at build time) match the new theme instead of staying stale

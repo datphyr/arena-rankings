@@ -3287,6 +3287,38 @@ class DataProvider:
                 result.append({"game": g, "players": top})
         return result
 
+    def get_player_tournament_placements(self, player_id: int) -> list[dict]:
+        """Distribution of the player's placements in tournament final standings.
+
+        Counts how many times the player finished 1st, 2nd, 3rd, etc. across all
+        tournaments where they appear in the final standings (rankings JSON).
+        Returns a list of {place: int, count: int} sorted by place ascending
+        (1st, 2nd, 3rd, ...). Only includes positions up to the player's worst
+        placement; gaps (unused positions) are omitted.
+        """
+        import json as _json
+        import re as _re
+        rows = self.db.client.execute(
+            "SELECT rankings FROM tournaments FINAL WHERE rankings != '[]'"
+        )
+        counts: dict[int, int] = {}
+        for (rankings,) in rows:
+            if not rankings:
+                continue
+            try:
+                data = _json.loads(rankings)
+            except Exception:
+                continue
+            for entry in data:
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("player_id") == player_id:
+                    m = _re.match(r"(\d+)", entry.get("position") or "")
+                    if m:
+                        place = int(m.group(1))
+                        counts[place] = counts.get(place, 0) + 1
+        return [{"place": p, "count": counts[p]} for p in sorted(counts)]
+
     def get_player_summary(
         self,
         player_name: str,
