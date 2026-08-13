@@ -491,6 +491,22 @@ body::before {
   position: relative;
   overflow: visible;
 }
+/* Tournaments (1 plaque width) + Maps (rest) on one line, aligning with the
+   stat plaques above (same grid template + gap). --plaque-n is set in the
+   template to the number of top stat plaques. */
+.charts-row {
+  display: grid;
+  grid-template-columns: repeat(var(--plaque-n, 5), minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.charts-row .card { margin-bottom: 0; }
+.charts-col-1 { grid-column: span 1; min-width: 0; }
+.charts-col-4 { grid-column: span calc(var(--plaque-n, 5) - 1); min-width: 0; }
+@media (max-width: 720px) {
+  .charts-row { grid-template-columns: 1fr; }
+  .charts-col-1, .charts-col-4 { grid-column: span 1; }
+}
 .card-title {
   font-size: 1rem;
   font-weight: 700;
@@ -1303,8 +1319,8 @@ a.page-link:hover {
 .highlight-box .value.taupe { background: linear-gradient(120deg, var(--taupe), var(--copper)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
 
 /* ─── Charts ────────────────────────────────────────────── */
-.chart-box { position: relative; height: 220px; }
-.chart-box.tall { height: 300px; }
+.chart-box { position: relative; height: 321px; }
+.chart-box.tall { height: 321px; }
 .chart-box.small { height: 160px; }
 
 /* ─── H2H ───────────────────────────────────────────────── */

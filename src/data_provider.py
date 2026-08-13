@@ -3291,18 +3291,19 @@ class DataProvider:
         """Distribution of the player's placements in tournament final standings.
 
         Counts how many times the player finished 1st, 2nd, 3rd, etc. across all
-        tournaments where they appear in the final standings (rankings JSON).
-        Returns a list of {place: int, count: int} sorted by place ascending
-        (1st, 2nd, 3rd, ...). Only includes positions up to the player's worst
-        placement; gaps (unused positions) are omitted.
+        tournaments where they appear in the final standings (rankings JSON),
+        grouped by game. Returns a list of {game, placements: [{place, count}]}
+        where placements is sorted by place ascending (1st, 2nd, 3rd, ...).
+        Only includes positions up to the player's worst placement per game;
+        gaps (unused positions) are omitted.
         """
         import json as _json
         import re as _re
         rows = self.db.client.execute(
-            "SELECT rankings FROM tournaments FINAL WHERE rankings != '[]'"
+            "SELECT game, rankings FROM tournaments FINAL WHERE rankings != '[]'"
         )
-        counts: dict[int, int] = {}
-        for (rankings,) in rows:
+        per_game: dict[str, dict[int, int]] = {}
+        for (game, rankings) in rows:
             if not rankings:
                 continue
             try:
@@ -3316,8 +3317,13 @@ class DataProvider:
                     m = _re.match(r"(\d+)", entry.get("position") or "")
                     if m:
                         place = int(m.group(1))
+                        counts = per_game.setdefault(game or "", {})
                         counts[place] = counts.get(place, 0) + 1
-        return [{"place": p, "count": counts[p]} for p in sorted(counts)]
+        out = []
+        for game in sorted(per_game):
+            counts = per_game[game]
+            out.append({"game": game, "placements": [{"place": p, "count": counts[p]} for p in sorted(counts)]})
+        return out
 
     def get_player_map_edges(self, player_id: int, min_games: int = 5, game: str = "") -> dict:
         """Per-map win-rate edge for a player, centered on their overall win rate.
