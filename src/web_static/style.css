@@ -1193,6 +1193,10 @@ a.page-link:hover {
   color: var(--text-dim);
 }
 .rank-pill strong { color: var(--accent-2); font-family: var(--mono); }
+/* Inside a pill (e.g. the tier pill on the tournament page), the nested .tag's
+   right margin would leave empty space before the pill edge. Remove it here;
+   tags in tables keep their margin. */
+.rank-pill .tag { margin-right: 0; }
 
 .count-badge {
   display: inline-block;
