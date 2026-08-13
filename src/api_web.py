@@ -372,7 +372,18 @@ def leaderboard(
     sort_dir: str = Query("desc", pattern="^(asc|desc)$", description="Sort direction"),
     page: int = Query(1, ge=1, description="Page number"),
     partial: int = Query(0, ge=0, le=1, description="Return only the results partial (AJAX)"),
+    clear: int = Query(0, ge=0, le=1),
 ):
+    # "Clear filters" button resets all filters
+    if clear:
+        game = ""
+        system = "elo"
+        sort = "rating"
+        date = None
+        limit = "100"
+        sort_col = ""
+        sort_dir = "desc"
+        page = 1
     game = _resolve_game(game)
     # Map limit: 'all' -> large number, else int
     limit_n = 100000 if limit == "all" else int(limit)
@@ -637,7 +648,13 @@ def rivals(
     player_id: int | None = Query(None, description="Filter by player id (from autocomplete; takes precedence over player)"),
     game: str = Query("", description="Filter by game ('' = all games)"),
     partial: int = Query(0, ge=0, le=1, description="Return only the results partial (AJAX)"),
+    clear: int = Query(0, ge=0, le=1),
 ):
+    # "Clear filters" button resets all filters
+    if clear:
+        player = ""
+        player_id = None
+        game = ""
     with DataProvider() as dx:
         ctx = _base_context(request, dx)
         ctx["active"] = "rivals"

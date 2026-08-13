@@ -25,7 +25,7 @@
     </span>
     by
     <span class="player-name">{% if peak_info.country %}<span class="flag" title="{{ peak_info.country|upper }}">{{ peak_info.country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ peak_info.player_id }}/{{ slug(peak_info.name) }}">{{ peak_info.name }}</a></span>
-    {% if peak_info.game %}in {{ peak_info.game|game_icon }}{{ peak_info.game }}{% endif %}
+    {% if peak_info.game %}in <a class="game-link" href="/leaderboard{% if peak_info.game != 'All Games' %}?game={{ peak_info.game }}&system=elo&sort=peak{% else %}?system=elo&sort=peak{% endif %}">{{ peak_info.game|game_icon }}{{ peak_info.game }}</a>{% endif %}
     on {{ peak_info.peak_date|dt if peak_info.peak_date else '' }}
   </div>
   {% endif %}
@@ -37,7 +37,7 @@
     </span>
     by
     <span class="player-name">{% if peak_info_glicko.country %}<span class="flag" title="{{ peak_info_glicko.country|upper }}">{{ peak_info_glicko.country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ peak_info_glicko.player_id }}/{{ slug(peak_info_glicko.name) }}">{{ peak_info_glicko.name }}</a></span>
-    {% if peak_info_glicko.game %}in {{ peak_info_glicko.game|game_icon }}{{ peak_info_glicko.game }}{% endif %}
+    {% if peak_info_glicko.game %}in <a class="game-link" href="/leaderboard{% if peak_info_glicko.game != 'All Games' %}?game={{ peak_info_glicko.game }}&system=glicko2&sort=peak{% else %}?system=glicko2&sort=peak{% endif %}">{{ peak_info_glicko.game|game_icon }}{{ peak_info_glicko.game }}</a>{% endif %}
     on {{ peak_info_glicko.peak_date|dt if peak_info_glicko.peak_date else '' }}
   </div>
   {% endif %}
