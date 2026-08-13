@@ -54,6 +54,13 @@
 </div>
 {% endif %}
 
+{% if map_edges and map_edges.maps %}
+<div class="card">
+  <div class="card-title"><span class="dot"></span>Map Win Rate</div>
+  <div class="chart-box"><canvas id="mapEdgeChart"></canvas></div>
+</div>
+{% endif %}
+
 <div class="card">
   <div class="card-title"><span class="dot"></span>Elo Ratings</div>
   <div class="table-wrap">
@@ -544,6 +551,106 @@ function suffix(n) {
 }
 buildPlacementsChart();
 document.addEventListener('themechange', function () { buildPlacementsChart(); });
+
+// Map win-rate chart: diverging bars centered at 50%.
+// Bars grow UP (green) from 50% when WR > 50%, grow DOWN (red) from 50%
+// when WR < 50%. Bar length = |WR - 50%|.
+const mapEdges = {{ map_edges | tojson }};
+const mapEdgeEl = document.getElementById('mapEdgeChart');
+function buildMapEdgeChart() {
+  if (!mapEdgeEl || !mapEdges.maps || !mapEdges.maps.length) return;
+  const labels = mapEdges.maps.map(function (m) { return m.name; });
+  // Value = (WR - 50%) in percentage points; 0 = 50% win rate.
+  const data = mapEdges.maps.map(function (m) { return (m.win_rate - 0.5) * 100; });
+  const grid = cssVar('--border', 'rgba(128,128,128,0.2)');
+  const text = cssVar('--text-dim', '#888');
+  // Site base colors (theme-aware via CSS vars).
+  const baseGreen = cssVar('--green', '#10b981');
+  const baseRed = cssVar('--red', '#ef4444');
+  // Muted variants for the per-bar background.
+  const mutedGreen = baseGreen + '33'; // ~20% alpha
+  const mutedRed = baseRed + '33';
+  // Draw a muted background rectangle behind each bar, in the bar's own color,
+  // spanning the "below 50%" zone (0% to 50% win rate) for every bar.
+  const barBgPlugin = {
+    id: 'barBg',
+    beforeDatasetsDraw: function (chart) {
+      const area = chart.chartArea;
+      if (!area) return;
+      const yScale = chart.scales.y;
+      const meta = chart.getDatasetMeta(0);
+      const ctx = chart.ctx;
+      ctx.save();
+      const y0 = yScale.getPixelForValue(0); // 50% line
+      const yBottom = yScale.getPixelForValue(-50); // 0% line
+      for (let i = 0; i < meta.data.length; i++) {
+        const el = meta.data[i];
+        if (!el || el.hidden) continue;
+        const v = data[i];
+        const x = el.x - el.width / 2;
+        ctx.fillStyle = v >= 0 ? mutedGreen : mutedRed;
+        ctx.fillRect(x, y0, el.width, yBottom - y0);
+      }
+      ctx.restore();
+    }
+  };
+  if (window.__mapEdgeChart) window.__mapEdgeChart.destroy();
+  window.__mapEdgeChart = new Chart(mapEdgeEl, {
+    type: 'bar',
+    plugins: [barBgPlugin],
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: 'win rate vs 50%',
+          data: data,
+          backgroundColor: function (c) {
+            const v = data[c.dataIndex];
+            return v >= 0 ? baseGreen : baseRed;
+          },
+          borderWidth: 0,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          intersect: false,
+          mode: 'index',
+          callbacks: {
+            label: function (c) {
+              const m = mapEdges.maps[c.dataIndex];
+              return m.name + ': ' + m.wins + 'W ' + m.losses + 'L (' + (m.win_rate * 100).toFixed(0) + '%)';
+            }
+          }
+        }
+      },
+      scales: {
+        y: {
+          min: -50,
+          max: 50,
+          grid: { color: grid },
+          ticks: {
+            color: text,
+            font: { family: "'JetBrains Mono', monospace" },
+            // Display actual win rate (0-100) while bars diverge around 50%.
+            callback: function (v) { return (v + 50) + '%'; },
+          },
+        },
+        x: {
+          grid: { display: false },
+          ticks: { color: text, font: { family: "'JetBrains Mono', monospace", size: 11 }, maxRotation: 60 },
+        }
+      }
+    }
+  });
+}
+buildMapEdgeChart();
+document.addEventListener('themechange', function () { buildMapEdgeChart(); });
 
 // Rebuild the chart when the theme changes so grid/axis colors (read from
 // CSS vars at build time) match the new theme instead of staying stale

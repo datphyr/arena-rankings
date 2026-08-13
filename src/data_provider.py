@@ -3319,6 +3319,61 @@ class DataProvider:
                         counts[place] = counts.get(place, 0) + 1
         return [{"place": p, "count": counts[p]} for p in sorted(counts)]
 
+    def get_player_map_edges(self, player_id: int, min_games: int = 5) -> dict:
+        """Per-map win-rate edge for a player, centered on their overall win rate.
+
+        For each map the player has played (>= min_games), computes:
+          - wins / losses on that map
+          - win_rate (0..1)
+          - edge = win_rate - overall_win_rate (signed, in fraction)
+        Returns {"overall": float, "maps": [{name, wins, losses, win_rate, edge}]}
+        sorted by games played descending. edge > 0 = overperforms on that map
+        (green), edge < 0 = underperforms (red).
+        """
+        rows = self.db.client.execute(
+            """
+            SELECT mp.name, mm.player1_score, mm.player2_score, m.player1_id, m.player2_id
+            FROM match_maps mm FINAL
+            LEFT JOIN matches m ON m.match_id = mm.match_id
+            LEFT JOIN maps mp FINAL ON mp.map_id = mm.map_id
+            WHERE (m.player1_id = %(pid)s OR m.player2_id = %(pid)s) AND mm.map_id != 0
+            """,
+            {"pid": player_id},
+        )
+        stats: dict[str, dict] = {}
+        for name, s1, s2, p1, p2 in rows:
+            if not name:
+                continue
+            st = stats.setdefault(name, {"wins": 0, "losses": 0})
+            if p1 == player_id:
+                if s1 > s2:
+                    st["wins"] += 1
+                elif s1 < s2:
+                    st["losses"] += 1
+            else:
+                if s2 > s1:
+                    st["wins"] += 1
+                elif s2 < s1:
+                    st["losses"] += 1
+        total_w = sum(s["wins"] for s in stats.values())
+        total_l = sum(s["losses"] for s in stats.values())
+        overall = total_w / (total_w + total_l) if (total_w + total_l) else 0.0
+        maps = []
+        for name, s in stats.items():
+            games = s["wins"] + s["losses"]
+            if games < min_games:
+                continue
+            wr = s["wins"] / games
+            maps.append({
+                "name": name,
+                "wins": s["wins"],
+                "losses": s["losses"],
+                "win_rate": round(wr, 4),
+                "edge": round(wr - overall, 4),
+            })
+        maps.sort(key=lambda m: -m["edge"])
+        return {"overall": round(overall, 4), "maps": maps}
+
     def get_player_summary(
         self,
         player_name: str,
