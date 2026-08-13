@@ -40,7 +40,7 @@ Data is stored in **ClickHouse**.
      └─────────┘           └─────────┘           └─────────┘
 ```
 
-- **Pipeline wrappers** (top-level scripts): `discovery.py`, `download.py`, `parse.py`, `rank.py`, `reset.py`.
+- **Pipeline wrappers** (top-level scripts): `discovery.py`, `download.py`, `parse.py`, `rank.py`, `reset.py`, `backup.py`.
 - **Shared logic** lives in `src/`: match discovery/download/parsing, rankings computation, the database client/schema, the data provider (single query layer used by every consumer), and the bots/web app.
 - **`cli.py`** provides a command-line interface into the same data.
 - **`daemon.py`** supervises every component as a subprocess and forwards signals for graceful shutdown.
@@ -115,7 +115,7 @@ python daemon.py -v              # verbose logging
 python discovery.py --daemon          # scan PlusForward matchlist
 python download.py --workers 3        # download match pages
 python parse.py --workers 4           # parse HTML -> ClickHouse
-python rank.py --reset                # full recompute of ratings
+python rank.py                        # compute ratings (self-healing, auto-recomputes)
 python api_web.py --port 8080         # web site + JSON API
 python bot_discord.py                 # Discord bot
 python bot_twitch.py --channel chan1  # Twitch bot
@@ -141,11 +141,25 @@ python cli.py tournaments
 ```bash
 python reset.py rankings         # clear ratings + history (recomputed next cycle)
 python reset.py parsed           # clear parsed data, reset status to 'discovered'
-python reset.py all              # drop + recreate database
+python reset.py all              # drop + recreate database (backs up downloaded data first)
 python reset.py --dry-run all    # preview what would be reset
 ```
 
-`reset.py` stops and restarts the daemon automatically if it was running.
+`reset.py` stops and restarts the daemon automatically if it was running. The
+pipeline is self-healing: `rank.py` auto-detects empty/mismatched/corrupted
+ratings and recomputes from scratch, so no manual `--reset` is needed.
+
+### Backup / restore
+
+```bash
+python backup.py                          # full backup -> backups/<db>_<ts>.tar.gz
+python backup.py --table matches          # backup a single table
+python backup.py --restore FILE           # restore from a backup archive
+```
+
+Backups are a single Parquet+zstd archive (all tables, ~50x smaller than the
+raw data). `reset.py all` uses the same backup/restore path to preserve the
+downloaded data across a full reset.
 
 ### systemd (optional)
 
@@ -180,6 +194,7 @@ arena-rankings/
 ├── parse.py                # match parsing wrapper
 ├── rank.py                 # rankings computation wrapper
 ├── reset.py                # database reset tool
+├── backup.py               # backup/restore (Parquet+zstd single archive)
 ├── api_web.py              # web server wrapper
 ├── bot_discord.py          # Discord bot wrapper
 ├── bot_twitch.py           # Twitch bot wrapper
@@ -198,7 +213,6 @@ arena-rankings/
 │   ├── table.py            # ASCII/table formatting
 │   ├── web_templates/      # Jinja2 templates
 │   └── web_static/         # CSS, JS, chart library
-├── scripts/                # one-off backfill utilities
 └── tests/                  # JS tests for the web UI
 ```
 

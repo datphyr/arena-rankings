@@ -302,11 +302,10 @@ class Glicko2Rating:
 # --- Rankings Computation ---
 
 def _fill_player_names(db: Database, ratings: dict):
-    """Fill player names from players table, with fallback from matches table."""
+    """Fill player names from the players table (source of truth)."""
     if not ratings:
         return
 
-    # Primary: players table
     player_ids = list(ratings.keys())
     name_rows = db.client.execute(
         "SELECT player_id, name FROM players FINAL WHERE player_id IN %(ids)s",
@@ -316,28 +315,10 @@ def _fill_player_names(db: Database, ratings: dict):
         if pid in ratings:
             ratings[pid]["name"] = name
 
-    # Fallback: matches table for players not in players table
-    missing = {pid for pid, d in ratings.items() if not d["name"]}
-    if missing:
-        name_rows = db.client.execute(
-            "SELECT player1_id, any(player1_name) FROM matches FINAL "
-            "WHERE player1_id IN %(ids)s GROUP BY player1_id",
-            {"ids": tuple(missing)},
-        )
-        for pid, name in name_rows:
-            if pid in ratings and not ratings[pid]["name"]:
-                ratings[pid]["name"] = name
-        # Also check player2 side
-        still_missing = {pid for pid, d in ratings.items() if not d["name"]}
-        if still_missing:
-            name_rows = db.client.execute(
-                "SELECT player2_id, any(player2_name) FROM matches FINAL "
-                "WHERE player2_id IN %(ids)s GROUP BY player2_id",
-                {"ids": tuple(still_missing)},
-            )
-            for pid, name in name_rows:
-                if pid in ratings and not ratings[pid]["name"]:
-                    ratings[pid]["name"] = name
+    # Fallback placeholder for players with no name row
+    for pid, d in ratings.items():
+        if not d.get("name"):
+            d["name"] = f"player_{pid}"
 
 
 def _check_match_state(db: Database, game_name: str, rating_system: str) -> tuple[str, int, int]:
@@ -368,14 +349,15 @@ def _check_match_state(db: Database, game_name: str, rating_system: str) -> tupl
     # Always compare against Elo's history — it tracks every match individually.
     hist_system = "elo"
 
-    if game_name:
+    gid = db.resolve_game_id(game_name)
+    if gid:
         db_minmax = db.client.execute(
-            f"SELECT min(match_id), max(match_id), count() FROM matches FINAL WHERE game_name = %(g)s AND {duel_filter}",
-            {"g": game_name}
+            f"SELECT min(match_id), max(match_id), count() FROM matches FINAL WHERE game_id = %(g)s AND {duel_filter}",
+            {"g": gid}
         )[0]
         hist_minmax = db.client.execute(
-            "SELECT min(match_id), max(match_id), count(DISTINCT match_id) FROM rating_history WHERE rating_system = %(rs)s AND game_name = %(g)s",
-            {"rs": hist_system, "g": game_name}
+            "SELECT min(match_id), max(match_id), count(DISTINCT match_id) FROM rating_history WHERE rating_system = %(rs)s AND game_id = %(g)s",
+            {"rs": hist_system, "g": gid}
         )[0]
     else:
         db_minmax = db.client.execute(
@@ -404,6 +386,20 @@ def _check_match_state(db: Database, game_name: str, rating_system: str) -> tupl
     # min and max both match — but count could still differ (matches removed/replaced)
     if db_count != hist_count:
         return "backfill", db_count, hist_count
+
+    # Self-healing: if the stored ratings are corrupted (NaN/Inf/out-of-range),
+    # force a full recompute even though the match_ids look consistent. This
+    # catches "running but broken" states (e.g. a bad write, schema change, or
+    # partial import) that the match_id comparison alone would miss.
+    bad = db.client.execute(
+        "SELECT count() FROM player_ratings FINAL "
+        "WHERE isNaN(rating) OR isInfinite(rating) OR isNaN(rd) OR isInfinite(rd) "
+        "OR rating < 0 OR rating > 10000 OR rd < 0 OR rd > 10000"
+    )[0][0]
+    if bad:
+        logger.warning(f"{_game_label(game_name)}: {bad} corrupted rating rows detected — forcing full recompute")
+        return "backfill", db_count, hist_count
+
     return "up_to_date", db_count, hist_count
 
 
@@ -472,6 +468,7 @@ def compute_elo(db: Database, game_name: str = "", full_recompute: bool = False,
 
     elo = EloRating()
     history = []
+    gid = db.resolve_game_id(game_name)
 
     # Load tournament tiers for tier-based K-factor
     tournament_tiers = db.get_tournament_tiers()
@@ -516,8 +513,8 @@ def compute_elo(db: Database, game_name: str = "", full_recompute: bool = False,
             ratings[p2_id]["first_match_date"] = played_at
 
         # Record history snapshot for both players
-        history.append((p1_id, game_name, "elo", match_id, played_at, new_r1, 0.0, 0.0, ratings[p1_id]["wins"], ratings[p1_id]["losses"], ratings[p1_id]["matches"]))
-        history.append((p2_id, game_name, "elo", match_id, played_at, new_r2, 0.0, 0.0, ratings[p2_id]["wins"], ratings[p2_id]["losses"], ratings[p2_id]["matches"]))
+        history.append((p1_id, gid, "elo", match_id, played_at, new_r1, 0.0, 0.0, ratings[p1_id]["wins"], ratings[p1_id]["losses"], ratings[p1_id]["matches"]))
+        history.append((p2_id, gid, "elo", match_id, played_at, new_r2, 0.0, 0.0, ratings[p2_id]["wins"], ratings[p2_id]["losses"], ratings[p2_id]["matches"]))
 
     _fill_player_names(db, ratings)
     result = dict(ratings)
@@ -689,6 +686,7 @@ def compute_glicko2(db: Database, game_name: str = "", full_recompute: bool = Fa
         return None
 
     history = []
+    gid = db.resolve_game_id(game_name)
 
     # Group matches into rating periods
     periods = defaultdict(list)
@@ -769,7 +767,7 @@ def compute_glicko2(db: Database, game_name: str = "", full_recompute: bool = Fa
 
             # Record history snapshot at end of this rating period
             last_mid, last_played = period_last_match[pid]
-            history.append((pid, game_name, "glicko2", last_mid, last_played, new_r, new_rd, new_vol, ratings[pid]["wins"], ratings[pid]["losses"], ratings[pid]["matches"]))
+            history.append((pid, gid, "glicko2", last_mid, last_played, new_r, new_rd, new_vol, ratings[pid]["wins"], ratings[pid]["losses"], ratings[pid]["matches"]))
 
     _fill_player_names(db, ratings)
     result = dict(ratings)
@@ -783,11 +781,12 @@ def store_ratings(db: Database, ratings: dict, game_name: str, system: str):
     Also stores rating history snapshots if present.
     """
     history = ratings.pop("_history", [])
+    gid = db.resolve_game_id(game_name)
     rows = []
     for pid, data in ratings.items():
         rows.append((
             pid,
-            game_name,
+            gid,
             system,
             data["rating"],
             data.get("rd") if system == "glicko2" else 0.0,

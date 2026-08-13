@@ -3,12 +3,15 @@
 
 Usage:
     python rank.py                        # incremental run (auto-detects backfill)
-    python rank.py --reset                # full recompute from scratch (nuke ratings + history)
     python rank.py --daemon               # daemon mode (loop forever)
     python rank.py --daemon --delay 30    # custom restart delay
     python rank.py --game "Quake Champions"  # specific game only
     python rank.py --system elo           # specific rating system
     python rank.py -v                     # verbose
+
+Self-healing: the pipeline auto-detects empty/mismatched/corrupted ratings and
+recomputes from scratch (no manual --reset needed). To force a full reset of
+ratings, use `python reset.py rankings` (truncates; daemon recomputes).
 """
 
 import argparse
@@ -32,7 +35,7 @@ def cycle(args):
     else:
         games = [""]
         game_rows = db.client.execute(
-            "SELECT DISTINCT game_name FROM matches FINAL WHERE game_name != ''"
+            "SELECT name FROM games FINAL WHERE name != ''"
         )
         games.extend([r[0] for r in game_rows])
 
@@ -40,13 +43,10 @@ def cycle(args):
     # This ensures both Elo and Glicko-2 see the same state. If we checked
     # inside the loop, Elo would store its history first and Glicko-2 would
     # see the already-updated history and skip.
-    if args.reset:
-        states = {game: ("backfill", 0, 0) for game in games}
-    else:
-        states = {}
-        for game in games:
-            state, db_count, hist_count = _check_match_state(db, game, "elo")
-            states[game] = (state, db_count, hist_count)
+    states = {}
+    for game in games:
+        state, db_count, hist_count = _check_match_state(db, game, "elo")
+        states[game] = (state, db_count, hist_count)
 
     total_ratings = 0
 
@@ -54,13 +54,13 @@ def cycle(args):
         state, db_count, hist_count = states[game]
 
         if args.system in ("elo", "both"):
-            ratings = compute_elo(db, game, full_recompute=args.reset, match_state=state, match_counts=(db_count, hist_count))
+            ratings = compute_elo(db, game, match_state=state, match_counts=(db_count, hist_count))
             if ratings:
                 store_ratings(db, ratings, game, "elo")
                 total_ratings += len(ratings) - 1  # subtract _history key
 
         if args.system in ("glicko2", "both"):
-            ratings = compute_glicko2(db, game, full_recompute=args.reset, period=GLICKO2_PERIOD, match_state=state, match_counts=(db_count, hist_count))
+            ratings = compute_glicko2(db, game, period=GLICKO2_PERIOD, match_state=state, match_counts=(db_count, hist_count))
             if ratings:
                 store_ratings(db, ratings, game, "glicko2")
                 total_ratings += len(ratings) - 1  # subtract _history key
@@ -76,7 +76,6 @@ def main():
     parser.add_argument("--game", "-g", type=str, default="", help="Game name filter (empty = all)")
     parser.add_argument("--system", "-s", type=str, default="both", choices=["elo", "glicko2", "both"], help="Rating system (default: both)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Debug logging")
-    parser.add_argument("--reset", action="store_true", help="Full recompute from scratch (clears all ratings and history)")
     args = parser.parse_args()
 
     sys.exit(run_daemon(

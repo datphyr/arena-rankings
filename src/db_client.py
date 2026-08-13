@@ -110,6 +110,24 @@ class Database:
             resolved = ddl.strip().replace("arena_rankings.", f"{self.database}.")
             self.client.execute(resolved)
 
+    # --- Game ID resolution ---
+
+    def _game_id_cache(self) -> dict:
+        """Lazily load the games table into a name -> game_id map."""
+        if not hasattr(self, "_game_ids"):
+            rows = self.client.execute("SELECT game_id, name FROM games FINAL")
+            self._game_ids = {name: gid for gid, name in rows}
+        return self._game_ids
+
+    def resolve_game_id(self, game_name: str) -> int:
+        """Resolve a game display name to its game_id (PlusForward category ID).
+
+        Returns 0 if the game is unknown or game_name is empty (all games).
+        """
+        if not game_name:
+            return 0
+        return self._game_id_cache().get(game_name, 0)
+
     def close(self):
         """Disconnect from ClickHouse."""
         try:
@@ -213,13 +231,43 @@ class Database:
 
     # --- Players ---
 
-    def upsert_player(self, player_id: int, name: str, country: str = ""):
+    def upsert_player(self, player_id: int, name: str, country: str = "", slug: str = ""):
         """Insert or update a player record."""
         self.client.execute(
             "INSERT INTO players "
-            "(player_id, name, country) VALUES",
-            [(player_id, name, country)],
+            "(player_id, name, slug, country) VALUES",
+            [(player_id, name, slug, country)],
         )
+
+    # --- Games ---
+
+    def upsert_game(self, game_id: int, name: str, slug: str = ""):
+        """Insert or update a game record (game_id = PlusForward category ID)."""
+        if game_id <= 0:
+            return
+        self.client.execute(
+            "INSERT INTO games "
+            "(game_id, name, slug) VALUES",
+            [(game_id, name, slug)],
+        )
+
+    # --- Player aliases ---
+
+    def record_aliases(self, player_id: int, names: list[str]):
+        """Record historical name spellings for a player (one row per spelling).
+
+        Each distinct spelling gets a row; ReplacingMergeTree dedups by
+        (player_id, name) so re-parsing the same spelling just bumps the count.
+        """
+        if not names:
+            return
+        data = [(player_id, n, 1) for n in names if n]
+        if data:
+            self.client.execute(
+                "INSERT INTO player_aliases "
+                "(player_id, name, count) VALUES",
+                data,
+            )
 
     # --- Tournaments ---
 
@@ -237,6 +285,7 @@ class Database:
         schedule_end=None,
         maplist: list = None,
         rankings: str = "[]",
+        slug: str = "",
     ):
         """Insert or update a tournament record, including parsed metadata.
 
@@ -249,11 +298,11 @@ class Database:
         schedule_end = _coerce_datetime(schedule_end)
         self.client.execute(
             "INSERT INTO tournaments "
-            "(tournament_id, name, tier, raw_html, game, prize_money, "
+            "(tournament_id, name, slug, tier, raw_html, game, prize_money, "
             " tourney_format, match_format, schedule_start, schedule_end, "
             " maplist, rankings) VALUES",
             [(
-                tournament_id, name, tier, raw_html, game, prize_money,
+                tournament_id, name, slug, tier, raw_html, game, prize_money,
                 tourney_format, match_format, schedule_start, schedule_end,
                 maplist or [], rankings,
             )],
@@ -295,7 +344,7 @@ class Database:
     # --- Matches ---
 
     def insert_match(self, detail) -> bool:
-        """Insert a parsed match detail into the matches table.
+        """Insert a parsed match detail into the matches table (IDs only).
 
         Args:
             detail: MatchDetail dataclass instance.
@@ -305,20 +354,18 @@ class Database:
         """
         self.client.execute(
             "INSERT INTO matches "
-            "(match_id, player1_id, player2_id, player1_name, player2_name, "
-            "player1_country, player2_country, player1_score, player2_score, winner_id, "
-            "game_name, game_category_id, match_format, tournament_id, tournament_name, "
+            "(match_id, player1_id, player2_id, "
+            "player1_score, player2_score, winner_id, "
+            "game_id, match_format, tournament_id, "
             "stage_name, played_at) VALUES",
             [(
                 detail.match_id,
                 detail.player1_id, detail.player2_id,
-                detail.player1_name, detail.player2_name,
-                detail.player1_country, detail.player2_country,
                 detail.player1_score, detail.player2_score,
                 detail.winner_id,
-                detail.game_name, detail.game_category_id,
+                detail.game_category_id,
                 detail.match_format, detail.tournament_id,
-                detail.tournament_name, detail.stage_name,
+                detail.stage_name,
                 detail.played_at,
             )],
         )
@@ -327,7 +374,7 @@ class Database:
     # --- Match Maps ---
 
     def insert_match_maps(self, match_id: int, maps: list, played_at: datetime):
-        """Insert map results for a match.
+        """Insert map results for a match (IDs only).
 
         Args:
             match_id: PlusForward match ID.
@@ -338,7 +385,7 @@ class Database:
             return
         data = [
             (
-                match_id, i, m.map_id, m.map_name,
+                match_id, i, m.map_id,
                 m.player1_score, m.player2_score,
                 played_at,
             )
@@ -346,7 +393,7 @@ class Database:
         ]
         self.client.execute(
             "INSERT INTO match_maps "
-            "(match_id, map_index, map_id, map_name, "
+            "(match_id, map_index, map_id, "
             "player1_score, player2_score, played_at) VALUES",
             data,
         )
@@ -373,12 +420,13 @@ class Database:
             last_match_date = datetime(1970, 1, 1)
         if first_match_date is None:
             first_match_date = datetime(1970, 1, 1)
+        gid = self.resolve_game_id(game_name)
         self.client.execute(
             "INSERT INTO player_ratings "
-            "(player_id, game_name, rating_system, rating, rd, vol, "
+            "(player_id, game_id, rating_system, rating, rd, vol, "
             "wins, losses, matches_played, last_match_id, last_match_date, first_match_date) VALUES",
             [(
-                player_id, game_name, rating_system,
+                player_id, gid, rating_system,
                 rating, rd, vol, wins, losses, matches_played,
                 last_match_id, last_match_date, first_match_date,
             )],
@@ -389,14 +437,14 @@ class Database:
 
         Args:
             rows: List of tuples matching the player_ratings column order
-                  (player_id, game_name, rating_system, rating, rd, vol,
+                  (player_id, game_id, rating_system, rating, rd, vol,
                    wins, losses, matches_played, last_match_id, last_match_date, first_match_date)
         """
         if not rows:
             return
         self.client.execute(
             "INSERT INTO player_ratings "
-            "(player_id, game_name, rating_system, rating, rd, vol, "
+            "(player_id, game_id, rating_system, rating, rd, vol, "
             "wins, losses, matches_played, last_match_id, last_match_date, first_match_date) VALUES",
             rows,
         )
@@ -413,8 +461,8 @@ class Database:
             conditions.append("rating_system = %(rs)s")
             params["rs"] = rating_system
         if game_name is not None:
-            conditions.append("game_name = %(gn)s")
-            params["gn"] = game_name
+            conditions.append("game_id = %(gid)s")
+            params["gid"] = self.resolve_game_id(game_name)
         where = " AND ".join(conditions) if conditions else "1=1"
         self.client.execute(
             f"ALTER TABLE player_ratings DELETE WHERE {where}",
@@ -429,8 +477,8 @@ class Database:
             conditions.append("rating_system = %(rs)s")
             params["rs"] = rating_system
         if game_name is not None:
-            conditions.append("game_name = %(gn)s")
-            params["gn"] = game_name
+            conditions.append("game_id = %(gid)s")
+            params["gid"] = self.resolve_game_id(game_name)
         where = " AND ".join(conditions) if conditions else "1=1"
         self.client.execute(
             f"ALTER TABLE rating_history DELETE WHERE {where}",
@@ -442,14 +490,14 @@ class Database:
 
         Args:
             rows: List of tuples matching rating_history column order
-                  (player_id, game_name, rating_system, match_id, played_at,
+                  (player_id, game_id, rating_system, match_id, played_at,
                    rating, rd, vol, wins, losses, matches_played)
         """
         if not rows:
             return
         self.client.execute(
             "INSERT INTO rating_history "
-            "(player_id, game_name, rating_system, match_id, played_at, "
+            "(player_id, game_id, rating_system, match_id, played_at, "
             "rating, rd, vol, wins, losses, matches_played) VALUES",
             rows,
         )
@@ -460,10 +508,11 @@ class Database:
             "((match_format ILIKE '%%duel%%' AND match_format NOT ILIKE '%%team%%')"
             " OR match_format ILIKE '%%1v1%%')"
         )
-        if game_name:
+        gid = self.resolve_game_id(game_name)
+        if gid:
             rows = self.client.execute(
-                "SELECT count() FROM matches FINAL WHERE game_name = %(g)s AND " + duel_filter,
-                {"g": game_name},
+                "SELECT count() FROM matches FINAL WHERE game_id = %(g)s AND " + duel_filter,
+                {"g": gid},
             )
         else:
             rows = self.client.execute(
@@ -474,10 +523,11 @@ class Database:
     def count_rating_history(self, game_name: str, rating_system: str) -> int:
         """Count distinct match_ids in rating_history for a game/system."""
         if game_name:
+            gid = self.resolve_game_id(game_name)
             rows = self.client.execute(
                 "SELECT count(DISTINCT match_id) FROM rating_history "
-                "WHERE game_name = %(g)s AND rating_system = %(rs)s",
-                {"g": game_name, "rs": rating_system},
+                "WHERE game_id = %(g)s AND rating_system = %(rs)s",
+                {"g": gid, "rs": rating_system},
             )
         else:
             rows = self.client.execute(
@@ -495,17 +545,18 @@ class Database:
             "((match_format ILIKE '%%duel%%' AND match_format NOT ILIKE '%%team%%')"
             " OR match_format ILIKE '%%1v1%%')"
         )
-        if game_name:
+        gid = self.resolve_game_id(game_name)
+        if gid:
             return self.client.execute(
                 "SELECT match_id, player1_id, player2_id, player1_score, player2_score, "
-                "winner_id, played_at, game_name, tournament_id "
-                "FROM matches FINAL WHERE game_name = %(g)s AND " + duel_filter +
+                "winner_id, played_at, game_id, tournament_id "
+                "FROM matches FINAL WHERE game_id = %(g)s AND " + duel_filter +
                 " ORDER BY played_at",
-                {"g": game_name},
+                {"g": gid},
             )
         return self.client.execute(
             "SELECT match_id, player1_id, player2_id, player1_score, player2_score, "
-            "winner_id, played_at, game_name, tournament_id "
+            "winner_id, played_at, game_id, tournament_id "
             "FROM matches FINAL WHERE " + duel_filter + " ORDER BY played_at"
         )
 
@@ -518,19 +569,20 @@ class Database:
             "((match_format ILIKE '%%duel%%' AND match_format NOT ILIKE '%%team%%')"
             " OR match_format ILIKE '%%1v1%%')"
         )
-        if game_name:
+        gid = self.resolve_game_id(game_name)
+        if gid:
             return self.client.execute(
                 "SELECT match_id, player1_id, player2_id, player1_score, player2_score, "
-                "winner_id, played_at, game_name, tournament_id "
+                "winner_id, played_at, game_id, tournament_id "
                 "FROM matches FINAL "
-                "WHERE game_name = %(g)s AND match_id > %(mid)s "
+                "WHERE game_id = %(g)s AND match_id > %(mid)s "
                 "AND " + duel_filter + " "
                 "ORDER BY played_at",
-                {"g": game_name, "mid": after_match_id},
+                {"g": gid, "mid": after_match_id},
             )
         return self.client.execute(
             "SELECT match_id, player1_id, player2_id, player1_score, player2_score, "
-            "winner_id, played_at, game_name, tournament_id "
+            "winner_id, played_at, game_id, tournament_id "
             "FROM matches FINAL WHERE match_id > %(mid)s "
             "AND " + duel_filter + " "
             "ORDER BY played_at",
@@ -539,19 +591,21 @@ class Database:
 
     def get_last_processed_match_id(self, game_name: str, rating_system: str) -> int:
         """Get the last match_id processed in rating_history for a game/system."""
+        gid = self.resolve_game_id(game_name)
         rows = self.client.execute(
             "SELECT max(match_id) FROM rating_history "
-            "WHERE game_name = %(g)s AND rating_system = %(rs)s",
-            {"g": game_name, "rs": rating_system},
+            "WHERE game_id = %(g)s AND rating_system = %(rs)s",
+            {"g": gid, "rs": rating_system},
         )
         return rows[0][0] if rows and rows[0][0] else 0
 
     def get_max_match_id(self, game_name: str = "") -> int:
         """Get the highest match_id in the matches table for a game (or all games if empty)."""
-        if game_name:
+        gid = self.resolve_game_id(game_name)
+        if gid:
             rows = self.client.execute(
-                "SELECT max(match_id) FROM matches FINAL WHERE game_name = %(g)s",
-                {"g": game_name},
+                "SELECT max(match_id) FROM matches FINAL WHERE game_id = %(g)s",
+                {"g": gid},
             )
         else:
             rows = self.client.execute("SELECT max(match_id) FROM matches FINAL")
@@ -559,19 +613,21 @@ class Database:
 
     def get_max_match_id_in_history(self, game_name: str, rating_system: str) -> int:
         """Get the highest match_id in rating_history for a game/system."""
+        gid = self.resolve_game_id(game_name)
         rows = self.client.execute(
             "SELECT max(match_id) FROM rating_history "
-            "WHERE game_name = %(g)s AND rating_system = %(rs)s",
-            {"g": game_name, "rs": rating_system},
+            "WHERE game_id = %(g)s AND rating_system = %(rs)s",
+            {"g": gid, "rs": rating_system},
         )
         return rows[0][0] if rows and rows[0][0] else 0
 
     def get_max_played_at(self, game_name: str = "") -> datetime:
         """Get the latest played_at timestamp in the matches table for a game (or all games if empty)."""
-        if game_name:
+        gid = self.resolve_game_id(game_name)
+        if gid:
             rows = self.client.execute(
-                "SELECT max(played_at) FROM matches FINAL WHERE game_name = %(g)s",
-                {"g": game_name},
+                "SELECT max(played_at) FROM matches FINAL WHERE game_id = %(g)s",
+                {"g": gid},
             )
         else:
             rows = self.client.execute("SELECT max(played_at) FROM matches FINAL")
@@ -579,10 +635,11 @@ class Database:
 
     def get_last_processed_date(self, game_name: str, rating_system: str):
         """Get the last played_at date processed in rating_history for a game/system."""
+        gid = self.resolve_game_id(game_name)
         rows = self.client.execute(
             "SELECT max(played_at) FROM rating_history "
-            "WHERE game_name = %(g)s AND rating_system = %(rs)s",
-            {"g": game_name, "rs": rating_system},
+            "WHERE game_id = %(g)s AND rating_system = %(rs)s",
+            {"g": gid, "rs": rating_system},
         )
         return rows[0][0] if rows and rows[0][0] else None
 
@@ -593,15 +650,15 @@ class Database:
         matches, name, last_match_id, last_match_date}.
         """
         rows = self.client.execute(
-            "SELECT player_id, player_name, rating, rd, vol, wins, losses, "
+            "SELECT player_id, rating, rd, vol, wins, losses, "
             "matches_played, last_match_id, last_match_date, first_match_date "
             "FROM player_ratings FINAL "
-            "WHERE game_name = %(g)s AND rating_system = %(rs)s",
-            {"g": game_name, "rs": rating_system},
+            "WHERE game_id = %(g)s AND rating_system = %(rs)s",
+            {"g": self.resolve_game_id(game_name), "rs": rating_system},
         )
         ratings = {}
         for row in rows:
-            pid, name, rating, rd, vol, wins, losses, matches, last_mid, last_date, first_date = row
+            pid, rating, rd, vol, wins, losses, matches, last_mid, last_date, first_date = row
             ratings[pid] = {
                 "rating": rating,
                 "rd": rd,
@@ -609,11 +666,20 @@ class Database:
                 "wins": wins,
                 "losses": losses,
                 "matches": matches,
-                "name": name,
+                "name": "",
                 "last_match_id": last_mid,
                 "last_match_date": last_date,
                 "first_match_date": first_date,
             }
+        # Fill names from players table
+        if ratings:
+            name_rows = self.client.execute(
+                "SELECT player_id, name FROM players FINAL WHERE player_id IN %(ids)s",
+                {"ids": tuple(ratings.keys())},
+            )
+            for pid, name in name_rows:
+                if pid in ratings:
+                    ratings[pid]["name"] = name
         return ratings
 
     def delete_rating_history_from_date(self, game_name: str, rating_system: str, from_date):
@@ -624,8 +690,8 @@ class Database:
         """
         self.client.execute(
             "ALTER TABLE rating_history DELETE "
-            "WHERE game_name = %(g)s AND rating_system = %(rs)s AND played_at >= %(d)s",
-            {"g": game_name, "rs": rating_system, "d": from_date},
+            "WHERE game_id = %(g)s AND rating_system = %(rs)s AND played_at >= %(d)s",
+            {"g": self.resolve_game_id(game_name), "rs": rating_system, "d": from_date},
         )
 
     def get_state_before_date(self, game_name: str, rating_system: str, before_date) -> dict:
@@ -644,9 +710,9 @@ class Database:
             "argMax(losses, played_at) as losses, "
             "argMax(matches_played, played_at) as matches "
             "FROM rating_history "
-            "WHERE game_name = %(g)s AND rating_system = %(rs)s AND played_at < %(d)s "
+            "WHERE game_id = %(g)s AND rating_system = %(rs)s AND played_at < %(d)s "
             "GROUP BY player_id",
-            {"g": game_name, "rs": rating_system, "d": before_date},
+            {"g": self.resolve_game_id(game_name), "rs": rating_system, "d": before_date},
         )
         return {r[0]: {"rating": r[1], "rd": r[2], "vol": r[3], "wins": r[4], "losses": r[5], "matches": r[6]} for r in rows}
 
@@ -661,9 +727,9 @@ class Database:
             "SELECT player_id, argMax(wins, played_at) as wins, "
             "argMax(losses, played_at) as losses, argMax(matches_played, played_at) as matches "
             "FROM rating_history "
-            "WHERE game_name = %(g)s AND rating_system = %(rs)s AND played_at < %(d)s "
+            "WHERE game_id = %(g)s AND rating_system = %(rs)s AND played_at < %(d)s "
             "GROUP BY player_id",
-            {"g": game_name, "rs": rating_system, "d": before_date},
+            {"g": self.resolve_game_id(game_name), "rs": rating_system, "d": before_date},
         )
         return {r[0]: {"wins": r[1], "losses": r[2], "matches": r[3]} for r in rows}
 
@@ -676,19 +742,20 @@ class Database:
             "((match_format ILIKE '%%duel%%' AND match_format NOT ILIKE '%%team%%')"
             " OR match_format ILIKE '%%1v1%%')"
         )
-        if game_name:
+        gid = self.resolve_game_id(game_name)
+        if gid:
             return self.client.execute(
                 "SELECT match_id, player1_id, player2_id, player1_score, player2_score, "
-                "winner_id, played_at, game_name, tournament_id "
+                "winner_id, played_at, game_id, tournament_id "
                 "FROM matches FINAL "
-                "WHERE game_name = %(g)s AND played_at >= %(d)s "
+                "WHERE game_id = %(g)s AND played_at >= %(d)s "
                 "AND " + duel_filter + " "
                 "ORDER BY played_at",
-                {"g": game_name, "d": from_date},
+                {"g": gid, "d": from_date},
             )
         return self.client.execute(
             "SELECT match_id, player1_id, player2_id, player1_score, player2_score, "
-            "winner_id, played_at, game_name, tournament_id "
+            "winner_id, played_at, game_id, tournament_id "
             "FROM matches FINAL WHERE played_at >= %(d)s "
             "AND " + duel_filter + " "
             "ORDER BY played_at",

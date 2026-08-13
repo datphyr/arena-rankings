@@ -3,12 +3,6 @@
 {% block content %}
 <div class="section-head"><h2>Head-to-Head</h2>
 <form class="filters section-filters" method="get" action="/h2h">
-  <label>Player 1</label>
-  <input type="text" name="p1" value="{{ p1 }}" placeholder="e.g. rapha" data-autocomplete="player">
-  <input type="hidden" name="p1_id" value="{{ p1_id or '' }}">
-  <label>Player 2</label>
-  <input type="text" name="p2" value="{{ p2 }}" placeholder="e.g. cYpheR" data-autocomplete="player">
-  <input type="hidden" name="p2_id" value="{{ p2_id or '' }}">
   <label>Game</label>
   <select name="game">
     <option value="">All games</option>
@@ -16,6 +10,12 @@
     <option value="{{ g }}" {{ 'selected' if game == g }}>{{ g }}</option>
     {% endfor %}
   </select>
+  <label>Player 1</label>
+  <input type="text" name="p1" value="{{ p1 }}" placeholder="e.g. rapha" data-autocomplete="player">
+  <input type="hidden" name="p1_id" value="{{ p1_id or '' }}">
+  <label>Player 2</label>
+  <input type="text" name="p2" value="{{ p2 }}" placeholder="e.g. cYpheR" data-autocomplete="player">
+  <input type="hidden" name="p2_id" value="{{ p2_id or '' }}">
 </form>
 </div>
 

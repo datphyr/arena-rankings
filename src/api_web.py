@@ -635,6 +635,7 @@ def rivals(
     request: Request,
     player: str = Query("", description="Filter by player name"),
     player_id: int | None = Query(None, description="Filter by player id (from autocomplete; takes precedence over player)"),
+    game: str = Query("", description="Filter by game ('' = all games)"),
     partial: int = Query(0, ge=0, le=1, description="Return only the results partial (AJAX)"),
 ):
     with DataProvider() as dx:
@@ -642,6 +643,8 @@ def rivals(
         ctx["active"] = "rivals"
         ctx["player"] = player
         ctx["player_id"] = player_id
+        ctx["game"] = _resolve_game(game)
+        ctx["games"] = dx.get_games()
         # Resolve the player for the header/name display (id-authoritative).
         resolved_id = player_id if player_id is not None else dx._player_id(player)
         ctx["rivals_player_id"] = resolved_id
@@ -649,7 +652,7 @@ def rivals(
         ctx["total"] = 0
         ctx["rivals"] = []
         if resolved_id:
-            ctx["rivals"] = dx.get_player_rivals(ctx["rivals_player_name"], player_id=resolved_id, limit=100000)
+            ctx["rivals"] = dx.get_player_rivals(ctx["rivals_player_name"], player_id=resolved_id, limit=100000, game=ctx["game"])
             ctx["total"] = len(ctx["rivals"])
     if partial:
         return templates.TemplateResponse(request, "_rivals_results.html", ctx)

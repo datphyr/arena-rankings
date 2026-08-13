@@ -2,12 +2,19 @@
 
 Tables:
   - match_registry: central index of discovered matches + raw HTML storage
-  - players: player profiles (ID, name, country)
-  - tournaments: tournament metadata (ID, name, tier)
-  - matches: parsed match details (players, scores, tournament, date, maps)
-  - match_maps: per-map results for each match
+  - players: player profiles (ID, name, slug, country)
+  - games: game lookup table (game_id -> name, slug)
+  - tournaments: tournament metadata (ID, name, slug, tier)
+  - matches: parsed match details (player IDs, scores, game_id, tournament_id, date)
+  - match_maps: per-map results for each match (map_id only)
   - maps: map lookup table (map_id -> canonical name, slug, image, game)
+  - player_aliases: historical name spellings per player (for alias display)
   - player_ratings: computed ratings (Elo, Glicko-2) per player per game
+
+Normalization principle: IDs are the primary keys everywhere. Names live only
+in their canonical tables (players, games, tournaments, maps) as name + slug.
+Hot tables (matches, match_maps) reference entities by ID only. All IDs come
+from the parse step of the pipeline (PlusForward page data), never hand-crafted.
 """
 
 # Drop existing database and recreate
@@ -20,7 +27,9 @@ DROP_TABLES = [
     "DROP TABLE IF EXISTS arena_rankings.match_maps",
     "DROP TABLE IF EXISTS arena_rankings.matches",
     "DROP TABLE IF EXISTS arena_rankings.tournaments",
+    "DROP TABLE IF EXISTS arena_rankings.games",
     "DROP TABLE IF EXISTS arena_rankings.players",
+    "DROP TABLE IF EXISTS arena_rankings.player_aliases",
     "DROP TABLE IF EXISTS arena_rankings.rating_history",
     "DROP TABLE IF EXISTS arena_rankings.player_ratings",
     "DROP TABLE IF EXISTS arena_rankings.match_registry",
@@ -46,14 +55,31 @@ DDL_STATEMENTS = [
 
     # players — Player profiles extracted from match pages
     # player_id is the PlusForward player ID (from /player/<id>/... URLs)
+    # name is the display name; slug is the URL slug (from the player URL).
+    # country is the ISO code from the flag icon.
     """
     CREATE TABLE IF NOT EXISTS arena_rankings.players (
         player_id UInt64,
         name String,
+        slug String DEFAULT '',
         country LowCardinality(String) DEFAULT ''
     )
     ENGINE = ReplacingMergeTree()
     ORDER BY player_id
+    """,
+
+    # games — Game lookup table. game_id is the PlusForward category ID
+    # (from the pfcat-{id} icon). name is the display name (from the match
+    # Description div); slug is the game-slug segment of the player URL
+    # (e.g. 'Quake-Champions'). Populated by the parser via upsert_game.
+    """
+    CREATE TABLE IF NOT EXISTS arena_rankings.games (
+        game_id UInt32,
+        name String DEFAULT '',
+        slug String DEFAULT ''
+    )
+    ENGINE = ReplacingMergeTree()
+    ORDER BY game_id
     """,
 
     # tournaments — Tournament metadata extracted from the tournament page itself
@@ -63,10 +89,12 @@ DDL_STATEMENTS = [
     # from the same page's .tour_info / .tour_rankings blocks. rankings is a JSON
     # array: [{"position": "1st", "player_id": 123, "player_name": "...", "prize": "60 USD"}]
     # tournament_id is the PlusForward post ID of the tournament page
+    # slug is the URL slug of the tournament post (cosmetic, like players).
     """
     CREATE TABLE IF NOT EXISTS arena_rankings.tournaments (
         tournament_id UInt64,
         name String,
+        slug String DEFAULT '',
         tier LowCardinality(String) DEFAULT '',
         raw_html String DEFAULT '',
         game LowCardinality(String) DEFAULT '',
@@ -82,12 +110,15 @@ DDL_STATEMENTS = [
     ORDER BY tournament_id
     """,
 
-    # matches — Parsed match details
+    # matches — Parsed match details (fully normalized: IDs only)
     # match_id is the PlusForward post ID (same as match_registry)
-    # winner_id is the player_id of the winner
-    # game_name: e.g. "Quake Champions", "Quake Live"
+    # player1_id/player2_id reference players; winner_id is the winner's player_id
+    # game_id references games (was game_category_id, the pfcat category ID)
+    # tournament_id references tournaments
     # match_format: e.g. "Best of 5", "Time Limit Duel"
     # played_at: when the match was played (parsed from match page)
+    # Denormalized name/country/tournament_name/game_name columns were removed:
+    # they duplicated players/games/tournaments. Resolve via JOIN on IDs.
     # Note: status column was removed — it was dead (0 rows ever differed from
     # 'Match finished'). Parsing state lives in match_registry.status instead.
     """
@@ -95,36 +126,28 @@ DDL_STATEMENTS = [
         match_id UInt64,
         player1_id UInt64,
         player2_id UInt64,
-        player1_name String,
-        player2_name String,
-        player1_country LowCardinality(String) DEFAULT '',
-        player2_country LowCardinality(String) DEFAULT '',
         player1_score Int8,
         player2_score Int8,
         winner_id UInt64,
-        game_name LowCardinality(String) DEFAULT '',
-        game_category_id UInt32 DEFAULT 0,
+        game_id UInt32 DEFAULT 0,
         match_format LowCardinality(String) DEFAULT '',
         tournament_id UInt64 DEFAULT 0,
-        tournament_name String DEFAULT '',
         stage_name String DEFAULT '',
         played_at DateTime
     )
     ENGINE = ReplacingMergeTree()
-    ORDER BY (game_name, played_at, match_id)
+    ORDER BY (game_id, played_at, match_id)
     """,
 
-    # match_maps — Per-map results for each match
+    # match_maps — Per-map results for each match (fully normalized: IDs only)
     # match_id + map_index uniquely identifies a map within a match
     # map_id is the PlusForward map ID (from the map image URL). 0 = unknown.
-    # player1_name/player2_name were removed: they duplicated matches (2 stale
-    # rows out of 25k proved write-inconsistency). Join to matches for names.
+    # map_name was removed: it duplicated maps.name. Resolve via maps table.
     """
     CREATE TABLE IF NOT EXISTS arena_rankings.match_maps (
         match_id UInt64,
         map_index UInt8,
         map_id UInt32 DEFAULT 0,
-        map_name LowCardinality(String),
         player1_score Int16,
         player2_score Int16,
         played_at DateTime
@@ -151,6 +174,21 @@ DDL_STATEMENTS = [
     ORDER BY map_id
     """,
 
+    # player_aliases — Historical name spellings per player.
+    # Preserves the match-time spelling history that used to live in
+    # matches.player1_name/player2_name. Populated by the parser: one row per
+    # distinct spelling per player, with a usage count. The canonical (most
+    # used) name is the one in players.name; the rest are aliases shown dimmed.
+    """
+    CREATE TABLE IF NOT EXISTS arena_rankings.player_aliases (
+        player_id UInt64,
+        name String,
+        count UInt32 DEFAULT 0
+    )
+    ENGINE = ReplacingMergeTree()
+    ORDER BY (player_id, name)
+    """,
+
     # discovery_state — Track discovery progress for resume support
     # key: e.g. 'last_known_page', 'forward_scan_complete'
     """
@@ -168,7 +206,7 @@ DDL_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS arena_rankings.rating_history (
         player_id UInt64,
-        game_name LowCardinality(String) DEFAULT '',
+        game_id UInt32 DEFAULT 0,
         rating_system LowCardinality(String) DEFAULT 'elo',
         match_id UInt64,
         played_at DateTime,
@@ -180,18 +218,19 @@ DDL_STATEMENTS = [
         matches_played UInt32 DEFAULT 0
     )
     ENGINE = MergeTree()
-    ORDER BY (player_id, game_name, rating_system, played_at, match_id)
+    ORDER BY (player_id, game_id, rating_system, played_at, match_id)
     """,
 
     # player_ratings — Computed ratings per player per game per rating system
     # rating_system: 'elo' or 'glicko2'
-    # game_name: 'Quake Champions', 'Quake Live', etc. (empty = combined)
+    # game_id: PlusForward category ID (0 = combined 'All Games' row).
+    # Resolve names via the games table.
     # player_name was removed: it duplicated players.name (source of truth).
     # Resolve names via the players table / matches instead.
     """
     CREATE TABLE IF NOT EXISTS arena_rankings.player_ratings (
         player_id UInt64,
-        game_name LowCardinality(String) DEFAULT '',
+        game_id UInt32 DEFAULT 0,
         rating_system LowCardinality(String) DEFAULT 'elo',
         rating Float64 DEFAULT 1500.0,
         rd Float64 DEFAULT 350.0,  -- Glicko-2 rating deviation
@@ -204,6 +243,6 @@ DDL_STATEMENTS = [
         first_match_date DateTime DEFAULT toDateTime(0)
     )
     ENGINE = ReplacingMergeTree()
-    ORDER BY (player_id, game_name, rating_system)
+    ORDER BY (player_id, game_id, rating_system)
     """,
 ]

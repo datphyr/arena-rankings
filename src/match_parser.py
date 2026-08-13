@@ -40,6 +40,8 @@ class MatchDetail:
     player2_id: int
     player1_name: str
     player2_name: str
+    player1_slug: str
+    player2_slug: str
     player1_country: str
     player2_country: str
     player1_score: int
@@ -47,6 +49,7 @@ class MatchDetail:
     winner_id: int
     game_name: str
     game_category_id: int
+    game_slug: str
     match_format: str
     tournament_id: int
     tournament_name: str
@@ -115,6 +118,9 @@ class MatchDetailParser:
         if not info.get("category_id", 0):
             info["category_id"] = self._parse_category_from_links(content)
 
+        # Game slug from player link URLs (e.g. 'Quake-Champions')
+        game_slug = self._parse_game_slug(content)
+
         # Parse maps (m_detailed is outside the <div class="match"> area)
         maps = self._parse_maps(html)
 
@@ -133,6 +139,8 @@ class MatchDetailParser:
             player2_id=p2["id"],
             player1_name=p1["name"],
             player2_name=p2["name"],
+            player1_slug=p1.get("slug", ""),
+            player2_slug=p2.get("slug", ""),
             player1_country=p1["country"],
             player2_country=p2["country"],
             player1_score=scores[0],
@@ -140,6 +148,7 @@ class MatchDetailParser:
             winner_id=winner_id,
             game_name=info.get("game", ""),
             game_category_id=info.get("category_id", 0),
+            game_slug=game_slug,
             match_format=info.get("format", ""),
             tournament_id=info.get("tournament_id", 0),
             tournament_name=info.get("tournament", ""),
@@ -149,9 +158,13 @@ class MatchDetailParser:
         )
 
     def _parse_players(self, content: str) -> list[dict]:
-        """Parse player information from match content."""
+        """Parse player information from match content.
+
+        Each player dict includes: id, name, slug (URL slug), country.
+        """
         players = []
 
+        # /player/{id}/{slug}/{category_id}/{game-slug}/
         player_pattern = re.compile(
             r'<a href="/player/(\d+)/([^/]+)/\d+/[^/]+/">\s*([^<]+)</a>',
             re.IGNORECASE,
@@ -159,10 +172,12 @@ class MatchDetailParser:
 
         for m in player_pattern.finditer(content):
             player_id = int(m.group(1))
+            slug = m.group(2)
             display_name = m.group(3).strip()
             players.append({
                 "id": player_id,
                 "name": html_module.unescape(display_name),
+                "slug": slug,
                 "country": "",
             })
 
@@ -312,6 +327,19 @@ class MatchDetailParser:
                 return cat
         return 0
 
+    def _parse_game_slug(self, content: str) -> str:
+        """Extract the game slug from player link URLs.
+
+        Player URLs look like /player/{id}/{name}/{category_id}/{game-slug}/.
+        The game-slug segment (e.g. 'Quake-Champions') is the canonical slug
+        for the game. Returns '' if not found.
+        """
+        for m in re.finditer(r'/player/\d+/[^/]+/\d+/([^/]+)/', content):
+            slug = m.group(1).strip()
+            if slug:
+                return slug
+        return ""
+
     @staticmethod
     def _parse_detail_datetime(date_str: str, time_str: str) -> datetime:
         """Parse date like '1st August 2026' + '20:30 UTC'."""
@@ -333,9 +361,16 @@ def store_parsed_match(db: Database, detail: MatchDetail, resolver: TournamentRe
         resolver: Optional TournamentResolver instance. If provided, resolves
             tournament tier from PlusForward. If None, tier stays empty.
     """
-    # Upsert players
-    db.upsert_player(detail.player1_id, detail.player1_name, detail.player1_country)
-    db.upsert_player(detail.player2_id, detail.player2_name, detail.player2_country)
+    # Upsert players (with slug)
+    db.upsert_player(detail.player1_id, detail.player1_name, detail.player1_country, detail.player1_slug)
+    db.upsert_player(detail.player2_id, detail.player2_name, detail.player2_country, detail.player2_slug)
+
+    # Record historical name spellings (aliases) for each player
+    db.record_aliases(detail.player1_id, [detail.player1_name])
+    db.record_aliases(detail.player2_id, [detail.player2_name])
+
+    # Upsert game (game_id = PlusForward category ID, from pfcat icon)
+    db.upsert_game(detail.game_category_id, detail.game_name, detail.game_slug)
 
     # Upsert tournament (if present)
     if detail.tournament_id > 0:

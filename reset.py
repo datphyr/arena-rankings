@@ -57,7 +57,7 @@ from config import (
     CLICKHOUSE_PORT,
     CLICKHOUSE_USER,
 )
-from src.db_schema import DDL_STATEMENTS
+from src.db_schema import CREATE_DATABASE, DDL_STATEMENTS, DROP_DATABASE
 
 # Tables by category
 RANKING_TABLES = ["player_ratings", "rating_history"]
@@ -161,39 +161,44 @@ def reset_parsed(client: Client, db_name: str, dry: bool) -> None:
 
 
 def reset_all(client: Client, db_name: str, dry: bool, do_restore: bool) -> None:
-    """Full reset: drop database, recreate tables, optionally restore downloaded data."""
+    """Full reset: drop database, recreate tables, optionally restore downloaded data.
+
+    Downloaded tables (match_registry, tournaments, discovery_state) are preserved
+    via backup.py (Parquet+zstd single archive) so the 5GB+ match_registry raw HTML
+    is backed up durably and restored OOM-free. backup.py is the single source of
+    truth for backup/restore.
+    """
+    import backup as backup_mod
+
     # Tables to preserve (downloaded data)
     export_tables = DOWNLOADED_TABLES
-
-    exported: dict[str, tuple[list[str], list[tuple]]] = {}
+    archive_path = None
 
     if do_restore:
         dbs = client.execute("SHOW DATABASES")
         db_exists = any(r[0] == db_name for r in dbs)
         if db_exists:
-            target = connect(db_name)
-            for table in export_tables:
-                try:
-                    cols = target.execute(f"DESCRIBE TABLE {table}")
-                    col_names = [c[0] for c in cols]
-                    rows = target.execute(f"SELECT * FROM {table} FINAL")
-                    exported[table] = (col_names, rows)
-                    print(f"  Exported {len(rows):>6} rows from {table}")
-                except Exception as e:
-                    print(f"  SKIP {table}: {e}")
-            target.disconnect()
+            if dry:
+                target = connect(db_name)
+                for table in export_tables:
+                    n = table_count(target, table, db_name)
+                    print(f"  Would export {n:>6} rows from {table}")
+                target.disconnect()
+            else:
+                # Durable backup of the downloaded tables via backup.py.
+                archive_path = backup_mod.BACKUP_ROOT / f"{db_name}_reset_{backup_mod._ts()}.tar.gz"
+                print(f"\n→ Backing up downloaded tables to {archive_path} ...")
+                backup_mod.do_backup(export_tables, archive_path)
         else:
             print(f"  Database '{db_name}' doesn't exist yet — nothing to export")
 
     if dry:
         print(f"\n[DRY-RUN] Would DROP DATABASE {db_name} and recreate all tables")
-        for table, (cols, rows) in exported.items():
-            print(f"[DRY-RUN] Would reinsert {len(rows)} rows into {table}")
         return
 
     print(f"\n→ Dropping database '{db_name}'...")
-    client.execute(f"DROP DATABASE IF EXISTS {db_name}")
-    client.execute(f"CREATE DATABASE {db_name}")
+    client.execute(DROP_DATABASE.replace("arena_rankings", db_name))
+    client.execute(CREATE_DATABASE.replace("arena_rankings", db_name))
     print("✓ Database recreated")
 
     target = connect(db_name)
@@ -211,18 +216,9 @@ def reset_all(client: Client, db_name: str, dry: bool, do_restore: bool) -> None
                 break
     print(f"✓ {len(DDL_STATEMENTS)} tables created")
 
-    if exported:
+    if archive_path:
         print("\n→ Restoring downloaded data...")
-        for table, (cols, rows) in exported.items():
-            if not rows:
-                print(f"  SKIP {table} (empty)")
-                continue
-            col_list = ", ".join(cols)
-            target.execute(
-                f"INSERT INTO {table} ({col_list}) VALUES",
-                rows,
-            )
-            print(f"  ✓ {len(rows):>6} rows → {table}")
+        backup_mod.do_restore(export_tables, archive_path)
 
     print("\n→ Final state:")
     tables = target.execute("SHOW TABLES")
