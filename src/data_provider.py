@@ -3063,6 +3063,20 @@ class DataProvider:
         tournaments_per_game = {name: tcnt for name, _, tcnt, _ in per_game}
         players_per_game = {name: pcount for name, _, _, pcount in per_game}
 
+        # Distinct maps per game (match_maps -> matches -> games).
+        maps_per_game = {}
+        map_rows = self.db.client.execute(
+            """
+            SELECT g.name, count(DISTINCT mm.map_id)
+            FROM match_maps mm FINAL
+            LEFT JOIN matches m ON m.match_id = mm.match_id
+            LEFT JOIN games g FINAL ON g.game_id = m.game_id
+            WHERE mm.map_id != 0
+            GROUP BY g.name
+            """
+        )
+        maps_per_game = {name: cnt for name, cnt in map_rows}
+
         # Combined: active players (last 30 days) + countries in one query.
         sc = self.db.client.execute(
             """
@@ -3093,6 +3107,7 @@ class DataProvider:
             "matches_per_game": matches_per_game,
             "tournaments_per_game": tournaments_per_game,
             "players_per_game": players_per_game,
+            "maps_per_game": maps_per_game,
             "active_players": active_players,
             "avg_matches": avg_matches,
             "tournaments": tournaments,

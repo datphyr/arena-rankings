@@ -70,7 +70,7 @@
         <tr>
           <td class="center col-flex">
             <a class="map-link map-thumb-wrap" href="/matches?{{ qs(tournament=match.tournament) }}">{{ mp.name|mapname }}
-              {% if mp.image %}<img class="map-thumb-preview" src="https://www.plusforward.net{{ mp.image }}" alt="{{ mp.name|mapname }}" loading="lazy">{% else %}<img class="map-thumb-preview" src="/static/map-unknown.svg" alt="{{ mp.name|mapname }}" loading="lazy">{% endif %}
+              {% if mp.image %}<img class="map-thumb-preview" src="https://www.plusforward.net{{ mp.image }}" alt="{{ mp.name|mapname }}" loading="lazy" onerror="this.onerror=null;this.src='/static/map-unknown.svg';">{% else %}<img class="map-thumb-preview" src="/static/map-unknown.svg" alt="{{ mp.name|mapname }}" loading="lazy">{% endif %}
             </a>
           </td>
           <td class="center col-score"><span class="{{ 'win' if mp.winner == mp.player1 else 'loss' }}">{{ mp.score1 }}</span></td>

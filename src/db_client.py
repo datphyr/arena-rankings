@@ -231,24 +231,24 @@ class Database:
 
     # --- Players ---
 
-    def upsert_player(self, player_id: int, name: str, country: str = "", slug: str = ""):
+    def upsert_player(self, player_id: int, name: str, country: str = ""):
         """Insert or update a player record."""
         self.client.execute(
             "INSERT INTO players "
-            "(player_id, name, slug, country) VALUES",
-            [(player_id, name, slug, country)],
+            "(player_id, name, country) VALUES",
+            [(player_id, name, country)],
         )
 
     # --- Games ---
 
-    def upsert_game(self, game_id: int, name: str, slug: str = ""):
+    def upsert_game(self, game_id: int, name: str):
         """Insert or update a game record (game_id = PlusForward category ID)."""
         if game_id <= 0:
             return
         self.client.execute(
             "INSERT INTO games "
-            "(game_id, name, slug) VALUES",
-            [(game_id, name, slug)],
+            "(game_id, name) VALUES",
+            [(game_id, name)],
         )
 
     # --- Player aliases ---
@@ -256,17 +256,22 @@ class Database:
     def record_aliases(self, player_id: int, names: list[str]):
         """Record historical name spellings for a player (one row per spelling).
 
-        Each distinct spelling gets a row; ReplacingMergeTree dedups by
-        (player_id, name) so re-parsing the same spelling just bumps the count.
+        Each call increments the count for each distinct spelling, so the count
+        reflects how many matches used that spelling. ReplacingMergeTree dedups
+        by (player_id, name); we insert the accumulated count (existing + 1)
+        so re-parsing the same spelling bumps the count instead of resetting it.
         """
         if not names:
             return
-        data = [(player_id, n, 1) for n in names if n]
-        if data:
+        for n in names:
+            if not n:
+                continue
+            # Increment the count for this spelling (existing count + 1).
             self.client.execute(
-                "INSERT INTO player_aliases "
-                "(player_id, name, count) VALUES",
-                data,
+                "INSERT INTO player_aliases (player_id, name, count) "
+                "SELECT %(pid)s, %(name)s, ifNull(max(count), 0) + 1 "
+                "FROM player_aliases FINAL WHERE player_id = %(pid)s AND name = %(name)s",
+                {"pid": player_id, "name": n},
             )
 
     # --- Tournaments ---
@@ -285,7 +290,6 @@ class Database:
         schedule_end=None,
         maplist: list = None,
         rankings: str = "[]",
-        slug: str = "",
     ):
         """Insert or update a tournament record, including parsed metadata.
 
@@ -298,11 +302,11 @@ class Database:
         schedule_end = _coerce_datetime(schedule_end)
         self.client.execute(
             "INSERT INTO tournaments "
-            "(tournament_id, name, slug, tier, raw_html, game, prize_money, "
+            "(tournament_id, name, tier, raw_html, game, prize_money, "
             " tourney_format, match_format, schedule_start, schedule_end, "
             " maplist, rankings) VALUES",
             [(
-                tournament_id, name, slug, tier, raw_html, game, prize_money,
+                tournament_id, name, tier, raw_html, game, prize_money,
                 tourney_format, match_format, schedule_start, schedule_end,
                 maplist or [], rankings,
             )],

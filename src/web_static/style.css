@@ -1166,6 +1166,8 @@ a.page-link:hover {
 
 .rank-pills { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
 .rank-pill {
+  display: inline-flex;
+  align-items: center;
   background: linear-gradient(135deg, var(--bg-card), var(--bg-hover));
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);

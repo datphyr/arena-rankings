@@ -2,19 +2,19 @@
 
 Tables:
   - match_registry: central index of discovered matches + raw HTML storage
-  - players: player profiles (ID, name, slug, country)
-  - games: game lookup table (game_id -> name, slug)
-  - tournaments: tournament metadata (ID, name, slug, tier)
+  - players: player profiles (ID, name, country)
+  - games: game lookup table (game_id -> name)
+  - tournaments: tournament metadata (ID, name, tier)
   - matches: parsed match details (player IDs, scores, game_id, tournament_id, date)
   - match_maps: per-map results for each match (map_id only)
-  - maps: map lookup table (map_id -> canonical name, slug, image, game)
+  - maps: map lookup table (map_id -> canonical name, image, game)
   - player_aliases: historical name spellings per player (for alias display)
   - player_ratings: computed ratings (Elo, Glicko-2) per player per game
 
 Normalization principle: IDs are the primary keys everywhere. Names live only
-in their canonical tables (players, games, tournaments, maps) as name + slug.
-Hot tables (matches, match_maps) reference entities by ID only. All IDs come
-from the parse step of the pipeline (PlusForward page data), never hand-crafted.
+in their canonical tables (players, games, tournaments, maps). Hot tables
+(matches, match_maps) reference entities by ID only. All IDs come from the
+parse step of the pipeline (PlusForward page data), never hand-crafted.
 """
 
 # Drop existing database and recreate
@@ -55,13 +55,11 @@ DDL_STATEMENTS = [
 
     # players — Player profiles extracted from match pages
     # player_id is the PlusForward player ID (from /player/<id>/... URLs)
-    # name is the display name; slug is the URL slug (from the player URL).
-    # country is the ISO code from the flag icon.
+    # name is the display name; country is the ISO code from the flag icon.
     """
     CREATE TABLE IF NOT EXISTS arena_rankings.players (
         player_id UInt64,
         name String,
-        slug String DEFAULT '',
         country LowCardinality(String) DEFAULT ''
     )
     ENGINE = ReplacingMergeTree()
@@ -70,13 +68,11 @@ DDL_STATEMENTS = [
 
     # games — Game lookup table. game_id is the PlusForward category ID
     # (from the pfcat-{id} icon). name is the display name (from the match
-    # Description div); slug is the game-slug segment of the player URL
-    # (e.g. 'Quake-Champions'). Populated by the parser via upsert_game.
+    # Description div). Populated by the parser via upsert_game.
     """
     CREATE TABLE IF NOT EXISTS arena_rankings.games (
         game_id UInt32,
-        name String DEFAULT '',
-        slug String DEFAULT ''
+        name String DEFAULT ''
     )
     ENGINE = ReplacingMergeTree()
     ORDER BY game_id
@@ -89,12 +85,10 @@ DDL_STATEMENTS = [
     # from the same page's .tour_info / .tour_rankings blocks. rankings is a JSON
     # array: [{"position": "1st", "player_id": 123, "player_name": "...", "prize": "60 USD"}]
     # tournament_id is the PlusForward post ID of the tournament page
-    # slug is the URL slug of the tournament post (cosmetic, like players).
     """
     CREATE TABLE IF NOT EXISTS arena_rankings.tournaments (
         tournament_id UInt64,
         name String,
-        slug String DEFAULT '',
         tier LowCardinality(String) DEFAULT '',
         raw_html String DEFAULT '',
         game LowCardinality(String) DEFAULT '',
@@ -158,15 +152,13 @@ DDL_STATEMENTS = [
 
     # maps — Map lookup table. map_id is the PlusForward map ID (primary key),
     # extracted from the map image URL /files/images/maps/{map_id}_{slug}.jpg.
-    # name is the canonical display name; slug is the URL slug (cosmetic, like
-    # players). image is the PlusForward image path ('' if unknown). game is the
-    # single game this map is played in (from match_maps, with tournament data
-    # as fallback for maps never played).
+    # name is the canonical display name. image is the PlusForward image path
+    # ('' if unknown). game is the single game this map is played in (from
+    # match_maps, with tournament data as fallback for maps never played).
     """
     CREATE TABLE IF NOT EXISTS arena_rankings.maps (
         map_id UInt32,
         name String DEFAULT '',
-        slug String DEFAULT '',
         image String DEFAULT '',
         game String DEFAULT ''
     )

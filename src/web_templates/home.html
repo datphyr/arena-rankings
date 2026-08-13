@@ -81,15 +81,16 @@
 <div class="card">
   <div class="card-title"><span class="dot"></span>Games</div>
   <div class="table-wrap">
-    <table class="sortable games-table auto-cols" data-default-sort="1" data-default-dir="desc">
-      <thead><tr><th class="col-flex">Game</th><th class="num col-m">Matches</th><th class="num col-m">Players</th><th class="num col-m">Tournaments</th></tr></thead>
+    <table class="sortable games-table auto-cols" data-default-sort="4" data-default-dir="desc">
+      <thead><tr><th class="col-flex">Game</th><th class="num col-m">Maps</th><th class="num col-m">Tournaments</th><th class="num col-m">Players</th><th class="num col-m">Matches</th></tr></thead>
       <tbody>
         {% for g in stats.games %}
         <tr>
           <td class="col-flex"><a class="game-link" href="/leaderboard?game={{ g }}">{{ g|game_icon }}{{ g }}</a></td>
-          <td class="num col-m">{{ "{:,}".format(stats.matches_per_game.get(g, 0)) }}</td>
-          <td class="num col-m">{{ "{:,}".format(stats.players_per_game.get(g, 0)) }}</td>
-          <td class="num col-m">{{ "{:,}".format(stats.tournaments_per_game.get(g, 0)) }}</td>
+          <td class="num col-m">{% if stats.maps_per_game.get(g, 0) %}{{ "{:,}".format(stats.maps_per_game.get(g, 0)) }}{% endif %}</td>
+          <td class="num col-m">{% if stats.tournaments_per_game.get(g, 0) %}{{ "{:,}".format(stats.tournaments_per_game.get(g, 0)) }}{% endif %}</td>
+          <td class="num col-m">{% if stats.players_per_game.get(g, 0) %}{{ "{:,}".format(stats.players_per_game.get(g, 0)) }}{% endif %}</td>
+          <td class="num col-m">{% if stats.matches_per_game.get(g, 0) %}{{ "{:,}".format(stats.matches_per_game.get(g, 0)) }}{% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>

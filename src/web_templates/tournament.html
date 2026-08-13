@@ -65,8 +65,8 @@
       {% for mp in maplist %}
       {% set img = map_images.get(mp, '') %}{% set img_src = 'https://www.plusforward.net' + img if img else '/static/map-unknown.svg' %}
       <div class="map-thumb-wrap" title="{{ mp }}" style="text-align:center;flex:1 1 0;min-width:0;align-self:stretch;">
-        <img class="map-plaque-img" src="{{ img_src }}" alt="{{ mp|mapname }}" loading="lazy">
-        <img class="map-plaque-preview" src="{{ img_src }}" alt="{{ mp|mapname }}" loading="lazy">
+        <img class="map-plaque-img" src="{{ img_src }}" alt="{{ mp|mapname }}" loading="lazy" onerror="this.onerror=null;this.src='/static/map-unknown.svg';">
+        <img class="map-plaque-preview" src="{{ img_src }}" alt="{{ mp|mapname }}" loading="lazy" onerror="this.onerror=null;this.src='/static/map-unknown.svg';">
         <div style="font-family:var(--mono);font-size:0.85rem;padding-top:0.85rem;word-wrap:break-word;overflow-wrap:anywhere;line-height:1.2;">{{ mp|mapname }}</div>
       </div>
       {% endfor %}
