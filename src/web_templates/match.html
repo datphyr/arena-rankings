@@ -25,15 +25,15 @@
     <div class="h2h-player">
       <div class="name"><span class="player-name">{% if match.player1_country %}<span class="flag" title="{{ match.player1_country|upper }}">{{ match.player1_country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ match.player1_id }}/{{ slug(match.player1) }}">{{ match.player1 }}</a></span></div>
       {% if p1_game.get('elo') %}<div class="rating">Rating {{ "%.0f"|format(p1_game['elo']) }}{% if p1d.get('elo') is not none %} <span class="{{ 'rating-pos' if p1d['elo'] > 0 else 'rating-neg' if p1d['elo'] < 0 }}">({{ '%+.1f'|format(p1d['elo']) }})</span>{% endif %}</div>{% endif %}
-      <div class="wins {{ 'win' if match.winner == match.player1 else 'loss' }}">{{ match.score1 }}</div>
-      <div style="color:var(--text-faint);font-size:0.8rem;">{{ 'winner' if match.winner == match.player1 else 'loser' }}</div>
+      <div class="wins {{ 'win' if match.winner == match.player1 else 'loss' if match.winner is not none else 'draw' }}">{{ match.score1 }}</div>
+      <div style="color:var(--text-faint);font-size:0.8rem;">{{ 'winner' if match.winner == match.player1 else 'loser' if match.winner is not none else 'draw' }}</div>
     </div>
     <div class="h2h-vs"><a class="vs-link" href="/h2h/{{ match_slug(match.player1, match.player2) }}?p1_id={{ match.player1_id }}&p2_id={{ match.player2_id }}" title="Head-to-head">VS</a></div>
     <div class="h2h-player">
       <div class="name"><span class="player-name">{% if match.player2_country %}<span class="flag" title="{{ match.player2_country|upper }}">{{ match.player2_country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ match.player2_id }}/{{ slug(match.player2) }}">{{ match.player2 }}</a></span></div>
       {% if p2_game.get('elo') %}<div class="rating">Rating {{ "%.0f"|format(p2_game['elo']) }}{% if p2d.get('elo') is not none %} <span class="{{ 'rating-pos' if p2d['elo'] > 0 else 'rating-neg' if p2d['elo'] < 0 }}">({{ '%+.1f'|format(p2d['elo']) }})</span>{% endif %}</div>{% endif %}
-      <div class="wins {{ 'win' if match.winner == match.player2 else 'loss' }}">{{ match.score2 }}</div>
-      <div style="color:var(--text-faint);font-size:0.8rem;">{{ 'winner' if match.winner == match.player2 else 'loser' }}</div>
+      <div class="wins {{ 'win' if match.winner == match.player2 else 'loss' if match.winner is not none else 'draw' }}">{{ match.score2 }}</div>
+      <div style="color:var(--text-faint);font-size:0.8rem;">{{ 'winner' if match.winner == match.player2 else 'loser' if match.winner is not none else 'draw' }}</div>
     </div>
   </div>
 </div>

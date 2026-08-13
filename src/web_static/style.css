@@ -973,6 +973,7 @@ a.tier-link:hover .tag { filter: brightness(1.2); }
 
 .win { color: var(--green); font-weight: 600; }
 .loss { color: var(--red); font-weight: 600; }
+.draw { color: var(--text-faint); font-weight: 600; }
 .score-link { text-decoration: none; border-bottom: 1px dashed var(--border); color: var(--text-dim); }
 .score-link:hover { border-bottom-color: var(--copper); }
 
@@ -1029,21 +1030,6 @@ a.tier-link:hover .tag { filter: brightness(1.2); }
   color: #fff;
 }
 .filters button:hover { filter: brightness(1.15); box-shadow: 0 4px 16px var(--glow-orange); }
-.filters button.btn-clear {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  font-weight: 500;
-  padding: 4px 12px;
-  cursor: pointer;
-  transition: border-color 0.15s ease, color 0.15s ease;
-}
-.filters button.btn-clear:hover {
-  color: var(--text);
-  border-color: var(--accent-2);
-  filter: none;
-  box-shadow: none;
-}
 .filters label { color: var(--text-dim); font-size: 0.85rem; font-weight: 500; }
 
 /* ─── Autocomplete dropdown ─────────────────────────── */
@@ -1334,6 +1320,7 @@ a.page-link:hover {
 .h2h-player .wins { font-family: var(--mono); font-size: 2.4rem; font-weight: 800; background: linear-gradient(120deg, var(--accent), var(--gold)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
 .h2h-player .wins.win { background: none; -webkit-text-fill-color: var(--green); color: var(--green); }
 .h2h-player .wins.loss { background: none; -webkit-text-fill-color: var(--red); color: var(--red); }
+.h2h-player .wins.draw { background: none; -webkit-text-fill-color: var(--text-faint); color: var(--text-faint); }
 .h2h-vs { color: var(--text-faint); font-weight: 800; font-size: 4.5rem; line-height: 1; letter-spacing: -0.05em; }
 .h2h-vs .vs-link { color: inherit; text-decoration: none; transition: color 0.15s ease; }
 .h2h-vs .vs-link:hover { color: var(--copper); text-decoration: underline; }

@@ -119,8 +119,14 @@ class MatchDetailParser:
         # Parse maps (m_detailed is outside the <div class="match"> area)
         maps = self._parse_maps(html)
 
-        # Determine winner
-        winner_id = p1["id"] if scores[0] > scores[1] else p2["id"]
+        # Determine winner. Only a strictly higher score is a win; equal
+        # scores (0-0, 1-1, ...) are a draw with no winner (winner_id = 0).
+        if scores[0] > scores[1]:
+            winner_id = p1["id"]
+        elif scores[1] > scores[0]:
+            winner_id = p2["id"]
+        else:
+            winner_id = 0
 
         return MatchDetail(
             match_id=match_id,

@@ -1193,15 +1193,26 @@ class DataProvider:
             at_map: dict[int, dict[int, float]] = {}
             hist: dict[int, list[tuple]] = {}
             for pid, ts, rating, mid in prev_rows:
-                hist.setdefault(pid, []).append((ts, rating))
+                hist.setdefault(pid, []).append((ts, mid, rating))
                 if mid in match_info:
                     at_map.setdefault(mid, {})[pid] = rating
             for mid, (p1, p2, played_at) in match_info.items():
                 prev_map: dict[int, float] = {}
                 for pid in (p1, p2):
                     h = hist.get(pid, [])
-                    idx = bisect.bisect_left(h, (played_at,))
-                    prev_map[pid] = h[idx - 1][1] if idx > 0 else None
+                    cur = at_map.get(mid, {}).get(pid)
+                    if cur is None:
+                        prev_map[pid] = None
+                        continue
+                    # Find this match's own snapshot in the player's ordered
+                    # history (unique by match_id) and take the entry
+                    # immediately before it as the previous snapshot. Using the
+                    # match_id avoids the timestamp-tie bug where several
+                    # matches share the same played_at and bisect_left on the
+                    # timestamp alone picks the wrong (or, at index 0, wraps to
+                    # the last) snapshot.
+                    idx = bisect.bisect_left(h, (played_at, mid))
+                    prev_map[pid] = h[idx - 1][2] if idx > 0 else None
                 for pid in (p1, p2):
                     cur = at_map.get(mid, {}).get(pid)
                     prev = prev_map.get(pid)
@@ -3412,7 +3423,7 @@ class DataProvider:
         hist: dict[str, list[tuple]] = {}
         for mid, ts, rating, game in hrows:
             at_map[mid] = rating
-            hist.setdefault(game, []).append((ts, rating))
+            hist.setdefault(game, []).append((ts, mid, rating))
         # Aggregate per opponent.
         agg: dict[int, dict] = {}
         for mid, opp_id, is_win, played_at, game in mrows:
@@ -3430,8 +3441,14 @@ class DataProvider:
             cur = at_map.get(mid)
             if cur is not None:
                 h = hist.get(game, [])
-                idx = bisect.bisect_left(h, (played_at,))
-                prev = h[idx - 1][1] if idx > 0 else None
+                # Find this match's own snapshot (unique by match_id) and take
+                # the entry immediately before it as the previous snapshot.
+                # Using match_id avoids the timestamp-tie bug where several
+                # matches share the same played_at and bisect_left on the
+                # timestamp alone picks the wrong (or, at index 0, wraps to
+                # the last) snapshot.
+                idx = bisect.bisect_left(h, (played_at, mid))
+                prev = h[idx - 1][2] if idx > 0 else None
                 delta = cur - (prev if prev is not None else 1500.0)
                 a["rating"] += delta
         opp_ids = list(agg.keys())
