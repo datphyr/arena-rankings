@@ -53,7 +53,6 @@ class MatchDetail:
     stage_name: str
     played_at: datetime
     maps: list[MapResult] = field(default_factory=list)
-    status: str = ""
 
 
 class MatchDetailParser:
@@ -147,7 +146,6 @@ class MatchDetailParser:
             stage_name=info.get("stage", ""),
             played_at=info.get("date", datetime.now()),
             maps=maps,
-            status=info.get("status", ""),
         )
 
     def _parse_players(self, content: str) -> list[dict]:
@@ -237,12 +235,6 @@ class MatchDetailParser:
             stage = html_module.unescape(s_match.group(1).strip())
             if stage:
                 info["stage"] = stage
-
-        # Status
-        status_pattern = re.compile(r'<div class="status">([^<]+)</div>')
-        status = status_pattern.search(content)
-        if status:
-            info["status"] = html_module.unescape(status.group(1).strip())
 
         return info
 

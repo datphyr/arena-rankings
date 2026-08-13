@@ -88,6 +88,8 @@ DDL_STATEMENTS = [
     # game_name: e.g. "Quake Champions", "Quake Live"
     # match_format: e.g. "Best of 5", "Time Limit Duel"
     # played_at: when the match was played (parsed from match page)
+    # Note: status column was removed — it was dead (0 rows ever differed from
+    # 'Match finished'). Parsing state lives in match_registry.status instead.
     """
     CREATE TABLE IF NOT EXISTS arena_rankings.matches (
         match_id UInt64,
@@ -106,8 +108,7 @@ DDL_STATEMENTS = [
         tournament_id UInt64 DEFAULT 0,
         tournament_name String DEFAULT '',
         stage_name String DEFAULT '',
-        played_at DateTime,
-        status LowCardinality(String) DEFAULT ''
+        played_at DateTime
     )
     ENGINE = ReplacingMergeTree()
     ORDER BY (game_name, played_at, match_id)
@@ -116,14 +117,14 @@ DDL_STATEMENTS = [
     # match_maps — Per-map results for each match
     # match_id + map_index uniquely identifies a map within a match
     # map_id is the PlusForward map ID (from the map image URL). 0 = unknown.
+    # player1_name/player2_name were removed: they duplicated matches (2 stale
+    # rows out of 25k proved write-inconsistency). Join to matches for names.
     """
     CREATE TABLE IF NOT EXISTS arena_rankings.match_maps (
         match_id UInt64,
         map_index UInt8,
         map_id UInt32 DEFAULT 0,
         map_name LowCardinality(String),
-        player1_name String,
-        player2_name String,
         player1_score Int16,
         player2_score Int16,
         played_at DateTime
@@ -185,11 +186,11 @@ DDL_STATEMENTS = [
     # player_ratings — Computed ratings per player per game per rating system
     # rating_system: 'elo' or 'glicko2'
     # game_name: 'Quake Champions', 'Quake Live', etc. (empty = combined)
-    # game_id: 0 = combined, >0 = specific game
+    # player_name was removed: it duplicated players.name (source of truth).
+    # Resolve names via the players table / matches instead.
     """
     CREATE TABLE IF NOT EXISTS arena_rankings.player_ratings (
         player_id UInt64,
-        player_name String,
         game_name LowCardinality(String) DEFAULT '',
         rating_system LowCardinality(String) DEFAULT 'elo',
         rating Float64 DEFAULT 1500.0,

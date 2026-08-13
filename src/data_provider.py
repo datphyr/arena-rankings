@@ -684,17 +684,17 @@ class DataProvider:
         """
         if name in self._player_id_cache:
             return self._player_id_cache[name]
-        # 1. Exact-case match in player_ratings.
+        # 1. Exact-case match in players (canonical name source).
         row = self.db.client.execute(
-            "SELECT player_id FROM player_ratings FINAL WHERE player_name = %(n)s LIMIT 1",
+            "SELECT player_id FROM players FINAL WHERE name = %(n)s LIMIT 1",
             {"n": name},
         )
         if row:
             self._player_id_cache[name] = row[0][0]
             return row[0][0]
-        # 2. Case-insensitive match in player_ratings.
+        # 2. Case-insensitive match in players.
         row = self.db.client.execute(
-            "SELECT player_id FROM player_ratings FINAL WHERE lowerUTF8(player_name) = lowerUTF8(%(n)s) LIMIT 1",
+            "SELECT player_id FROM players FINAL WHERE lowerUTF8(name) = lowerUTF8(%(n)s) LIMIT 1",
             {"n": name},
         )
         if row:
@@ -768,11 +768,13 @@ class DataProvider:
             # Collect distinct (player_id, name) pairs whose name matches the
             # substring — one row per distinct spelling, so aliases of the
             # same player are NOT collapsed into a single canonical entry.
+            # players is the canonical name source; matches catches aliases
+            # that only ever appear in match rows.
             rows = self.db.client.execute(
                 """
-                SELECT DISTINCT player_id, player_name
-                FROM player_ratings FINAL
-                WHERE lowerUTF8(player_name) LIKE lowerUTF8(%(q)s)
+                SELECT DISTINCT player_id, name
+                FROM players FINAL
+                WHERE lowerUTF8(name) LIKE lowerUTF8(%(q)s)
                 LIMIT %(lim)s
                 """,
                 {"q": like, "lim": limit},
@@ -781,7 +783,7 @@ class DataProvider:
             if len(entries) < limit:
                 # Also pull distinct spellings from matches (both sides) —
                 # catches aliases that only ever appear in match rows (e.g.
-                # 'davjs', 'lateral0lz') and are absent from player_ratings.
+                # 'davjs', 'lateral0lz') and are absent from players.
                 extra = self.db.client.execute(
                     """
                     SELECT DISTINCT pid, name FROM (
@@ -1315,7 +1317,7 @@ class DataProvider:
             # No FINAL: the All Games aggregate rows have zero duplicates for
             # both elo and glicko2, so FINAL is a no-op (and costs a sort).
             query = """
-                SELECT player_id, player_name, rating, rd, vol, wins, losses, matches_played,
+                SELECT player_id, rating, rd, vol, wins, losses, matches_played,
                        last_match_date, first_match_date
                 FROM player_ratings
                 WHERE rating_system = %(sys)s AND game_name = ''
@@ -1368,16 +1370,16 @@ class DataProvider:
             results = [
                 {
                     "player_id": r[0],
-                    "name": canon.get(r[0], r[1]),
+                    "name": canon.get(r[0], f"player_{r[0]}"),
                     "country": countries.get(r[0], ""),
-                    "rating": round(r[2], 1),
-                    "rd": round(r[3], 1) if r[3] else None,
-                    "vol": round(r[4], 4) if r[4] else None,
-                    "wins": r[5],
-                    "losses": r[6],
-                    "matches": r[7],
-                    "last_match_date": r[8],
-                    "first_match_date": r[9],
+                    "rating": round(r[1], 1),
+                    "rd": round(r[2], 1) if r[2] else None,
+                    "vol": round(r[3], 4) if r[3] else None,
+                    "wins": r[4],
+                    "losses": r[5],
+                    "matches": r[6],
+                    "last_match_date": r[7],
+                    "first_match_date": r[8],
                     "main_game": main_games.get(r[0], ""),
                     "peak": peaks.get((r[0], ""), (None, None))[0],
                     "peak_date": peaks.get((r[0], ""), (None, None))[1],
@@ -1393,7 +1395,7 @@ class DataProvider:
             # glicko2 rows have duplicates, so keep FINAL only for glicko2.
             final_clause = " FINAL" if system == "glicko2" else ""
             query = f"""
-                SELECT player_id, player_name, rating, rd, vol, wins, losses, matches_played,
+                SELECT player_id, rating, rd, vol, wins, losses, matches_played,
                        last_match_date, first_match_date
                 FROM player_ratings{final_clause}
                 WHERE rating_system = %(sys)s AND game_name = %(game)s
@@ -1413,16 +1415,16 @@ class DataProvider:
             results = [
                 {
                     "player_id": r[0],
-                    "name": canon.get(r[0], r[1]),
+                    "name": canon.get(r[0], f"player_{r[0]}"),
                     "country": countries.get(r[0], ""),
-                    "rating": round(r[2], 1),
-                    "rd": round(r[3], 1) if r[3] else None,
-                    "vol": round(r[4], 4) if r[4] else None,
-                    "wins": r[5],
-                    "losses": r[6],
-                    "matches": r[7],
-                    "last_match_date": r[8],
-                    "first_match_date": r[9],
+                    "rating": round(r[1], 1),
+                    "rd": round(r[2], 1) if r[2] else None,
+                    "vol": round(r[3], 4) if r[3] else None,
+                    "wins": r[4],
+                    "losses": r[5],
+                    "matches": r[6],
+                    "last_match_date": r[7],
+                    "first_match_date": r[8],
                     "main_game": "",
                     "peak": peaks.get((r[0], game), (None, None, None))[0],
                     "peak_date": peaks.get((r[0], game), (None, None, None))[1],
@@ -1531,7 +1533,7 @@ class DataProvider:
 
         # Step 2: Fetch current ratings from player_ratings for those player_ids
         rating_query = """
-            SELECT player_id, player_name, rating, rd, vol, wins, losses, matches_played,
+            SELECT player_id, rating, rd, vol, wins, losses, matches_played,
                    last_match_date, first_match_date
             FROM player_ratings FINAL
             WHERE rating_system = %(sys)s AND {game_filter_2} AND player_id IN %(ids)s
@@ -1567,14 +1569,14 @@ class DataProvider:
                     "player_id": r[0],
                     "name": canon_names.get(r[0], self._canonical_name(r[0])),
                     "country": countries.get(r[0], ""),
-                    "rating": round(r[2], 1),
-                    "rd": round(r[3], 1) if r[3] else None,
-                    "vol": round(r[4], 4) if r[4] else None,
-                    "wins": r[5],
-                    "losses": r[6],
-                    "matches": r[7],
-                    "last_match_date": r[8],
-                    "first_match_date": r[9],
+                    "rating": round(r[1], 1),
+                    "rd": round(r[2], 1) if r[2] else None,
+                    "vol": round(r[3], 4) if r[3] else None,
+                    "wins": r[4],
+                    "losses": r[5],
+                    "matches": r[6],
+                    "last_match_date": r[7],
+                    "first_match_date": r[8],
                     "main_game": main_games.get(r[0], ""),
                     "peak": pk,
                     "peak_date": pkd,
@@ -1719,15 +1721,16 @@ class DataProvider:
         peaks = {}
         countries = self._countries(player_ids)
         if player_ids:
-            nr_rows = self.db.client.execute(
-                "SELECT player_id, argMax(player_name, last_match_date) AS name, "
-                "min(first_match_date) AS first_date "
+            # Display names come from the canonical source (matches + players),
+            # not player_ratings (which no longer stores a name column).
+            names = self._canonical_names(player_ids)
+            first_rows = self.db.client.execute(
+                "SELECT player_id, min(first_match_date) AS first_date "
                 "FROM player_ratings FINAL WHERE player_id IN %(ids)s GROUP BY player_id",
                 {"ids": tuple(player_ids)},
             )
-            for r in nr_rows:
-                names[r[0]] = r[1]
-                first_dates[r[0]] = r[2]
+            for r in first_rows:
+                first_dates[r[0]] = r[1]
             # Peak as of the given date — only consider history up to that date.
             # For glicko2 the displayed peak is the conservative lower bound
             # (peak - rd_at_peak), matching the sort and home page plaque.
@@ -1875,7 +1878,7 @@ class DataProvider:
         canon = self._canonical_name(player_id)
         rows = self.db.client.execute(
             """
-            SELECT player_id, player_name, game_name, rating_system, rating, rd, vol,
+            SELECT player_id, game_name, rating_system, rating, rd, vol,
                    wins, losses, matches_played, last_match_id, last_match_date, first_match_date
             FROM player_ratings FINAL
             WHERE player_id = %(pid)s
@@ -1917,22 +1920,22 @@ class DataProvider:
                 "player_id": r[0],
                 "name": canon,
                 "country": self._country(r[0]),
-                "game": r[2] or "All Games",
-                "system": r[3],
-                "rating": round(r[4], 1),
-                "_raw_rating": r[4],
-                "rd": round(r[5], 1) if r[5] else None,
-                "_raw_rd": r[5],
-                "vol": round(r[6], 4) if r[6] else None,
-                "wins": r[7],
-                "losses": r[8],
-                "matches": r[9],
-                "last_match_id": r[10],
-                "last_match_date": r[11],
-                "first_match_date": r[12],
-                "peak": peaks.get((r[3], r[2]), (None, None, None))[0],
-                "peak_date": peaks.get((r[3], r[2]), (None, None, None))[1],
-                "rd_at_peak": peaks.get((r[3], r[2]), (None, None, None))[2],
+                "game": r[1] or "All Games",
+                "system": r[2],
+                "rating": round(r[3], 1),
+                "_raw_rating": r[3],
+                "rd": round(r[4], 1) if r[4] else None,
+                "_raw_rd": r[4],
+                "vol": round(r[5], 4) if r[5] else None,
+                "wins": r[6],
+                "losses": r[7],
+                "matches": r[8],
+                "last_match_id": r[9],
+                "last_match_date": r[10],
+                "first_match_date": r[11],
+                "peak": peaks.get((r[2], r[1]), (None, None, None))[0],
+                "peak_date": peaks.get((r[2], r[1]), (None, None, None))[1],
+                "rd_at_peak": peaks.get((r[2], r[1]), (None, None, None))[2],
             }
             for r in rows
         ]
@@ -2678,9 +2681,11 @@ class DataProvider:
         # Per-map breakdown (may be empty for matches without map data).
         # FINAL dedups ReplacingMergeTree rows (backfill re-inserts can leave
         # duplicate (played_at, match_id, map_index) rows until a merge).
+        # player names are no longer stored per-map; use the match-level
+        # p1/p2 (same two players across all maps of a match).
         map_rows = self.db.client.execute(
             """
-            SELECT map_index, map_name, player1_name, player2_name, player1_score, player2_score, map_id
+            SELECT map_index, map_name, player1_score, player2_score, map_id
             FROM match_maps FINAL
             WHERE match_id = %(mid)s
             ORDER BY map_index
@@ -2691,7 +2696,7 @@ class DataProvider:
         # unknown maps (map_id=0) fall back to the raw HTML data-image.
         self._load_map_images()
         images: dict[str, str] = {}
-        unknown_ids = [mr[6] for mr in map_rows if mr[6] == 0]
+        unknown_ids = [mr[4] for mr in map_rows if mr[4] == 0]
         if unknown_ids:
             reg = self.db.client.execute(
                 "SELECT raw_html FROM match_registry WHERE match_id = %(mid)s", {"mid": match_id}
@@ -2704,10 +2709,10 @@ class DataProvider:
 
         maps = []
         for mr in map_rows:
-            mp1 = mr[2]
-            mp2 = mr[3]
-            s1, s2 = mr[4], mr[5]
-            mid = mr[6]
+            mp1 = p1
+            mp2 = p2
+            s1, s2 = mr[2], mr[3]
+            mid = mr[4]
             # Map-level winner: higher frag score wins the map (draws -> None).
             mwin = mp1 if s1 > s2 else (mp2 if s2 > s1 else None)
             img = _MAP_IMAGE_CACHE.get(mid, "") if mid else images.get(mr[1], "")
@@ -3082,7 +3087,7 @@ class DataProvider:
         """Players with the most matches (all games, any system)."""
         rows = self.db.client.execute(
             """
-            SELECT player_id, player_name, matches_played, wins, losses
+            SELECT player_id, matches_played, wins, losses
             FROM player_ratings
             WHERE rating_system = 'elo' AND game_name = ''
             ORDER BY matches_played DESC
@@ -3095,11 +3100,11 @@ class DataProvider:
         return [
             {
                 "player_id": r[0],
-                "name": canon.get(r[0], r[1]),
+                "name": canon.get(r[0], f"player_{r[0]}"),
                 "country": countries.get(r[0], ""),
-                "matches": r[2],
-                "wins": r[3],
-                "losses": r[4],
+                "matches": r[1],
+                "wins": r[2],
+                "losses": r[3],
             }
             for r in rows
         ]

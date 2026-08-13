@@ -308,7 +308,7 @@ class Database:
             "(match_id, player1_id, player2_id, player1_name, player2_name, "
             "player1_country, player2_country, player1_score, player2_score, winner_id, "
             "game_name, game_category_id, match_format, tournament_id, tournament_name, "
-            "stage_name, played_at, status) VALUES",
+            "stage_name, played_at) VALUES",
             [(
                 detail.match_id,
                 detail.player1_id, detail.player2_id,
@@ -319,7 +319,7 @@ class Database:
                 detail.game_name, detail.game_category_id,
                 detail.match_format, detail.tournament_id,
                 detail.tournament_name, detail.stage_name,
-                detail.played_at, detail.status,
+                detail.played_at,
             )],
         )
         return True
@@ -339,7 +339,6 @@ class Database:
         data = [
             (
                 match_id, i, m.map_id, m.map_name,
-                m.player1_name, m.player2_name,
                 m.player1_score, m.player2_score,
                 played_at,
             )
@@ -347,7 +346,7 @@ class Database:
         ]
         self.client.execute(
             "INSERT INTO match_maps "
-            "(match_id, map_index, map_id, map_name, player1_name, player2_name, "
+            "(match_id, map_index, map_id, map_name, "
             "player1_score, player2_score, played_at) VALUES",
             data,
         )
@@ -357,7 +356,6 @@ class Database:
     def upsert_rating(
         self,
         player_id: int,
-        player_name: str,
         game_name: str,
         rating_system: str,
         rating: float,
@@ -377,10 +375,10 @@ class Database:
             first_match_date = datetime(1970, 1, 1)
         self.client.execute(
             "INSERT INTO player_ratings "
-            "(player_id, player_name, game_name, rating_system, rating, rd, vol, "
+            "(player_id, game_name, rating_system, rating, rd, vol, "
             "wins, losses, matches_played, last_match_id, last_match_date, first_match_date) VALUES",
             [(
-                player_id, player_name, game_name, rating_system,
+                player_id, game_name, rating_system,
                 rating, rd, vol, wins, losses, matches_played,
                 last_match_id, last_match_date, first_match_date,
             )],
@@ -391,14 +389,14 @@ class Database:
 
         Args:
             rows: List of tuples matching the player_ratings column order
-                  (player_id, player_name, game_name, rating_system, rating, rd, vol,
+                  (player_id, game_name, rating_system, rating, rd, vol,
                    wins, losses, matches_played, last_match_id, last_match_date, first_match_date)
         """
         if not rows:
             return
         self.client.execute(
             "INSERT INTO player_ratings "
-            "(player_id, player_name, game_name, rating_system, rating, rd, vol, "
+            "(player_id, game_name, rating_system, rating, rd, vol, "
             "wins, losses, matches_played, last_match_id, last_match_date, first_match_date) VALUES",
             rows,
         )

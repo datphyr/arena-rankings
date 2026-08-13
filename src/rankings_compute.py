@@ -787,7 +787,6 @@ def store_ratings(db: Database, ratings: dict, game_name: str, system: str):
     for pid, data in ratings.items():
         rows.append((
             pid,
-            data["name"],
             game_name,
             system,
             data["rating"],
