@@ -213,12 +213,7 @@ arena-rankings/
 │   ├── table.py            # ASCII/table formatting
 │   ├── web_templates/      # Jinja2 templates
 │   └── web_static/         # CSS, JS, chart library
-└── tests/                  # JS tests for the web UI
 ```
-
-## Tests
-
-`tests/` contains JS tests for the web UI (e.g. autocomplete, chart axes, tier sorting). Run them with a JS test runner of your choice against the static assets in `src/web_static/`.
 
 ## License
 
