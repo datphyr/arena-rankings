@@ -20,7 +20,11 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+# Make the repo root importable regardless of where this script lives.
+_ROOT = Path(__file__).resolve().parent
+while not (_ROOT / "src").is_dir() and _ROOT != _ROOT.parent:
+    _ROOT = _ROOT.parent
+sys.path.insert(0, str(_ROOT))
 
 from src.bracket_fetcher import backfill
 from src.db_client import Database
