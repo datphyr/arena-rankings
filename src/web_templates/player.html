@@ -51,7 +51,7 @@
 {% set _plaque_n = 3 + (1 if summary.best_game else 0) + (1 if summary.worst_game and summary.worst_game.game != summary.best_game.game else 0) %}
 <div class="charts-row" style="--plaque-n: {{ _plaque_n }};">
 {% if placements %}
-<div class="card charts-col charts-col-1">
+<div class="card charts-col charts-col-1{{ '' if (map_edges and map_edges.maps) else ' charts-col-full' }}">
   <div class="card-title"><span class="dot"></span>Tournaments</div>
   <div class="chart-box"><canvas id="placementsChart"></canvas></div>
 </div>

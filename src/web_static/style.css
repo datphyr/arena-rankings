@@ -503,6 +503,8 @@ body::before {
 .charts-row .card { margin-bottom: 0; }
 .charts-col-1 { grid-column: span 1; min-width: 0; }
 .charts-col-4 { grid-column: span calc(var(--plaque-n, 5) - 1); min-width: 0; }
+/* When Maps is hidden (no map data), Tournaments takes the full row. */
+.charts-col-full { grid-column: 1 / -1; }
 @media (max-width: 720px) {
   .charts-row { grid-template-columns: 1fr; }
   .charts-col-1, .charts-col-4 { grid-column: span 1; }
