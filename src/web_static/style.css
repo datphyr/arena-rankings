@@ -1412,3 +1412,204 @@ a.page-link:hover {
   .h2h-score { flex-direction: column; gap: 12px; }
   .h2h-breakdown { grid-template-columns: 1fr; }
 }
+
+/* ─── Tournament Bracket card ──────────────────────────── */
+.bracket-source {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.bracket-stage { margin-bottom: 14px; }
+.bracket-stage:last-child { margin-bottom: 0; }
+.bracket-stage-name {
+  font-weight: 700;
+  color: var(--copper);
+  margin-bottom: 6px;
+}
+.bracket-group { margin-bottom: 16px; }
+.bracket-group:last-child { margin-bottom: 0; }
+.bracket-group-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+/* Bracket tree layout.
+   Each round is a column. All columns in a group share the same height
+   (--bracket-max match slots). Each match is absolutely positioned at
+   --bracket-top (in match-slot units), so a match in a later round sits
+   centered between the two matches that feed it — the tree shape. This
+   handles byes/seeding automatically because positions use the actual
+   match count per round. Columns scale to fit the container width (no
+   horizontal scroll); the bracket takes as much vertical space as needed. */
+.bracket-columns {
+  --match-h: 46px;          /* height of one match slot (2 player rows + gap) */
+  --conn-w: 24px;           /* width of the connector gap between columns */
+  position: relative;
+  display: flex;
+  padding: 4px 0 10px;
+}
+.bracket-column {
+  flex: 1 1 0;
+  min-width: 0;
+  position: relative;
+  height: calc(var(--bracket-max, 1) * var(--match-h));
+}
+/* The connector column is the visible gap between round columns; it hosts
+   the per-junction vertical lines. */
+.bracket-connector {
+  flex: 0 0 var(--conn-w);
+  position: relative;
+  height: calc(var(--bracket-max, 1) * var(--match-h));
+}
+.bracket-round-name {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-faint);
+  text-align: center;
+  margin-bottom: 4px;
+  height: 16px;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bracket-match {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(var(--bracket-top, 0) * var(--match-h));
+  height: calc(var(--match-h) - 8px);
+  background: var(--bg-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  overflow: visible;   /* let the connector line extend out to the spine */
+}
+.bracket-slots {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+}
+.bracket-slot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 0.85rem;
+  height: 50%;
+  box-sizing: border-box;
+}
+.bracket-slot + .bracket-slot {
+  border-top: 1px solid var(--border-soft);
+}
+.bracket-pname {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.bracket-score {
+  font-family: var(--mono);
+  font-weight: 600;
+  color: var(--text-dim);
+  flex: 0 0 auto;
+}
+.bracket-winner {
+  background: rgba(16, 185, 129, 0.08);
+}
+.bracket-winner .bracket-pname { color: var(--green); font-weight: 600; }
+.bracket-winner .bracket-score { color: var(--green); }
+
+/* Connector between rounds: a vertical spine in the gap (spanning from the
+   first match's center to the last match's center) plus a horizontal line
+   from each match's right edge to the spine. The parent match in the next
+   round sits at the spine's center, so the two feeder lines converge on it —
+   showing which pair feeds which. */
+/* Per-junction connectors between rounds. Each junction connects a pair of
+   feeder matches (in the left round column) to one parent match (in the right
+   round column). The vertical line lives in the connector column (the gap);
+   the horizontal lines are drawn by the matches themselves (::after from the
+   feeder's right edge, ::before from the parent's left edge), each spanning
+   half the gap to meet the centered vertical line. */
+.bracket-junction {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.bj-v {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--j-top, 0) * var(--match-h));
+  height: calc(var(--j-h, 0) * var(--match-h));
+  width: 1px;
+  background: var(--border-soft);
+  transform: translateX(-50%);
+}
+/* Horizontal connectors live in the connector column (the gap), so they are
+   guaranteed continuous. Left half (from feeder to vertical line), right half
+   (vertical line to parent), and full-width (single-feeder junctions). */
+.bj-hl, .bj-hr, .bj-hfull {
+  position: absolute;
+  height: 1px;
+  background: var(--border-soft);
+}
+.bj-hl {
+  left: 0;
+  width: calc(50% + 1px);
+  top: calc(var(--j-y, 0) * var(--match-h));
+}
+.bj-hr {
+  right: 0;
+  width: calc(50% + 1px);
+  top: calc(var(--j-y, 0) * var(--match-h));
+}
+.bj-hfull {
+  left: 0;
+  right: 0;
+  top: calc(var(--j-y, 0) * var(--match-h));
+}
+
+/* Swiss / round-robin groups (all rounds have the same match count — no
+   elimination). Render as a plain grid: no tree connectors, matches stacked
+   from the top of each column. */
+.bracket-flat {
+  /* Swiss/round-robin groups have no connector columns, so use a flex gap
+     for horizontal spacing between the round columns. */
+  gap: 16px;
+}
+.bracket-flat .bracket-column {
+  height: auto;
+}
+.bracket-flat .bracket-connector,
+.bracket-flat .bracket-junction {
+  display: none;
+}
+.bracket-flat .bracket-match {
+  position: relative;
+  /* Reset the tree-layout top offset (inherited from the absolute version) so
+     matches flow naturally in the flat grid instead of being pushed down by
+     --bracket-top. */
+  top: auto;
+  margin-bottom: 16px;
+  height: calc(var(--match-h) - 8px);
+}
+.bracket-flat .bracket-slots {
+  /* Keep the slots filling the match box (absolute inset:0 from base) so the
+     slot heights (50% each) resolve against the fixed match height. */
+  overflow: hidden;
+  border-radius: inherit;
+}
+.bracket-flat .bracket-slot {
+  height: 50%;
+  padding: 4px 8px;
+}

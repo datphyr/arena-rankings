@@ -62,8 +62,8 @@
   <div class="highlight-box" style="padding:16px;padding-bottom:24px;overflow:visible;grid-column:1 / -1;">
     <div class="card-title"><span class="dot"></span>Maps</div>
     <div class="value" style="display:flex;flex-direction:row;flex-wrap:wrap;gap:12px;justify-content:center;align-items:flex-start;font-size:0.85rem;font-weight:400;flex:0 0 auto;">
-      {% for mp in maplist %}
-      {% set img = map_images.get(mp, '') %}{% set img_src = 'https://www.plusforward.net' + img if img else '/static/map-unknown.svg' %}
+      {% for m in maps %}
+      {% set mp = m.name %}{% set img = m.image %}{% set img_src = 'https://www.plusforward.net' + img if img else '/static/map-unknown.svg' %}
       <div class="map-thumb-wrap" title="{{ mp }}" style="text-align:center;flex:1 1 0;min-width:0;align-self:stretch;">
         <img class="map-plaque-img" src="{{ img_src }}" alt="{{ mp|mapname }}" loading="lazy" onerror="this.onerror=null;this.src='/static/map-unknown.svg';">
         <img class="map-plaque-preview" src="{{ img_src }}" alt="{{ mp|mapname }}" loading="lazy" onerror="this.onerror=null;this.src='/static/map-unknown.svg';">
@@ -105,6 +105,88 @@
       </tbody>
     </table>
   </div>
+</div>
+{% endif %}
+
+{% if bracket and bracket.data.stages %}
+<div class="card">
+  <div class="card-title"><span class="dot"></span>Brackets{% if bracket.source %}<span class="bracket-source">{{ 'Toornament' if bracket.source == 'toornament' else 'Shambler' }}</span>{% endif %}</div>
+  {% for stage in bracket.data.stages %}
+    {% if stage.groups %}
+    <div class="bracket-stage">
+      {% if stage.name %}<div class="bracket-stage-name">{{ stage.name }}</div>{% endif %}
+      {% for group in stage.groups %}
+        {% if group.rounds %}
+        {% set rounds = group.rounds | selectattr('matches') | list %}
+        {% if rounds %}
+        {% set max_count = (rounds | map(attribute='matches') | map('length') | max) %}
+        {% set min_count = (rounds | map(attribute='matches') | map('length') | min) %}
+        {% set grp_name = group.name | lower %}
+        {# Swiss / round-robin / group stages are not elimination brackets —
+           render flat (no connectors) regardless of round count variations. #}
+        {% set is_flat = (max_count == min_count) or ('swiss' in grp_name) or ('round-robin' in grp_name) or (grp_name == 'group 1') %}
+        <div class="bracket-group">
+          <div class="bracket-group-name">{{ group.name }}</div>
+          <div class="bracket-columns {{ 'bracket-flat' if is_flat }}" style="--bracket-max: {{ max_count }};">
+            {% for round in rounds %}
+              {% set ms = round.matches %}
+              {% set c = ms | length %}
+              {% set half = 19.0 / 46.0 %}
+              <div class="bracket-column">
+                {% if round.name and rounds | length > 1 %}<div class="bracket-round-name">{{ round.name }}</div>{% endif %}
+                {% for m in ms %}
+                {% set top = ((loop.index0 + 0.5) * max_count / c) %}
+                <div class="bracket-match" style="--bracket-top: {{ top }};">
+                  <div class="bracket-slots">
+                    <div class="bracket-slot {{ 'bracket-winner' if m.winner == 'p1' }}"><span class="bracket-pname">{{ m.p1 or '' }}</span>{% if m.score1 is not none and m.p1 and m.p2 %}<span class="bracket-score">{{ m.score1 }}</span>{% endif %}</div>
+                    <div class="bracket-slot {{ 'bracket-winner' if m.winner == 'p2' }}"><span class="bracket-pname">{{ m.p2 or '' }}</span>{% if m.score2 is not none and m.p1 and m.p2 %}<span class="bracket-score">{{ m.score2 }}</span>{% endif %}</div>
+                  </div>
+                </div>
+                {% endfor %}
+              </div>
+              {% if not loop.last %}
+              {% set c_next = rounds[loop.index].matches | length %}
+              <div class="bracket-connector">
+                {% if round._junctions %}
+                {% for j in round._junctions %}
+                  {% set feeders = j.feeders %}
+                  {% set ys = j.ys %}
+                  {% set j_top = ys | min %}
+                  {% set j_bot = ys | max %}
+                  {% set j_h = j_bot - j_top %}
+                  {% set j_parent = j.parent_y %}
+                  {% if feeders | length > 1 %}
+                    <div class="bracket-junction" style="--j-top: {{ j_top }}; --j-h: {{ j_h }}; --j-parent: {{ j_parent }};">
+                      <div class="bj-v"></div>
+                      {% for yi in ys %}<div class="bj-hl" style="--j-y: {{ yi }};"></div>{% endfor %}
+                      <div class="bj-hr" style="--j-y: {{ j_parent }};"></div>
+                    </div>
+                  {% elif j_top | round(3) == j_parent | round(3) %}
+                    <div class="bracket-junction" style="--j-top: {{ j_top }}; --j-h: 0; --j-parent: {{ j_parent }};">
+                      <div class="bj-hfull" style="--j-y: {{ j_top }};"></div>
+                    </div>
+                  {% else %}
+                    {% set j_lo = [j_top, j_parent] | min %}
+                    {% set j_hi = [j_top, j_parent] | max %}
+                    <div class="bracket-junction" style="--j-top: {{ j_lo }}; --j-h: {{ j_hi - j_lo }}; --j-parent: {{ j_parent }};">
+                      <div class="bj-v"></div>
+                      <div class="bj-hl" style="--j-y: {{ j_top }};"></div>
+                      <div class="bj-hr" style="--j-y: {{ j_parent }};"></div>
+                    </div>
+                  {% endif %}
+                {% endfor %}
+                {% endif %}
+              </div>
+              {% endif %}
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+        {% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
+  {% endfor %}
 </div>
 {% endif %}
 

@@ -503,6 +503,7 @@ _TOURNAMENT_STATS_CACHE: Optional[dict] = None
 _MAIN_GAMES_CACHE: dict[str, dict[int, str]] = {}
 _MAP_IMAGE_CACHE: dict[int, str] = {}  # map_id -> image path (from maps table)
 _MAP_NAME_CACHE: dict[str, str] = {}  # canonical map name -> image path
+_MAP_ID_NAME_CACHE: dict[int, str] = {}  # map_id -> canonical name (from maps table)
 
 
 class DataProvider:
@@ -594,6 +595,7 @@ class DataProvider:
             )
             for mid, name, image in rows:
                 _MAP_IMAGE_CACHE[mid] = image
+                _MAP_ID_NAME_CACHE[mid] = name
                 if name:
                     _MAP_NAME_CACHE.setdefault(name, image)
 
@@ -962,49 +964,277 @@ class DataProvider:
         det["players_count"] = prow[0][0] if prow else 0
         return det
 
+    def get_tournament_bracket(self, tournament_id: int) -> dict | None:
+        """Return the cached bracket data for a tournament, or None.
+
+        Returns {"source": ..., "data": <normalized bracket dict>, "fetched_at": ...}
+        or None if no bracket is stored. Both-empty matches (data artifacts /
+        empty slots) are dropped, winners inferred from advancement, and
+        connector junctions computed on the filtered data so the layout stays
+        consistent.
+        """
+        br = self.db.get_tournament_bracket(tournament_id)
+        if not br or not br.get("data"):
+            return br
+        self._drop_empty_matches(br["data"])
+        self._merge_grand_final(br["data"])
+        self._rename_bracket_rounds(br["data"])
+        self._infer_bracket_winners(br["data"])
+        self._compute_bracket_junctions(br["data"])
+        return br
+
+    # Standard English bracket round names: Final, Semi-final, Quarter-final,
+    # Round of 16, Round of 32, ... then "Round N" for deeper rounds.
+    _ROUND_SUFFIXES = {
+        0: "Final",
+        1: "Semi-final",
+        2: "Quarter-final",
+        3: "Round of 16",
+        4: "Round of 32",
+        5: "Round of 64",
+        6: "Round of 128",
+    }
+
+    @classmethod
+    def _round_name(cls, index: int, total_rounds: int, prefix: str) -> str:
+        """Round name for a single-elim bracket, counting back from the final."""
+        if prefix == "GF":
+            return "Grand Final"
+        k = total_rounds - index - 1  # rounds remaining until the final
+        suffix = cls._ROUND_SUFFIXES.get(k, f"Round {index + 1}")
+        return f"{prefix} {suffix}"
+
+    @staticmethod
+    def _rename_bracket_rounds(data: dict):
+        """Rename rounds to shambler-style names (WB Final, WB Half Final, ...).
+
+        Names are assigned by distance from the final (positional), so they're
+        unique even when a bracket doesn't halve cleanly (e.g. losers bracket).
+        The merged Grand Final round (if present) is named "Grand Final" and
+        the count-back starts from the round before it (the bracket final).
+        """
+        for stage in data.get("stages", []):
+            for group in stage.get("groups", []):
+                name = (group.get("name") or "").lower()
+                if "winner" in name:
+                    prefix = "WB"
+                elif "loser" in name:
+                    prefix = "LB"
+                else:
+                    prefix = "GF"
+                rounds = [r for r in group.get("rounds", []) if r.get("matches")]
+                total = len(rounds)
+                # If the last round is a merged Grand Final, it gets its own
+                # name and the count-back starts from the previous round.
+                has_gf = bool(rounds) and (rounds[-1].get("name") == "Grand Final")
+                final_idx = total - 2 if has_gf else total - 1
+                for idx, rnd in enumerate(rounds):
+                    if has_gf and idx == total - 1:
+                        rnd["name"] = "Grand Final"
+                    else:
+                        k = final_idx - idx  # rounds remaining until the final
+                        suffix = DataProvider._ROUND_SUFFIXES.get(k, f"Round {idx + 1}")
+                        rnd["name"] = f"{prefix} {suffix}"
+
+    @staticmethod
+    def _drop_empty_matches(data: dict):
+        """Remove matches where BOTH players are empty (data artifacts)."""
+        for stage in data.get("stages", []):
+            for group in stage.get("groups", []):
+                for rnd in group.get("rounds", []):
+                    rnd["matches"] = [
+                        m for m in rnd.get("matches", [])
+                        if m.get("p1") or m.get("p2")
+                    ]
+
+    @staticmethod
+    def _merge_grand_final(data: dict):
+        """Append the Grand Final round(s) to the Winners Bracket group.
+
+        The Grand Final is its own group in the source data, but it follows
+        the winners bracket, so we merge it in visually as the final round(s)
+        of the Winners Bracket. The GF round is renamed to "Grand Final".
+        """
+        for stage in data.get("stages", []):
+            wb = None
+            gf = None
+            for group in stage.get("groups", []):
+                name = (group.get("name") or "").lower()
+                if "winner" in name and wb is None:
+                    wb = group
+                elif "grand" in name or "final" in name:
+                    gf = group
+            if wb is None or gf is None:
+                continue
+            for rnd in gf.get("rounds", []):
+                rnd["name"] = "Grand Final"
+            wb.setdefault("rounds", []).extend(gf.get("rounds", []))
+            # Remove the now-merged Grand Final group so it isn't shown twice.
+            stage["groups"] = [g for g in stage.get("groups", []) if g is not gf]
+
+    @staticmethod
+    def _infer_bracket_winners(data: dict):
+        """Infer winners for matches where the source didn't record one.
+
+        For each group, a player who appears in round N+1 must have advanced
+        from round N, so they're the winner of their round-N match. Only fills
+        in winners that are currently None (keeps recorded ones).
+        """
+        for stage in data.get("stages", []):
+            for group in stage.get("groups", []):
+                rounds = [r for r in group.get("rounds", []) if r.get("matches")]
+                for idx in range(len(rounds) - 1):
+                    cur = rounds[idx]["matches"]
+                    nxt = rounds[idx + 1]["matches"]
+                    nxt_players = set()
+                    for m in nxt:
+                        nxt_players.add(m.get("p1"))
+                        nxt_players.add(m.get("p2"))
+                    nxt_players.discard("")
+                    nxt_players.discard(None)
+                    for m in cur:
+                        if m.get("winner"):
+                            continue
+                        if m.get("p1") in nxt_players:
+                            m["winner"] = "p1"
+                        elif m.get("p2") in nxt_players:
+                            m["winner"] = "p2"
+
+    @staticmethod
+    def _compute_bracket_junctions(data: dict):
+        """Attach connector junctions to each round (except the last).
+
+        A junction connects the round-N matches that feed one round-N+1 match,
+        determined by matching advancing player names (accurate even with
+        byes/seeding). The vertical positions (in match-slot units) of the
+        advancing players are precomputed here so the template can render
+        connectors that originate from the winner's player row.
+
+        Each round gets "_junctions": a list of
+        {"feeders": [match indices in round N], "parent": match index in N+1,
+         "ys": [winner slot y per feeder, in match-slot units],
+         "parent_y": parent slot y}.
+        """
+        MATCH_H = 46.0
+        HALF = (MATCH_H - 8.0) / (2.0 * MATCH_H)   # match center offset
+        SLOT1 = (MATCH_H - 8.0) / (4.0 * MATCH_H)  # p1 (top) slot center offset
+        SLOT2 = 3.0 * (MATCH_H - 8.0) / (4.0 * MATCH_H)  # p2 (bottom) slot offset
+        for stage in data.get("stages", []):
+            for group in stage.get("groups", []):
+                rounds = [r for r in group.get("rounds", []) if r.get("matches")]
+                if not rounds:
+                    continue
+                max_count = max(len(r.get("matches", [])) for r in rounds)
+                for idx in range(len(rounds) - 1):
+                    cur = rounds[idx]
+                    nxt = rounds[idx + 1]
+                    c = len(cur.get("matches", []))
+                    c_next = len(nxt.get("matches", []))
+                    if c == 0 or c_next == 0:
+                        cur["_junctions"] = []
+                        continue
+                    junctions = []
+                    # map each advancing winner -> parent index in next round
+                    winner_to_parent = {}
+                    for pi, pm in enumerate(nxt.get("matches", [])):
+                        for name in (pm.get("p1"), pm.get("p2")):
+                            if name:
+                                winner_to_parent.setdefault(name, pi)
+                    # group round-N matches by their parent
+                    parent_to_feeders = {}
+                    for mi, m in enumerate(cur.get("matches", [])):
+                        wname = m.get("p1") if m.get("winner") == "p1" else (
+                            m.get("p2") if m.get("winner") == "p2" else None)
+                        if wname and wname in winner_to_parent:
+                            pi = winner_to_parent[wname]
+                            parent_to_feeders.setdefault(pi, []).append(mi)
+                    for pi in sorted(parent_to_feeders):
+                        feeders = parent_to_feeders[pi]
+                        ys = []
+                        for fi in feeders:
+                            m = cur["matches"][fi]
+                            ftop = (fi + 0.5) * max_count / c
+                            off = SLOT2 if m.get("winner") == "p2" else SLOT1
+                            ys.append(ftop + off)
+                        parent_y = (pi + 0.5) * max_count / c_next + HALF
+                        junctions.append({
+                            "feeders": feeders,
+                            "parent": pi,
+                            "ys": ys,
+                            "parent_y": parent_y,
+                        })
+                    cur["_junctions"] = junctions
+
+    def get_tournament_maps(self, tournament_id: int) -> list[dict]:
+        """Return this tournament's maps as [{map_id, name, image}].
+
+        Map IDs are the canonical key everywhere: images are resolved from the
+        maps table BY MAP ID (not name — names aren't unique, e.g. "Bloodrun"
+        has several ids). Map IDs come from the tournament's match_maps
+        (played maps) merged with the raw_html maplist (map_id parsed from the
+        data-image path, e.g. /maps/11_bloodrun.jpg -> id 11). Names/images
+        are looked up by ID; anything not in the maps table falls back to the
+        raw_html data-name / data-image.
+        """
+        self._load_map_images()
+        # Ordered maplist from raw_html: (map_id, name), deduped by id.
+        by_id: dict[int, str] = {}  # map_id -> name (ordered)
+        order: list[int] = []
+        rows = self.db.client.execute(
+            "SELECT raw_html FROM tournaments WHERE tournament_id = %(t)s",
+            {"t": tournament_id},
+        )
+        raw = rows[0][0] if rows else ""
+        if raw:
+            for img, name in re.findall(
+                r'data-image="([^"]+)"[^>]*data-name="([^"]+)"', raw
+            ):
+                m = re.search(r'/maps/(\d+)_', img)
+                if m:
+                    mid = int(m.group(1))
+                    if mid not in by_id:
+                        by_id[mid] = name
+                        order.append(mid)
+        # Merge in played-map ids from match_maps (keeps maps not in maplist).
+        mrows = self.db.client.execute(
+            """
+            SELECT DISTINCT mm.map_id FROM match_maps mm
+            JOIN matches m ON m.match_id = mm.match_id
+            WHERE m.tournament_id = %(t)s AND mm.map_id != 0
+            """,
+            {"t": tournament_id},
+        )
+        for (mid,) in mrows:
+            if mid not in by_id:
+                by_id[mid] = _MAP_ID_NAME_CACHE.get(mid, "")
+                order.append(mid)
+        if not order:
+            return []
+        # Resolve images by ID; fall back to raw_html data-image for ids not in
+        # the maps table.
+        raw_img = {}
+        if raw:
+            for img, name in re.findall(
+                r'data-image="([^"]+)"[^>]*data-name="([^"]+)"', raw
+            ):
+                m = re.search(r'/maps/(\d+)_', img)
+                if m:
+                    raw_img[int(m.group(1))] = img
+        out = []
+        for mid in order:
+            name = by_id.get(mid) or _MAP_ID_NAME_CACHE.get(mid, "")
+            image = _MAP_IMAGE_CACHE.get(mid, "") or raw_img.get(mid, "")
+            out.append({"map_id": mid, "name": name, "image": image})
+        return out
+
     def get_tournament_map_images(self, tournament_id: int) -> dict:
         """Return {map_name: image_path} for maps in this tournament.
 
-        Images come from the maps lookup table (by canonical name). Names are
-        gathered from the tournament's match_maps rows; for tournaments whose
-        matches have no map data, fall back to the tournament's own maplist
-        (parsed from raw_html). Any name still missing falls back to data-image
-        attributes extracted from the tournament's raw_html.
+        Backward-compatible convenience wrapper over get_tournament_maps
+        (keyed by name for callers that display by name). Images are still
+        resolved BY MAP ID internally.
         """
-        # Canonical map names for this tournament (from its matches' maps).
-        names = [r[0] for r in self.db.client.execute(
-            """
-            SELECT DISTINCT mp.name FROM match_maps mm
-            JOIN matches m ON m.match_id = mm.match_id
-            JOIN maps mp FINAL ON mp.map_id = mm.map_id
-            WHERE m.tournament_id = %(t)s AND mm.map_id != 0 AND mp.name != ''
-            """,
-            {"t": tournament_id},
-        )]
-        # Fall back to the tournament's own maplist (parsed from raw_html) when
-        # its matches have no map data.
-        if not names:
-            det = self.db.get_tournament_details(tournament_id)
-            if det and det.get("maplist"):
-                names = list(det["maplist"])
-        if not names:
-            return {}
-        self._load_map_images()
-        images = {n: _MAP_NAME_CACHE.get(n, "") for n in names}
-        # Fall back to raw_html for names missing from the maps table.
-        missing = [n for n in names if not images[n]]
-        if missing:
-            rows = self.db.client.execute(
-                "SELECT raw_html FROM tournaments WHERE tournament_id = %(t)s",
-                {"t": tournament_id},
-            )
-            if rows and rows[0][0]:
-                for m in re.finditer(
-                    r'data-image="([^"]+)"[^>]*data-name="([^"]+)"', rows[0][0]
-                ):
-                    if m.group(2) in missing:
-                        images[m.group(2)] = m.group(1)
-        return images
+        return {m["name"]: m["image"] for m in self.get_tournament_maps(tournament_id) if m["name"]}
 
     def get_tournament_matches(self, tournament_id: int, limit: int = 20) -> list[dict]:
         """Recent matches belonging to a tournament (by ID, unambiguous even

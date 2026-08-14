@@ -809,10 +809,14 @@ def _tournament_page(request: Request, tournament_id: int):
         ml = det.get("maplist") or []
         seen = set()
         ctx["maplist"] = [m for m in ml if not (m in seen or seen.add(m))]
+        # Map plaques keyed by map_id (canonical); images resolved by ID.
+        ctx["maps"] = dx.get_tournament_maps(tournament_id)
         ctx["map_images"] = dx.get_tournament_map_images(tournament_id)
         ctx["name_slug"] = _slug(det["name"])
         ctx["schedule_start_str"] = _fmt_dt(det.get("schedule_start"))
         ctx["schedule_end_str"] = _fmt_dt(det.get("schedule_end"))
+        # Cached bracket (Toornament/shambler) for the bracket card.
+        ctx["bracket"] = dx.get_tournament_bracket(tournament_id)
         # Recent matches in this tournament (by ID) for the matches card —
         # shown when there are no final rankings (league/group-stage events).
         ctx["matches"] = dx.get_tournament_matches(tournament_id, limit=100000)

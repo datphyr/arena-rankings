@@ -17,6 +17,7 @@ from typing import Optional
 from src.db_client import Database
 from src.fetcher import PageFetcher
 from src.tournament_resolver import TournamentResolver
+from src.bracket_fetcher import BracketFetcher
 
 logger = logging.getLogger(__name__)
 
@@ -325,7 +326,8 @@ class MatchDetailParser:
         return datetime.strptime(combined, "%d %B %Y %H:%M")
 
 
-def store_parsed_match(db: Database, detail: MatchDetail, resolver: TournamentResolver = None):
+def store_parsed_match(db: Database, detail: MatchDetail, resolver: TournamentResolver = None,
+                       bracket_fetcher=None):
     """Store parsed match data into ClickHouse tables.
 
     Inserts into: players, tournaments, matches, match_maps.
@@ -336,6 +338,9 @@ def store_parsed_match(db: Database, detail: MatchDetail, resolver: TournamentRe
         detail: Parsed match details.
         resolver: Optional TournamentResolver instance. If provided, resolves
             tournament tier from PlusForward. If None, tier stays empty.
+        bracket_fetcher: Optional BracketFetcher instance. If provided, fetches
+            the tournament's bracket (Toornament/shambler) once the tournament
+            has been resolved, if it has a bracket source and none is stored.
     """
     # Upsert players
     db.upsert_player(detail.player1_id, detail.player1_name, detail.player1_country)
@@ -363,6 +368,16 @@ def store_parsed_match(db: Database, detail: MatchDetail, resolver: TournamentRe
             existing = db.get_tournament_html(detail.tournament_id)
             if not existing:
                 db.upsert_tournament(detail.tournament_id, detail.tournament_name, "")
+
+        # Fetch the tournament's bracket (Toornament/shambler) if it has a
+        # bracket source and none is stored yet. Idempotent — skips if already
+        # fetched. Runs on the parse path so brackets are captured as soon as
+        # a tournament's matches are discovered.
+        if bracket_fetcher is not None and detail.tournament_id > 0:
+            try:
+                bracket_fetcher.fetch_for_tournament_if_needed(detail.tournament_id)
+            except Exception as e:
+                logger.warning(f"bracket fetch failed for tournament {detail.tournament_id}: {e}")
 
     # Insert match
     db.insert_match(detail)
@@ -403,6 +418,7 @@ def _parse_worker(task: tuple, preloaded_tiers: dict = None) -> tuple[int, bool,
         local.parser = MatchDetailParser()
         local.fetcher = PageFetcher()
         local.resolver = TournamentResolver(local.db, local.fetcher)
+        local.bracket_fetcher = BracketFetcher(local.db)
         if preloaded_tiers:
             local.resolver.preload_tiers(preloaded_tiers)
 
@@ -419,7 +435,7 @@ def _parse_worker(task: tuple, preloaded_tiers: dict = None) -> tuple[int, bool,
             return match_id, False, "parse failed"
 
         # Store structured data first (tier resolution happens here)
-        store_parsed_match(local.db, detail, local.resolver)
+        store_parsed_match(local.db, detail, local.resolver, local.bracket_fetcher)
         # Only mark as parsed if store succeeded
         local.db.client.execute(
             "INSERT INTO match_registry "

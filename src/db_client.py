@@ -1,6 +1,7 @@
 """ClickHouse database client for Arena Rankings System."""
 
 import logging
+import json
 import threading
 from datetime import datetime
 from typing import Optional
@@ -344,6 +345,35 @@ class Database:
             "maplist": r[9],
             "rankings": r[10],
         }
+
+    # --- Tournament brackets ---
+
+    def upsert_tournament_bracket(self, tournament_id: int, source: str, data: str):
+        """Store (or overwrite) the cached bracket data for a tournament."""
+        self.client.execute(
+            "INSERT INTO tournament_brackets "
+            "(tournament_id, source, data, fetched_at) VALUES",
+            [(tournament_id, source, data, datetime.utcnow())],
+        )
+
+    def get_tournament_bracket(self, tournament_id: int) -> dict | None:
+        """Return the cached bracket dict, or None if not stored.
+
+        Returns {"source": ..., "data": <parsed JSON dict>, "fetched_at": ...}.
+        """
+        rows = self.client.execute(
+            "SELECT source, data, fetched_at FROM tournament_brackets FINAL "
+            "WHERE tournament_id = %(t)s",
+            {"t": tournament_id},
+        )
+        if not rows:
+            return None
+        source, data, fetched_at = rows[0]
+        try:
+            parsed = json.loads(data or "{}")
+        except Exception:
+            parsed = {}
+        return {"source": source, "data": parsed, "fetched_at": fetched_at}
 
     # --- Matches ---
 

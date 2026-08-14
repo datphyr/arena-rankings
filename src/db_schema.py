@@ -33,6 +33,7 @@ DROP_TABLES = [
     "DROP TABLE IF EXISTS arena_rankings.rating_history",
     "DROP TABLE IF EXISTS arena_rankings.player_ratings",
     "DROP TABLE IF EXISTS arena_rankings.match_registry",
+    "DROP TABLE IF EXISTS arena_rankings.tournament_brackets",
 ]
 
 # DDL statements in dependency order
@@ -236,5 +237,30 @@ DDL_STATEMENTS = [
     )
     ENGINE = ReplacingMergeTree()
     ORDER BY (player_id, game_id, rating_system)
+    """,
+
+    # tournament_brackets — Cached bracket data for a tournament, fetched from
+    # an external bracket provider (Toornament or shambler) whose link is found
+    # in the tournament's PlusForward raw_html.
+    # source: 'toornament' | 'shambler'
+    # data: normalized, source-agnostic JSON describing the bracket structure:
+    #   {
+    #     "source": "toornament"|"shambler",
+    #     "title": "...",
+    #     "stages": [{"name": "...", "groups": [{"name": "...",
+    #        "rounds": [{"name": "...", "round": 0, "matches": [
+    #          {"p1": "name", "p2": "name", "score1": int|null,
+    #           "score2": int|null, "winner": "p1"|"p2"|null} ]}]}]}]
+    #   }
+    # fetched_at: when we last fetched (and stored) this bracket.
+    """
+    CREATE TABLE IF NOT EXISTS arena_rankings.tournament_brackets (
+        tournament_id UInt64,
+        source LowCardinality(String) DEFAULT '',
+        data String DEFAULT '{}',
+        fetched_at DateTime DEFAULT toDateTime(0)
+    )
+    ENGINE = ReplacingMergeTree()
+    ORDER BY tournament_id
     """,
 ]
