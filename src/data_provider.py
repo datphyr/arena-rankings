@@ -15,8 +15,10 @@ Usage:
 """
 
 import bisect
+import json
 import logging
 import re
+from datetime import datetime
 from typing import Optional
 
 from src.db_client import Database
@@ -498,8 +500,6 @@ _COUNTRY_CACHE: dict[int, str] = {}
 _PLAYER_ID_CACHE: dict[str, Optional[int]] = {}
 _GAMES_CACHE: Optional[list[str]] = None
 _PEAK_OVERALL_CACHE: dict[tuple, dict] = {}
-_STATS_CACHE: Optional[dict] = None
-_TOURNAMENT_STATS_CACHE: Optional[dict] = None
 _MAIN_GAMES_CACHE: dict[str, dict[int, str]] = {}
 _MAP_IMAGE_CACHE: dict[int, str] = {}  # map_id -> image path (from maps table)
 _MAP_NAME_CACHE: dict[str, str] = {}  # canonical map name -> image path
@@ -913,10 +913,8 @@ class DataProvider:
         return rows[0][0] if rows else 0
 
     def get_tournament_stats(self) -> dict:
-        """Tier distribution stats. Cached at module level — static between imports."""
-        global _TOURNAMENT_STATS_CACHE
-        if _TOURNAMENT_STATS_CACHE is not None:
-            return _TOURNAMENT_STATS_CACHE
+        """Tier distribution stats. Computed fresh each call (cheap query; the
+        web process is read-only so a module-level cache would go stale)."""
         rows = self.db.client.execute(
             """
             SELECT t.tier, count(DISTINCT m.tournament_id) AS tournaments, count() AS matches
@@ -933,7 +931,6 @@ class DataProvider:
                 for r in rows
             ]
         }
-        _TOURNAMENT_STATS_CACHE = result
         return result
 
     def get_tournament_details(self, tournament_id: int) -> Optional[dict]:
@@ -963,6 +960,33 @@ class DataProvider:
         )
         det["players_count"] = prow[0][0] if prow else 0
         return det
+
+    def get_tournament_status(self, tournament_id: int, det: dict = None) -> dict:
+        """Determine whether a tournament is over.
+
+        Returns {"is_over": bool, "reason": str}. A tournament is considered
+        over if its schedule_end has passed, OR it has published COMPLETE final
+        rankings (every position filled with a real player). Partial rankings
+        (some slots still empty) mean the event is still in progress.
+        """
+        det = det or self.get_tournament_details(tournament_id)
+        if not det:
+            return {"is_over": False, "reason": "no-data"}
+        now = datetime.utcnow()
+        end = det.get("schedule_end")
+        if end and end < now:
+            return {"is_over": True, "reason": "schedule-ended"}
+        rankings = det.get("rankings") or ""
+        if isinstance(rankings, str):
+            try:
+                rankings = json.loads(rankings or "[]")
+            except Exception:
+                rankings = []
+        # Over only when EVERY ranked position has a real player (complete
+        # standings). Partial rankings mean the event is still running.
+        if rankings and all(r.get("player_name") for r in rankings):
+            return {"is_over": True, "reason": "rankings"}
+        return {"is_over": False, "reason": "in-progress"}
 
     def get_tournament_bracket(self, tournament_id: int) -> dict | None:
         """Return the cached bracket data for a tournament, or None.
@@ -3236,10 +3260,13 @@ class DataProvider:
         return out
 
     def get_stats(self) -> dict:
-        """Overall system stats. Cached at module level — data only changes on import."""
-        global _STATS_CACHE
-        if _STATS_CACHE is not None:
-            return _STATS_CACHE
+        """Overall system stats.
+
+        Not cached: this runs in the read-only web process while writes happen
+        in separate parser/discovery processes, so a module-level cache here can
+        never be invalidated reliably and would serve stale counts. The query
+        is cheap (~60ms), so compute it fresh on each call.
+        """
         # Combine the matches-table aggregates (count, date range, tournament
         # count) into a single scan instead of three separate round-trips.
         mrow = self.db.client.execute(
@@ -3343,7 +3370,6 @@ class DataProvider:
             "tournaments": tournaments,
             "countries": countries,
         }
-        _STATS_CACHE = result
         return result
 
     def get_most_active_players(self, limit: int = 10) -> list[dict]:

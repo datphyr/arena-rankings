@@ -7,6 +7,7 @@ Usage:
 """
 
 import html as html_module
+import json
 import logging
 import re
 import time
@@ -326,6 +327,35 @@ class MatchDetailParser:
         return datetime.strptime(combined, "%d %B %Y %H:%M")
 
 
+def _is_tournament_in_progress(db, tournament_id: int) -> bool:
+    """True if the tournament is currently in progress (not yet over).
+
+    A tournament is over if its schedule_end has passed OR it has published
+    final rankings with real players. Otherwise it's still in progress, so we
+    refresh it on each new match.
+    """
+    try:
+        det = db.get_tournament_details(tournament_id)
+        if not det:
+            return True
+        end = det.get("schedule_end")
+        if end and end < datetime.utcnow():
+            return False
+        rankings = det.get("rankings") or ""
+        if isinstance(rankings, str):
+            try:
+                rankings = json.loads(rankings or "[]")
+            except Exception:
+                rankings = []
+        # Still in progress until EVERY ranked position has a real player
+        # (complete standings). Partial rankings = event still running.
+        if rankings and all(r.get("player_name") for r in rankings):
+            return False
+        return True
+    except Exception:
+        return True
+
+
 def store_parsed_match(db: Database, detail: MatchDetail, resolver: TournamentResolver = None,
                        bracket_fetcher=None):
     """Store parsed match data into ClickHouse tables.
@@ -355,12 +385,17 @@ def store_parsed_match(db: Database, detail: MatchDetail, resolver: TournamentRe
 
     # Upsert tournament (if present)
     if detail.tournament_id > 0:
+        # For in-progress tournaments, force a fresh download + re-parse of the
+        # tournament page (and bracket) on each new match, so standings and
+        # brackets stay current as results roll in. Once the event is over we
+        # fall back to the cached copy.
+        force_refresh = _is_tournament_in_progress(db, detail.tournament_id)
         if resolver:
             # resolver.resolve() downloads the page and upserts name + tier +
             # raw_html + all parsed metadata. Do NOT call upsert_tournament
             # again here — it would overwrite raw_html with "" and clobber
             # the cached page.
-            resolver.resolve(detail.tournament_id)
+            resolver.resolve(detail.tournament_id, force=force_refresh)
         else:
             # No resolver — just ensure the tournament name is stored.
             # Use empty raw_html only if the tournament doesn't exist yet,
@@ -370,12 +405,12 @@ def store_parsed_match(db: Database, detail: MatchDetail, resolver: TournamentRe
                 db.upsert_tournament(detail.tournament_id, detail.tournament_name, "")
 
         # Fetch the tournament's bracket (Toornament/shambler) if it has a
-        # bracket source and none is stored yet. Idempotent — skips if already
-        # fetched. Runs on the parse path so brackets are captured as soon as
-        # a tournament's matches are discovered.
+        # bracket source and none is stored yet (or force-refresh for live
+        # events). Idempotent — skips if already fetched unless force.
         if bracket_fetcher is not None and detail.tournament_id > 0:
             try:
-                bracket_fetcher.fetch_for_tournament_if_needed(detail.tournament_id)
+                bracket_fetcher.fetch_for_tournament_if_needed(
+                    detail.tournament_id, force=force_refresh)
             except Exception as e:
                 logger.warning(f"bracket fetch failed for tournament {detail.tournament_id}: {e}")
 

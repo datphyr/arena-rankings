@@ -71,13 +71,21 @@ class TournamentResolver:
             TournamentResolver._preload_logged = True
             logger.debug(f"{len(tiers)} tiers preloaded (only those with raw_html)")
 
-    def resolve(self, tournament_id: int) -> str:
+    def resolve(self, tournament_id: int, force: bool = False) -> str:
         """Return the tier for a tournament, using cache when possible.
 
-        Always resolves — tier resolver is always enabled.
+        Args:
+            tournament_id: PlusForward tournament id.
+            force: if True, always re-download + re-parse the tournament page
+                (used to refresh standings/brackets for in-progress events).
         """
         if tournament_id <= 0:
             return DEFAULT_TIER
+
+        if force:
+            tier = self._fetch_tier(tournament_id, force=True)
+            self._cache[tournament_id] = tier
+            return tier
 
         cached = self._cache.get(tournament_id)
         if cached is not None:
@@ -101,7 +109,7 @@ class TournamentResolver:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _fetch_tier(self, tournament_id: int) -> str:
+    def _fetch_tier(self, tournament_id: int, force: bool = False) -> str:
         """Resolve tournament tier, downloading and parsing as needed.
 
         Flow:
@@ -113,28 +121,54 @@ class TournamentResolver:
         3. **Download**: no cached HTML — fetch from PlusForward, parse, upsert,
            return tier.
 
-        Tier is a product of parsing, not a gate to skip downloading. A
-        tournament with tier but no raw_html must still fetch the page.
+        When force=True, steps 1-2 are skipped and the page is always
+        re-downloaded + re-parsed (to refresh standings/brackets for an
+        in-progress tournament).
         """
-        # 1. Check DB for already-parsed tier AND cached HTML.
-        tier = self._db.get_tournament_tier(tournament_id)
-        html = ""
-        if tier:
-            html = self._db.get_tournament_html(tournament_id)
+        if not force:
+            # 1. Check DB for already-parsed tier AND cached HTML.
+            tier = self._db.get_tournament_tier(tournament_id)
+            html = ""
+            if tier:
+                html = self._db.get_tournament_html(tournament_id)
+                if html:
+                    # Fast path: tier + html already stored. But if the name is
+                    # empty (e.g. parsed before name extraction existed), recover
+                    # it from the cached HTML rather than leaving it blank.
+                    name_rows = self._db.client.execute(
+                        "SELECT name FROM tournaments FINAL WHERE tournament_id = %(t)s",
+                        {"t": tournament_id},
+                    )
+                    existing_name = name_rows[0][0] if name_rows else ""
+                    if not existing_name:
+                        parsed_name = self._parse_name(html)
+                        if parsed_name:
+                            # Preserve existing metadata; only update the name.
+                            det = self._db.get_tournament_details(tournament_id) or {}
+                            self._db.upsert_tournament(
+                                tournament_id, parsed_name, tier, raw_html=html,
+                                game=det.get("game", ""),
+                                prize_money=det.get("prize_money", ""),
+                                tourney_format=det.get("tourney_format", ""),
+                                match_format=det.get("match_format", ""),
+                                schedule_start=det.get("schedule_start"),
+                                schedule_end=det.get("schedule_end"),
+                                maplist=det.get("maplist") or [],
+                                rankings=det.get("rankings", "[]"),
+                            )
+                    TournamentResolver.db_hits += 1
+                    return tier
+                # Tier exists but raw_html is missing — fall through to download.
+                # This happens when a previous run clobbered the HTML (the
+                # match_parser.py:339 bug that's now fixed).
+                logger.debug(f"tournament {tournament_id}: tier={tier!r} but no raw_html, fetching")
+
+            # 2. Check DB for cached HTML — parse tier + metadata from it.
+            if not html:
+                html = self._db.get_tournament_html(tournament_id)
             if html:
                 TournamentResolver.db_hits += 1
-                return tier
-            # Tier exists but raw_html is missing — fall through to download.
-            # This happens when a previous run clobbered the HTML (the
-            # match_parser.py:339 bug that's now fixed).
-            logger.debug(f"tournament {tournament_id}: tier={tier!r} but no raw_html, fetching")
-
-        # 2. Check DB for cached HTML — parse tier + metadata from it.
-        if not html:
-            html = self._db.get_tournament_html(tournament_id)
-        if html:
-            TournamentResolver.db_hits += 1
-            return self._resolve_from_html(html, tournament_id)
+                return self._resolve_from_html(html, tournament_id)
 
         # 3. Fetch from network with infinite retries.
         #    Between retries, check DB — another worker may store HTML
@@ -155,11 +189,10 @@ class TournamentResolver:
         """Parse tier + tournament metadata from HTML and upsert to DB."""
         tier = self._parse_tier(html, tournament_id)
         details = self._parse_tournament_details(html)
-        name_rows = self._db.client.execute(
-            "SELECT name FROM tournaments FINAL WHERE tournament_id = %(t)s",
-            {"t": tournament_id},
-        )
-        name = name_rows[0][0] if name_rows else ""
+        # Prefer the name parsed from THIS page; fall back to the existing DB
+        # name only if the page has no name (avoids clobbering a known name
+        # with empty when resolving a tournament page without a title).
+        name = self._parse_name(html) or self._get_existing_name(tournament_id)
         self._db.upsert_tournament(
             tournament_id, name, tier, raw_html=html,
             game=details["game"], prize_money=details["prize_money"],
@@ -170,6 +203,26 @@ class TournamentResolver:
         if details["rankings"] != "[]" or details["maplist"]:
             TournamentResolver.parsed_details += 1
         return tier
+
+    @staticmethod
+    def _parse_name(html: str) -> str:
+        """Extract the tournament name from the page title.
+
+        Format: <h1 class="posttitle"><a href="/post/123/...">Name</a></h1>
+        """
+        m = re.search(
+            r'<h1 class="posttitle">\s*<a[^>]*href="/post/\d+/[^"]*">([^<]+)</a>',
+            html, re.DOTALL)
+        if m:
+            return re.sub(r'<[^>]+>', '', m.group(1)).strip()
+        return ""
+
+    def _get_existing_name(self, tournament_id: int) -> str:
+        rows = self._db.client.execute(
+            "SELECT name FROM tournaments FINAL WHERE tournament_id = %(t)s",
+            {"t": tournament_id},
+        )
+        return rows[0][0] if rows else ""
 
     def _fetch_with_db_checks(self, url: str, tournament_id: int):
         """Fetch URL with infinite retries, checking DB between attempts.

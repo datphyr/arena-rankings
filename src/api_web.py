@@ -332,7 +332,7 @@ def home(request: Request, sort: str = Query("elo", pattern="^(elo|glicko2)$")):
             p["elo"] = elo.get(p["player_id"])
         ctx["top_sort"] = sort
         ctx["top_players"] = ctx["top_glicko"] if sort == "glicko2" else ctx["top_elo"]
-        ctx["recent_matches"] = dx.get_recent_matches(limit=8)
+        ctx["recent_matches"] = dx.get_recent_matches(limit=10)
         ctx["most_active"] = dx.get_most_active_players(limit=10)
         # Both overall peaks in a single rating_history scan.
         _peaks = dx.get_peak_rating_overall_both(
@@ -803,6 +803,12 @@ def _tournament_page(request: Request, tournament_id: int):
         if ctx["rankings"]:
             deltas = dx.get_tournament_rating_deltas(tournament_id)
             for r in ctx["rankings"]:
+                # Only show rating deltas for real (named) players — empty/
+                # placeholder slots have no meaningful rating to show.
+                if not r.get("player_name"):
+                    r["elo_delta"] = None
+                    r["glicko2_delta"] = None
+                    continue
                 d = deltas.get(r.get("player_id"), {})
                 r["elo_delta"] = d.get("elo")
                 r["glicko2_delta"] = d.get("glicko2")
@@ -815,6 +821,8 @@ def _tournament_page(request: Request, tournament_id: int):
         ctx["name_slug"] = _slug(det["name"])
         ctx["schedule_start_str"] = _fmt_dt(det.get("schedule_start"))
         ctx["schedule_end_str"] = _fmt_dt(det.get("schedule_end"))
+        # Tournament status (over / in-progress) for the header badge.
+        ctx["tournament_status"] = dx.get_tournament_status(tournament_id, det)
         # Cached bracket (Toornament/shambler) for the bracket card.
         ctx["bracket"] = dx.get_tournament_bracket(tournament_id)
         # Recent matches in this tournament (by ID) for the matches card —

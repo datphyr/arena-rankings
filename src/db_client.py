@@ -633,6 +633,21 @@ class Database:
         )
         return rows[0][0] if rows and rows[0][0] else 0
 
+    def get_last_processed_match_time(self, game_name: str, rating_system: str):
+        """Get the max played_at processed in rating_history for a game/system.
+
+        Used to detect out-of-order match arrivals (a newly parsed match played
+        earlier than what's already rated) so the incremental rating compute can
+        fall back to a full recompute instead of corrupting history.
+        """
+        gid = self.resolve_game_id(game_name)
+        rows = self.client.execute(
+            "SELECT max(played_at) FROM rating_history "
+            "WHERE game_id = %(g)s AND rating_system = %(rs)s",
+            {"g": gid, "rs": rating_system},
+        )
+        return rows[0][0] if rows else None
+
     def get_max_match_id(self, game_name: str = "") -> int:
         """Get the highest match_id in the matches table for a game (or all games if empty)."""
         gid = self.resolve_game_id(game_name)

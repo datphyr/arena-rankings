@@ -53,6 +53,10 @@ logger = logging.getLogger(__name__)
 BRACKET_RATE_LIMIT_DELAY = float(__import__("os").environ.get("BRACKET_RATE_LIMIT_DELAY", "0.4"))
 BRACKET_HTTP_TIMEOUT = int(__import__("os").environ.get("BRACKET_HTTP_TIMEOUT", "15"))
 
+# Retry on non-JSON responses (intermittent Cloudflare challenge pages).
+_JSON_RETRIES = int(__import__("os").environ.get("BRACKET_JSON_RETRIES", "4"))
+_JSON_RETRY_DELAY = float(__import__("os").environ.get("BRACKET_JSON_RETRY_DELAY", "2.0"))
+
 # Regexes to detect the provider + id from PlusForward raw_html.
 _TOORNAMENT_RE = re.compile(
     r"play\.toornament\.com/[a-z_]+/tournaments/(\d+)", re.IGNORECASE)
@@ -88,7 +92,8 @@ class BracketFetcher:
     # Public entry point
     # ------------------------------------------------------------------
 
-    def fetch_for_tournament_if_needed(self, tournament_id: int, max_age_days: int = None) -> bool:
+    def fetch_for_tournament_if_needed(self, tournament_id: int, max_age_days: int = None,
+                                       force: bool = False) -> bool:
         """Fetch + store a bracket only if it's missing or stale.
 
         Cheap no-network fast-path: if the tournament has no bracket source
@@ -99,18 +104,41 @@ class BracketFetcher:
             tournament_id: PlusForward tournament id.
             max_age_days: refetch if the stored bracket is older than this.
                 None = only fetch when missing.
+            force: if True, always re-fetch + re-store even if a fresh bracket
+                exists (used to refresh brackets for in-progress events).
         """
         raw_html = self._db.get_tournament_html(tournament_id)
         if not raw_html or not self.detect_source(raw_html):
             return False
-        existing = self._db.get_tournament_bracket(tournament_id)
-        if existing and existing.get("data"):
-            if max_age_days is None:
-                return False  # already stored, fresh enough
-            fa = existing.get("fetched_at")
-            if fa and (datetime.datetime.utcnow() - fa).days < max_age_days:
-                return False
+        if not force:
+            existing = self._db.get_tournament_bracket(tournament_id)
+            if existing and existing.get("data"):
+                # An empty stored bracket (no match data) doesn't count as
+                # fetched — it was likely a transient empty API response that
+                # got persisted. Always retry those.
+                if not self._has_matches(existing["data"]):
+                    return self.fetch_for_tournament(tournament_id)
+                if max_age_days is None:
+                    return False  # already stored, fresh enough
+                fa = existing.get("fetched_at")
+                if fa and (datetime.datetime.utcnow() - fa).days < max_age_days:
+                    return False
         return self.fetch_for_tournament(tournament_id)
+
+    @staticmethod
+    def _has_matches(normalized: dict) -> bool:
+        """True if the normalized bracket contains at least one match.
+
+        An empty bracket (stages present but no groups/rounds/matches) is a
+        transient API miss, not a real bracket — treat it as not-fetched.
+        """
+        for st in normalized.get("stages", []) or []:
+            for g in st.get("groups", []) or []:
+                for r in g.get("rounds", []) or []:
+                    if r.get("matches"):
+                        return True
+        return False
+
 
     def fetch_for_tournament(self, tournament_id: int) -> bool:
         """Detect provider, fetch bracket, normalize, and store in the DB.
@@ -144,6 +172,16 @@ class BracketFetcher:
             logger.debug(f"tournament {tournament_id}: {kind} has no bracket data")
             return False
 
+        # Don't persist an empty bracket (stages present but zero matches) —
+        # that's a transient API miss, not a real bracket. Leaving it unstored
+        # lets fetch_for_tournament_if_needed retry on a later pass.
+        if not self._has_matches(normalized):
+            BracketFetcher.failed += 1
+            logger.warning(
+                f"tournament {tournament_id}: {kind} bracket empty (no matches), not storing"
+            )
+            return False
+
         self._db.upsert_tournament_bracket(
             tournament_id, normalized.get("source", kind),
             json.dumps(normalized, ensure_ascii=False),
@@ -173,30 +211,38 @@ class BracketFetcher:
     # ------------------------------------------------------------------
 
     def _json_get(self, url: str, params: dict = None) -> Optional[dict]:
-        """GET a JSON API endpoint and return parsed JSON (or None)."""
+        """GET a JSON API endpoint and return parsed JSON (or None).
+
+        Retries on non-JSON responses (e.g. intermittent Cloudflare challenge
+        pages) so a single blocked request doesn't yield an empty bracket.
+        """
         if params:
             import urllib.parse
             qs = urllib.parse.urlencode(params)
             url = f"{url}?{qs}"
-        body = self._curl("GET", url)
-        if body is None:
-            return None
-        try:
-            return json.loads(body)
-        except Exception as e:
-            logger.debug(f"bad JSON from {url}: {e}")
-            return None
+        for attempt in range(_JSON_RETRIES):
+            body = self._curl("GET", url)
+            if body is None:
+                continue
+            try:
+                return json.loads(body)
+            except Exception as e:
+                logger.debug(f"bad JSON from {url} (attempt {attempt + 1}): {e}")
+                time.sleep(_JSON_RETRY_DELAY + random.uniform(0, 0.3))
+        return None
 
     def _json_post(self, url: str, data: dict) -> Optional[dict]:
-        """POST form-encoded data to a JSON API endpoint."""
-        body = self._curl("POST", url, data=data)
-        if body is None:
-            return None
-        try:
-            return json.loads(body)
-        except Exception as e:
-            logger.debug(f"bad JSON from {url}: {e}")
-            return None
+        """POST form-encoded data to a JSON API endpoint (with retry)."""
+        for attempt in range(_JSON_RETRIES):
+            body = self._curl("POST", url, data=data)
+            if body is None:
+                continue
+            try:
+                return json.loads(body)
+            except Exception as e:
+                logger.debug(f"bad JSON from {url} (attempt {attempt + 1}): {e}")
+                time.sleep(_JSON_RETRY_DELAY + random.uniform(0, 0.3))
+        return None
 
     def _curl(self, method: str, url: str, data: dict = None) -> Optional[str]:
         """Raw curl GET/POST, returning the response body (or None)."""
@@ -260,14 +306,20 @@ class BracketFetcher:
                 "name": st["name"],
                 "groups": groups,
             })
-        return {"source": "toornament", "title": "", "stages": result_stages}
+        # Completeness: a Toornament bracket is full/final when all its stages
+        # are 'completed' (per-match status can lag / show LIVE during the
+        # grand final, so use the stage-level status — not per-match).
+        complete = bool(stages) and all(st.get("status") == "completed" for st in stages)
+        return {"source": "toornament", "title": "", "complete": complete,
+                "stages": result_stages}
 
     def _toornament_stages(self, tournament_id: int) -> list[dict]:
         d = self._json_get(f"{self.API_TOORNAMENT}/stages",
                            {"tournament_ids": tournament_id, "offset": 0, "limit": _API_LIMIT})
         if not d:
             return []
-        return [{"id": s["id"], "name": s.get("name", ""), "type": s.get("type", "")}
+        return [{"id": s["id"], "name": s.get("name", ""), "type": s.get("type", ""),
+                 "status": s.get("status", ""), "closed": bool(s.get("closed", False))}
                 for s in d.get("items", [])]
 
     def _toornament_matches(self, tournament_id: int) -> list[dict]:
@@ -352,13 +404,23 @@ class BracketFetcher:
             rname = matches[0].get("round", {}).get("name", "")
         norm = []
         for m in matches:
-            opps = m.get("opponents", [])
-            p1 = opps[0].get("participant", {}).get("name", "") if len(opps) > 0 else ""
-            p2 = opps[1].get("participant", {}).get("name", "") if len(opps) > 1 else ""
-            s1 = opps[0].get("score") if len(opps) > 0 else None
-            s2 = opps[1].get("score") if len(opps) > 1 else None
-            r1 = (opps[0].get("result") or "") if len(opps) > 0 else ""
-            r2 = (opps[1].get("result") or "") if len(opps) > 1 else ""
+            opps = m.get("opponents", []) or []
+
+            def _opp(idx, field):
+                if idx >= len(opps) or not opps[idx]:
+                    return None
+                o = opps[idx]
+                if field == "name":
+                    part = o.get("participant") or {}
+                    return part.get("name", "") or ""
+                return o.get(field)
+
+            p1 = _opp(0, "name") or ""
+            p2 = _opp(1, "name") or ""
+            s1 = _opp(0, "score")
+            s2 = _opp(1, "score")
+            r1 = _opp(0, "result") or ""
+            r2 = _opp(1, "result") or ""
             winner = None
             if r1 == "win":
                 winner = "p1"
@@ -392,7 +454,11 @@ class BracketFetcher:
             "groups": [self._shambler_group(b, pmap)
                        for b in d.get("brackets", [])],
         }]
-        return {"source": "shambler", "title": d.get("title", ""), "stages": stages}
+        # Shambler status: 2 = finished, 1 = live/in-progress, 0 = not started.
+        status = d.get("status")
+        complete = (status == 2)
+        return {"source": "shambler", "title": d.get("title", ""),
+                "complete": complete, "status": status, "stages": stages}
 
     @staticmethod
     def _shambler_group(bracket: dict, pmap: dict) -> dict:

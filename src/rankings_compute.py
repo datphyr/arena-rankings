@@ -456,9 +456,30 @@ def compute_elo(db: Database, game_name: str = "", full_recompute: bool = False,
                 logger.info(f"Elo {_game_label(game_name)}: full recompute — {len(matches)} matches [backfill]")
             else:  # new_matches
                 last_match_id = db.get_last_processed_match_id(game_name, "elo")
+                last_time = db.get_last_processed_match_time(game_name, "elo")
                 matches = db.get_matches_for_game_after(game_name, last_match_id)
                 if matches:
-                    logger.info(f"Elo {_game_label(game_name)}: incremental — {len(matches)} new")
+                    # Detect out-of-order arrivals: a newly parsed match played
+                    # EARLIER than the newest already-rated match means match_ids
+                    # aren't monotonic with played_at (live tournaments can parse
+                    # matches out of chronological order). Incremental chaining
+                    # would rate them with stale ratings, corrupting history — so
+                    # do a full recompute in correct order. (A surgical tail
+                    # delete via ALTER TABLE DELETE is not used: that mutation
+                    # isn't reliably visible to FINAL reads in this ClickHouse
+                    # setup, and the full recompute is only ~0.2s anyway.)
+                    earliest_new = min((r[6] for r in matches), default=None)
+                    if last_time is not None and earliest_new is not None and earliest_new < last_time:
+                        logger.warning(
+                            f"Elo {_game_label(game_name)}: out-of-order matches "
+                            f"(earliest new {earliest_new} < last rated {last_time}) — full recompute")
+                        matches = db.get_all_matches_for_game(game_name)
+                        ratings = defaultdict(lambda: {"rating": 1500.0, "wins": 0, "losses": 0, "matches": 0, "name": "", "last_match_id": 0, "last_match_date": datetime(1970, 1, 1), "first_match_date": datetime(1970, 1, 1)})
+                        db.clear_ratings(rating_system="elo", game_name=game_name)
+                        db.clear_rating_history(rating_system="elo", game_name=game_name)
+                        logger.info(f"Elo {_game_label(game_name)}: full recompute — {len(matches)} matches [out-of-order]")
+                    else:
+                        logger.info(f"Elo {_game_label(game_name)}: incremental — {len(matches)} new")
                 else:
                     logger.debug(f"Elo {_game_label(game_name)}: up to date, skipping")
                     return None

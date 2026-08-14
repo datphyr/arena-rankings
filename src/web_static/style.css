@@ -969,6 +969,8 @@ a.tier-link:hover .tag { filter: brightness(1.2); }
 /* Extended tier/tag color variants (used when data has these tiers) */
 .tag-qualifier { background: rgba(192, 192, 192, 0.15); color: var(--silver); border: 1px solid rgba(192, 192, 192, 0.28); }
 .tag-online { background: rgba(16, 185, 129, 0.14); color: var(--green); border: 1px solid rgba(16, 185, 129, 0.28); }
+.tag-finished { background: rgba(16, 185, 129, 0.14); color: var(--green); border: 1px solid rgba(16, 185, 129, 0.28); }
+.tag-live { background: rgba(239, 68, 68, 0.14); color: var(--accent); border: 1px solid rgba(239, 68, 68, 0.28); }
 .tag-showmatch { background: rgba(236, 72, 153, 0.14); color: var(--magenta); border: 1px solid rgba(236, 72, 153, 0.28); }
 .tag-frag { background: rgba(249, 115, 22, 0.15); color: var(--orange); border: 1px solid rgba(249, 115, 22, 0.3); }
 .tag-plum { background: rgba(124, 58, 237, 0.16); color: var(--plum); border: 1px solid rgba(124, 58, 237, 0.3); }

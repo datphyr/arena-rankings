@@ -58,8 +58,13 @@ class MatchlistFetcher:
         self._fetcher = fetcher or PageFetcher()
 
     def fetch_page(self, page_num: int) -> Optional[str]:
-        """Fetch a matchlist results page. Returns HTML text or None (404/empty)."""
-        url = f"{MATCHLIST_URL}?page={page_num}&cat=0&status=&search=&evsearch="
+        """Fetch a matchlist results page. Returns HTML text or None (404/empty).
+
+        Uses status=1 (Finished) so we only discover completed matches — live /
+        in-progress ('Open') matches are skipped to avoid parsing incomplete
+        scores/winners (which previously corrupted ratings).
+        """
+        url = f"{MATCHLIST_URL}?page={page_num}&cat=0&status=1&search=&evsearch="
         return self._fetcher.fetch(url)
 
     @staticmethod

@@ -14,6 +14,11 @@
   <div>
     <h1><span class="player-name">{{ t.name }}</span></h1>
     <div class="rank-pills">
+      {% if tournament_status and tournament_status.is_over %}
+      <span class="rank-pill">Status: <span class="tag tag-finished">Finished</span></span>
+      {% elif tournament_status %}
+      <span class="rank-pill">Status: <span class="tag tag-live">In Progress</span></span>
+      {% endif %}
       {% if t.tier %}
       <span class="rank-pill">Tier: <span class="tag tag-{{ t.tier }}">{{ t.tier }}</span></span>
       {% endif %}
@@ -95,7 +100,7 @@
             {% set pos = r.position | ranknum %}
             <span class="rank-badge {{ 'rank-1' if pos == 1 else 'rank-2' if pos == 2 else 'rank-3' if pos == 3 else 'rank-4' if pos == 4 else 'rank-5' if pos == 5 }}">{{ pos }}</span>
           </td>
-          <td class="col-flex"><span class="player-name">{% if r.country %}<span class="flag" title="{{ r.country|upper }}">{{ r.country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ r.player_id }}/{{ slug(r.player_name) }}">{{ r.player_name }}</a></span></td>
+          <td class="col-flex"><span class="player-name">{% if r.player_name %}{% if r.country %}<span class="flag" title="{{ r.country|upper }}">{{ r.country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ r.player_id }}/{{ slug(r.player_name) }}">{{ r.player_name }}</a>{% endif %}</span></td>
           <td class="num col-delta">{% if r.elo_delta is not none %}<span class="{{ 'win' if r.elo_delta > 0 else 'loss' if r.elo_delta < 0 }}">{{ '%+.1f'|format(r.elo_delta) }}</span>{% else %}{% endif %}</td>
           <td class="num col-wr">{{ r.prize if r.prize else '' }}</td>
         </tr>
@@ -110,7 +115,7 @@
 
 {% if bracket and bracket.data.stages %}
 <div class="card">
-  <div class="card-title"><span class="dot"></span>Brackets{% if bracket.source %}<span class="bracket-source">{{ 'Toornament' if bracket.source == 'toornament' else 'Shambler' }}</span>{% endif %}</div>
+  <div class="card-title"><span class="dot"></span>Brackets{% if bracket.source %}<span class="bracket-source">{{ 'Toornament' if bracket.source == 'toornament' else 'Shambler' }}</span>{% endif %}{% if bracket.data.complete is defined %}<span class="tag {{ 'tag-finished' if bracket.data.complete else 'tag-live' }}" style="margin-left:auto;margin-right:0;">{{ 'Finished' if bracket.data.complete else 'Live' }}</span>{% endif %}</div>
   {% for stage in bracket.data.stages %}
     {% if stage.groups %}
     <div class="bracket-stage">
