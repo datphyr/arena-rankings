@@ -73,8 +73,8 @@
               {% if mp.image %}<img class="map-thumb-preview" src="https://www.plusforward.net{{ mp.image }}" alt="{{ mp.name|mapname }}" loading="lazy" onerror="this.onerror=null;this.src='/static/map-unknown.svg';">{% else %}<img class="map-thumb-preview" src="/static/map-unknown.svg" alt="{{ mp.name|mapname }}" loading="lazy">{% endif %}
             </a>
           </td>
-          <td class="center col-score"><span class="{{ 'win' if mp.winner == mp.player1 else 'loss' }}">{{ mp.score1 }}</span></td>
-          <td class="center col-score"><span class="{{ 'win' if mp.winner == mp.player2 else 'loss' }}">{{ mp.score2 }}</span></td>
+          <td class="center col-score"><span class="{{ 'win' if mp.winner == mp.player1 else 'loss' if mp.winner else 'draw' }}">{{ mp.score1 }}</span></td>
+          <td class="center col-score"><span class="{{ 'win' if mp.winner == mp.player2 else 'loss' if mp.winner else 'draw' }}">{{ mp.score2 }}</span></td>
           <td class="center col-flex">{% if mp.winner %}<a class="player-link" href="/player/{{ match.player1_id if mp.winner == mp.player1 else match.player2_id }}/{{ slug(mp.winner) }}">{{ mp.winner }}</a>{% else %}Draw{% endif %}</td>
         </tr>
         {% endfor %}

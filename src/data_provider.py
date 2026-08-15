@@ -489,36 +489,13 @@ def tier_stats_cols() -> list[Col]:
     ]
 
 
-# Module-level caches shared across DataProvider instances (and thus across
-# requests in the long-running web process). The underlying data is static
-# (imported by a separate process), so caching canonical names / countries /
-# player-id lookups / the games list here avoids re-scanning matches on every
-# request. These are small (one entry per player_id) and bounded by the number
-# of players.
-_CANONICAL_CACHE: dict[int, str] = {}
-_COUNTRY_CACHE: dict[int, str] = {}
-_PLAYER_ID_CACHE: dict[str, Optional[int]] = {}
-_GAMES_CACHE: Optional[list[str]] = None
-_PEAK_OVERALL_CACHE: dict[tuple, dict] = {}
-_MAIN_GAMES_CACHE: dict[str, dict[int, str]] = {}
-_MAP_IMAGE_CACHE: dict[int, str] = {}  # map_id -> image path (from maps table)
-_MAP_NAME_CACHE: dict[str, str] = {}  # canonical map name -> image path
-_MAP_ID_NAME_CACHE: dict[int, str] = {}  # map_id -> canonical name (from maps table)
-
-
 class DataProvider:
     """Common data access layer for all consumers."""
 
     def __init__(self, db: Optional[Database] = None):
         self.db = db or Database()
         self._owns_db = db is None
-        # Caches of canonical (most-used) display name / country / resolved
-        # player_id / games list. Shared module-level so they persist across
-        # requests (the data is static).
-        self._canonical_cache: dict[int, str] = _CANONICAL_CACHE
-        self._country_cache: dict[int, str] = _COUNTRY_CACHE
-        self._player_id_cache: dict[str, Optional[int]] = _PLAYER_ID_CACHE
-        self._games_cache: Optional[list[str]] = _GAMES_CACHE
+        self._games_cache: Optional[list[str]] = None
 
     def close(self):
         if self._owns_db:
@@ -534,33 +511,35 @@ class DataProvider:
         ensures a single stable display name per player_id, so the same player
         never shows up under multiple spellings in autocomplete or leaderboards.
         Falls back to the players table name, then to a player_<id> placeholder.
+
+        Queried fresh each call (no module cache) so names appear as soon as
+        parsing records them — a cached value would mask late-arriving names
+        after a reset.
         """
-        missing = [pid for pid in player_ids if pid not in self._canonical_cache]
-        if missing:
-            # Most-used spelling per player_id from player_aliases.
-            rows = self.db.client.execute(
-                """
-                SELECT player_id, argMax(name, count) AS name
-                FROM player_aliases FINAL
-                WHERE player_id IN %(ids)s
-                GROUP BY player_id
-                """,
-                {"ids": tuple(missing)},
+        if not player_ids:
+            return {}
+        # Most-used spelling per player_id from player_aliases.
+        rows = self.db.client.execute(
+            """
+            SELECT player_id, argMax(name, count) AS name
+            FROM player_aliases FINAL
+            WHERE player_id IN %(ids)s
+            GROUP BY player_id
+            """,
+            {"ids": tuple(player_ids)},
+        )
+        found = {r[0]: r[1] for r in rows}
+        # Fallback: players table for ids with no aliases.
+        still = [pid for pid in player_ids if pid not in found]
+        if still:
+            prows = self.db.client.execute(
+                "SELECT player_id, name FROM players FINAL WHERE player_id IN %(ids)s",
+                {"ids": tuple(still)},
             )
-            found = {r[0]: r[1] for r in rows}
-            # Fallback: players table for ids with no aliases.
-            still = [pid for pid in missing if pid not in found]
-            if still:
-                prows = self.db.client.execute(
-                    "SELECT player_id, name FROM players FINAL WHERE player_id IN %(ids)s",
-                    {"ids": tuple(still)},
-                )
-                for pid, name in prows:
-                    if name:
-                        found[pid] = name
-            for pid in missing:
-                self._canonical_cache[pid] = found.get(pid, f"player_{pid}")
-        return {pid: self._canonical_cache[pid] for pid in player_ids}
+            for pid, name in prows:
+                if name:
+                    found.setdefault(pid, name)
+        return {pid: found.get(pid, f"player_{pid}") for pid in player_ids}
 
     def _canonical_name(self, player_id: int) -> str:
         """Canonical (most-used) display name for a single player_id."""
@@ -568,18 +547,21 @@ class DataProvider:
 
     def _countries(self, player_ids: list[int]) -> dict[int, str]:
         """Return the ISO country code for each player_id (from the players
-        table). Missing/unknown players map to '' (no flag). Cached."""
-        missing = [pid for pid in player_ids if pid not in self._country_cache]
-        if missing:
-            rows = self.db.client.execute(
-                "SELECT player_id, country FROM players FINAL WHERE player_id IN %(ids)s",
-                {"ids": tuple(missing)},
-            )
-            for pid, country in rows:
-                self._country_cache[pid] = country or ""
-            for pid in missing:
-                self._country_cache.setdefault(pid, "")
-        return {pid: self._country_cache.get(pid, "") for pid in player_ids}
+        table). Missing/unknown players map to '' (no flag). Queried fresh each
+        call (no module cache) so countries appear once parsing records them.
+        """
+        if not player_ids:
+            return {}
+        rows = self.db.client.execute(
+            "SELECT player_id, country FROM players FINAL WHERE player_id IN %(ids)s",
+            {"ids": tuple(player_ids)},
+        )
+        found = {pid: (country or "") for pid, country in rows}
+        # Include every requested id (missing ones -> '') so callers can
+        # .get(pid, '')-free index without KeyError.
+        for pid in player_ids:
+            found.setdefault(pid, "")
+        return found
 
     def _country(self, player_id: int) -> str:
         """ISO country code for a single player_id ('' if unknown)."""
@@ -587,37 +569,52 @@ class DataProvider:
 
     # --- Map images (from the maps lookup table) ---
 
-    def _load_map_images(self):
-        """Load the full maps table (map_id -> image, name -> image) once."""
-        if not _MAP_IMAGE_CACHE:
-            rows = self.db.client.execute(
-                "SELECT map_id, name, image FROM maps FINAL WHERE image != ''"
-            )
-            for mid, name, image in rows:
-                _MAP_IMAGE_CACHE[mid] = image
-                _MAP_ID_NAME_CACHE[mid] = name
-                if name:
-                    _MAP_NAME_CACHE.setdefault(name, image)
+    def _map_rows(self) -> list[tuple]:
+        """All (map_id, name, image) rows from the maps table.
+
+        Queried fresh each call — the maps table is populated by the parser in
+        a separate process, so a cached copy would miss newly-parsed maps after
+        a reset.
+        """
+        return self.db.client.execute(
+            "SELECT map_id, name, image FROM maps FINAL WHERE image != ''"
+        )
 
     def map_image_by_id(self, map_id: int) -> str:
         """Image path for a map_id ('' if unknown). From the maps table."""
-        self._load_map_images()
-        return _MAP_IMAGE_CACHE.get(map_id, "")
+        rows = self._map_rows()
+        for mid, _name, image in rows:
+            if mid == map_id:
+                return image
+        return ""
 
     def map_image_by_name(self, name: str) -> str:
         """Image path for a canonical map name ('' if unknown)."""
-        self._load_map_images()
-        return _MAP_NAME_CACHE.get(name, "")
+        rows = self._map_rows()
+        for _mid, mname, image in rows:
+            if mname == name:
+                return image
+        return ""
 
     def map_images_by_ids(self, map_ids: list[int]) -> dict[int, str]:
         """{map_id: image} for the given ids ('' for unknown)."""
-        self._load_map_images()
-        return {mid: _MAP_IMAGE_CACHE.get(mid, "") for mid in map_ids}
+        if not map_ids:
+            return {}
+        rows = self.db.client.execute(
+            "SELECT map_id, image FROM maps FINAL WHERE image != '' AND map_id IN %(ids)s",
+            {"ids": tuple(map_ids)},
+        )
+        return {mid: image for mid, image in rows}
 
     def map_images_by_names(self, names: list[str]) -> dict[str, str]:
         """{name: image} for the given canonical names ('' for unknown)."""
-        self._load_map_images()
-        return {n: _MAP_NAME_CACHE.get(n, "") for n in names}
+        if not names:
+            return {}
+        rows = self.db.client.execute(
+            "SELECT name, image FROM maps FINAL WHERE image != '' AND name IN %(names)s",
+            {"names": tuple(names)},
+        )
+        return {name: image for name, image in rows}
 
     def _aliases(self, player_id: int) -> list[str]:
         """All distinct name spellings for a player_id, most-used first,
@@ -669,16 +666,15 @@ class DataProvider:
         by case, e.g. 'pavel' (836) vs 'Pavel' (9152), stay distinct), then
         falls back to case-insensitive matching (so 'PTHY' resolves to 'pthy').
         Prefers player_ratings (players with ratings), then the matches table.
+        Queried fresh each call (no cache) so a player that appears after a
+        reset is found immediately.
         """
-        if name in self._player_id_cache:
-            return self._player_id_cache[name]
         # 1. Exact-case match in players (canonical name source).
         row = self.db.client.execute(
             "SELECT player_id FROM players FINAL WHERE name = %(n)s LIMIT 1",
             {"n": name},
         )
         if row:
-            self._player_id_cache[name] = row[0][0]
             return row[0][0]
         # 2. Case-insensitive match in players.
         row = self.db.client.execute(
@@ -686,7 +682,6 @@ class DataProvider:
             {"n": name},
         )
         if row:
-            self._player_id_cache[name] = row[0][0]
             return row[0][0]
         # 3. Exact-case match in player_aliases (players without ratings yet).
         row = self.db.client.execute(
@@ -694,7 +689,6 @@ class DataProvider:
             {"n": name},
         )
         if row:
-            self._player_id_cache[name] = row[0][0]
             return row[0][0]
         # 4. Case-insensitive match in player_aliases.
         row = self.db.client.execute(
@@ -702,22 +696,23 @@ class DataProvider:
             {"n": name},
         )
         if row:
-            self._player_id_cache[name] = row[0][0]
             return row[0][0]
-        self._player_id_cache[name] = None
         return None
 
     # --- Games ---
 
     def get_games(self) -> list[str]:
-        """Return list of game names (excluding all-games aggregate)."""
-        global _GAMES_CACHE
-        if _GAMES_CACHE is None:
-            rows = self.db.client.execute(
-                "SELECT name FROM games FINAL WHERE name != '' ORDER BY name"
-            )
-            _GAMES_CACHE = [r[0] for r in rows]
-        self._games_cache = _GAMES_CACHE
+        """Return list of game names (excluding all-games aggregate).
+
+        Computed fresh each call: this runs in the read-only web process while
+        writes happen in separate parser processes, so a module-level cache here
+        would go stale (e.g. show 0 games right after a reset before parsing
+        has populated the games table).
+        """
+        rows = self.db.client.execute(
+            "SELECT name FROM games FINAL WHERE name != '' ORDER BY name"
+        )
+        self._games_cache = [r[0] for r in rows]
         return self._games_cache
 
     def autocomplete(self, kind: str, q: str, limit: int = 20) -> list[dict] | list[str]:
@@ -1200,7 +1195,6 @@ class DataProvider:
         are looked up by ID; anything not in the maps table falls back to the
         raw_html data-name / data-image.
         """
-        self._load_map_images()
         # Ordered maplist from raw_html: (map_id, name), deduped by id.
         by_id: dict[int, str] = {}  # map_id -> name (ordered)
         order: list[int] = []
@@ -1230,12 +1224,23 @@ class DataProvider:
         )
         for (mid,) in mrows:
             if mid not in by_id:
-                by_id[mid] = _MAP_ID_NAME_CACHE.get(mid, "")
+                by_id[mid] = ""  # name resolved from maps table below
                 order.append(mid)
         if not order:
             return []
-        # Resolve images by ID; fall back to raw_html data-image for ids not in
-        # the maps table.
+        # Resolve names/images from the maps table by id; fall back to raw_html
+        # data-name / data-image for ids not in the maps table.
+        map_ids = [mid for mid in order if mid]
+        map_names = self.db.client.execute(
+            "SELECT map_id, name FROM maps FINAL WHERE map_id IN %(ids)s",
+            {"ids": tuple(map_ids)} if map_ids else {"ids": (0,)},
+        )
+        name_by_id = {mid: name for mid, name in map_names}
+        map_images = self.db.client.execute(
+            "SELECT map_id, image FROM maps FINAL WHERE map_id IN %(ids)s AND image != ''",
+            {"ids": tuple(map_ids)} if map_ids else {"ids": (0,)},
+        )
+        img_by_id = {mid: image for mid, image in map_images}
         raw_img = {}
         if raw:
             for img, name in re.findall(
@@ -1246,8 +1251,8 @@ class DataProvider:
                     raw_img[int(m.group(1))] = img
         out = []
         for mid in order:
-            name = by_id.get(mid) or _MAP_ID_NAME_CACHE.get(mid, "")
-            image = _MAP_IMAGE_CACHE.get(mid, "") or raw_img.get(mid, "")
+            name = by_id.get(mid) or name_by_id.get(mid, "")
+            image = img_by_id.get(mid, "") or raw_img.get(mid, "")
             out.append({"map_id": mid, "name": name, "image": image})
         return out
 
@@ -1273,7 +1278,7 @@ class DataProvider:
             LEFT JOIN games g FINAL ON g.game_id = m.game_id
             LEFT JOIN tournaments t FINAL ON m.tournament_id = t.tournament_id
             WHERE m.tournament_id = %(t)s
-            ORDER BY m.played_at ASC
+            ORDER BY m.played_at DESC
             LIMIT %(lim)s
             """,
             {"t": tournament_id, "lim": limit},
@@ -1542,6 +1547,11 @@ class DataProvider:
 
         params = {"sys": system, "game": game, "lim": fetch_limit}
         gid = self.db.resolve_game_id(game)
+        if game and not gid:
+            # Requested a specific game that isn't in the DB yet (e.g. right
+            # after a reset before the pipeline has parsed any of its matches).
+            # There are no per-game ratings for an unknown game — return empty.
+            return []
         if gid:
             params["gid"] = gid
         if min_matches > 0:
@@ -1566,7 +1576,7 @@ class DataProvider:
                 query += " ORDER BY rating DESC LIMIT %(lim)s"
             rows = self.db.client.execute(query, params)
 
-            # Batch-fetch main game (most matches) for all player IDs
+            # Batch-fetch main game (most matches) for all player IDs.
             player_ids = [r[0] for r in rows]
             canon = self._canonical_names(player_ids)
             countries = self._countries(player_ids)
@@ -1575,31 +1585,18 @@ class DataProvider:
             if player_ids:
                 # Per-game elo rows have zero duplicates (FINAL is a no-op and
                 # costs a sort); glicko2 per-game rows have duplicates, so keep
-                # FINAL only for glicko2. Cache per system — main_game only
-                # changes on import.
-                mg_cache = _MAIN_GAMES_CACHE.get(system)
-                if mg_cache is not None:
-                    main_games = {pid: mg_cache[pid] for pid in player_ids if pid in mg_cache}
-                    missing_mg = [pid for pid in player_ids if pid not in mg_cache]
-                else:
-                    main_games = {}
-                    missing_mg = list(player_ids)
-                if missing_mg:
-                    mg_final = " FINAL" if system == "glicko2" else ""
-                    mg_rows = self.db.client.execute(
-                        f"SELECT pr.player_id, argMax(g.name, pr.matches_played) AS main_game "
-                        f"FROM player_ratings pr{mg_final} "
-                        f"LEFT JOIN games g FINAL ON g.game_id = pr.game_id "
-                        f"WHERE pr.rating_system = %(sys)s AND pr.game_id != 0 AND pr.player_id IN %(ids)s "
-                        f"GROUP BY pr.player_id",
-                        {"sys": system, "ids": tuple(missing_mg)},
-                    )
-                    if mg_cache is None:
-                        mg_cache = {}
-                        _MAIN_GAMES_CACHE[system] = mg_cache
-                    for r in mg_rows:
-                        main_games[r[0]] = r[1]
-                        mg_cache[r[0]] = r[1]
+                # FINAL only for glicko2. Queried fresh each call (no cache) so
+                # main game reflects the latest ratings after a reset.
+                mg_final = " FINAL" if system == "glicko2" else ""
+                mg_rows = self.db.client.execute(
+                    f"SELECT pr.player_id, argMax(g.name, pr.matches_played) AS main_game "
+                    f"FROM player_ratings pr{mg_final} "
+                    f"LEFT JOIN games g FINAL ON g.game_id = pr.game_id "
+                    f"WHERE pr.rating_system = %(sys)s AND pr.game_id != 0 AND pr.player_id IN %(ids)s "
+                    f"GROUP BY pr.player_id",
+                    {"sys": system, "ids": tuple(player_ids)},
+                )
+                main_games = {pid: name for pid, name in mg_rows}
                 if fetch_peaks:
                     peaks = self._fetch_peaks(player_ids, system)
 
@@ -2947,7 +2944,7 @@ class DataProvider:
         # p1/p2 (same two players across all maps of a match).
         map_rows = self.db.client.execute(
             """
-            SELECT mm.map_index, mp.name, mm.player1_score, mm.player2_score, mm.map_id
+            SELECT mm.map_index, mp.name, mm.player1_score, mm.player2_score, mm.map_id, mp.image
             FROM match_maps mm FINAL
             LEFT JOIN maps mp FINAL ON mp.map_id = mm.map_id
             WHERE mm.match_id = %(mid)s
@@ -2957,7 +2954,6 @@ class DataProvider:
         )
         # Map hover images come from the maps lookup table (by map_id). For
         # unknown maps (map_id=0) fall back to the raw HTML data-image.
-        self._load_map_images()
         images: dict[str, str] = {}
         unknown_ids = [mr[4] for mr in map_rows if mr[4] == 0]
         if unknown_ids:
@@ -2978,7 +2974,7 @@ class DataProvider:
             mid = mr[4]
             # Map-level winner: higher frag score wins the map (draws -> None).
             mwin = mp1 if s1 > s2 else (mp2 if s2 > s1 else None)
-            img = _MAP_IMAGE_CACHE.get(mid, "") if mid else images.get(mr[1], "")
+            img = mr[5] if mid else images.get(mr[1], "")
             maps.append({
                 "index": mr[0],
                 "name": mr[1],
@@ -3492,18 +3488,17 @@ class DataProvider:
         {'elo': n, 'glicko2': n} for per-system thresholds, or a single int
         applied to both.
 
-        Results are cached per (mm_elo, mm_glicko) key at module level — peak
-        ratings only change when new data is imported (separate process).
+        Results are computed fresh each call — peak ratings depend on
+        rating_history which the read-only web process can't invalidate a
+        module-level cache for (writes happen in the separate rank process).
+        The query is a single scan of rating_history (~ms), so caching would
+        only serve stale data.
         """
         if isinstance(min_matches, dict):
             mm_elo = min_matches.get("elo", 0)
             mm_glicko = min_matches.get("glicko2", 0)
         else:
             mm_elo = mm_glicko = min_matches
-        cache_key = (mm_elo, mm_glicko)
-        cached = _PEAK_OVERALL_CACHE.get(cache_key)
-        if cached is not None:
-            return cached
         rows = self.db.client.execute(
             """
             SELECT h.rating_system, h.player_id,
@@ -3530,7 +3525,6 @@ class DataProvider:
                 "peak_date": peak_date,
                 "game": peak_game or "All Games",
             }
-        _PEAK_OVERALL_CACHE[cache_key] = out
         return out
 
     def get_top_players_by_game(self, system: str = "elo", limit: int = 5) -> list[dict]:

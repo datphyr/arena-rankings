@@ -17,6 +17,7 @@ import logging
 import random
 import re
 import time
+import html as _html
 from datetime import datetime
 from typing import Optional
 
@@ -214,7 +215,7 @@ class TournamentResolver:
             r'<h1 class="posttitle">\s*<a[^>]*href="/post/\d+/[^"]*">([^<]+)</a>',
             html, re.DOTALL)
         if m:
-            return re.sub(r'<[^>]+>', '', m.group(1)).strip()
+            return _html.unescape(re.sub(r'<[^>]+>', '', m.group(1)).strip())
         return ""
 
     def _get_existing_name(self, tournament_id: int) -> str:

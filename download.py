@@ -18,10 +18,18 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from config import DAEMON_RESTART_DELAY
 from src.daemon import run_daemon
+from src.db_client import discovery_complete
 from src.match_downloader import download_batch
 
 
+GATE_TIMEOUT_CYCLES = 0  # wait indefinitely (or set a max number of wait cycles)
+
+
 def cycle(args):
+    if not discovery_complete():
+        # Hold off until discovery has scanned back to the oldest match, so we
+        # process the full history oldest→newest (ratings stay chronological).
+        return "waiting for discovery (backward scan not complete)"
     success, failure = download_batch(workers=args.workers, limit=args.limit)
     return f"{success} success, {failure} failure"
 

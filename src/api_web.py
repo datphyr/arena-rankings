@@ -183,6 +183,8 @@ templates.env.filters["avatar_gradient"] = _avatar_gradient
 # layout stays aligned; unknown/empty -> '' (no flag).
 _FLAG_NEUTRAL = "🌐"
 _FLAG_NON_COUNTRY = {"eu", "xx"}
+# PlusForward uses a few non-ISO codes; map them to a renderable flagcdn id.
+_FLAG_ALIAS = {"sca": "gb-sct"}  # Scotland -> Scotland flag (flagcdn)
 
 
 def _flag(code: str) -> str:
@@ -194,7 +196,10 @@ def _flag(code: str) -> str:
     if not code:
         return ""
     code = code.strip().lower()
-    if len(code) != 2 or not code.isalpha():
+    # Aliased non-ISO codes (e.g. sca -> Scotland) map to a full flagcdn id.
+    if code in _FLAG_ALIAS:
+        code = _FLAG_ALIAS[code]
+    elif len(code) != 2 or not code.isalpha():
         return ""
     if code in _FLAG_NON_COUNTRY:
         return _FLAG_NEUTRAL
@@ -491,6 +496,7 @@ def _player_page(request: Request, name: str, game: str = "", limit: int = 50, p
         ctx["player_games"] = sorted({r["game"] for r in ctx["ratings"] if r["game"] != "All Games"})
         # Compute per-game rank for each rating row (for the rank column) in a
         # single batched query instead of one get_player_rank call per row.
+        ranks = {}
         if ctx["ratings"]:
             rank_combos = [
                 {"game": "" if r["game"] == "All Games" else r["game"],
@@ -1029,4 +1035,16 @@ def api_h2h(p1: str, p2: str, game: str = ""):
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("WEB_PORT", "8080"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    # Trust X-Forwarded-For / X-Real-IP set by the nginx reverse proxy so
+    # request logs and client IP reflect the real visitor, not the proxy.
+    # nginx is the only direct peer, so we only trust the proxy headers from
+    # its address.
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=port,
+        proxy_headers=True,
+        forwarded_allow_ips=os.environ.get(
+            "FORWARDED_ALLOW_IPS", "127.0.0.1,10.20.30.40"
+        ),
+    )

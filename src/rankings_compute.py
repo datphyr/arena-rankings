@@ -35,6 +35,29 @@ def _base_k_factor(games_played: int) -> float:
         return float(ELO_K_BASE["veteran"])
 
 
+def _match_result(p1_id: int, p2_id: int, p1_score: int, p2_score: int,
+                  winner_id: int) -> tuple[float, float, str]:
+    """Determine the result (s1, s2, outcome) of a 1v1 match.
+
+    Honors the explicitly recorded winner (winner_id) even when the score is
+    equal (0:0 — e.g. forfeit/walkover where plusforward still marks a winner).
+    Falls back to score comparison, then to a draw (0.5/0.5) when scores are
+    equal and no winner is marked.
+
+    Returns (s1, s2, outcome) where outcome is 'p1' | 'p2' | 'draw' and s1/s2
+    are the rating outcomes (1.0/0.0/0.5) for players 1 and 2.
+    """
+    if winner_id and winner_id == p1_id:
+        return 1.0, 0.0, 'p1'
+    if winner_id and winner_id == p2_id:
+        return 0.0, 1.0, 'p2'
+    if p1_score > p2_score:
+        return 1.0, 0.0, 'p1'
+    if p2_score > p1_score:
+        return 0.0, 1.0, 'p2'
+    return 0.5, 0.5, 'draw'
+
+
 def _k_factor_for_tier(tier: str, games_played: int) -> float:
     """Get Elo K-factor: base (experience) × tier multiplier.
 
@@ -507,17 +530,16 @@ def compute_elo(db: Database, game_name: str = "", full_recompute: bool = False,
         k1 = _k_factor_for_tier(tier, ratings[p1_id]["matches"])
         k2 = _k_factor_for_tier(tier, ratings[p2_id]["matches"])
 
-        # Determine actual score (1 = win, 0 = loss, 0.5 = draw)
-        if p1_score > p2_score:
-            s1, s2 = 1.0, 0.0
+        # Determine actual score (1 = win, 0 = loss, 0.5 = draw).
+        # Honor the recorded winner_id (e.g. 0:0 forfeit wins) — a marked
+        # winner counts as a win even at equal scores.
+        s1, s2, outcome = _match_result(p1_id, p2_id, p1_score, p2_score, winner_id)
+        if outcome == 'p1':
             ratings[p1_id]["wins"] += 1
             ratings[p2_id]["losses"] += 1
-        elif p2_score > p1_score:
-            s1, s2 = 0.0, 1.0
+        elif outcome == 'p2':
             ratings[p1_id]["losses"] += 1
             ratings[p2_id]["wins"] += 1
-        else:
-            s1, s2 = 0.5, 0.5
 
         new_r1, new_r2 = elo.update(r1, r2, s1, k_a=k1, k_b=k2)
         ratings[p1_id]["rating"] = new_r1

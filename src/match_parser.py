@@ -32,6 +32,7 @@ class MapResult:
     player1_name: str = ""
     player2_name: str = ""
     map_id: int = 0
+    image: str = ""  # PlusForward map image path (e.g. /files/images/maps/11_....jpg)
 
 
 @dataclass
@@ -120,14 +121,31 @@ class MatchDetailParser:
         # Parse maps (m_detailed is outside the <div class="match"> area)
         maps = self._parse_maps(html)
 
-        # Determine winner. Only a strictly higher score is a win; equal
-        # scores (0-0, 1-1, ...) are a draw with no winner (winner_id = 0).
-        if scores[0] > scores[1]:
+        # Determine winner. Prefer plusforward's explicit win marker (class='win'
+        # on the winner's score div — present even at 0:0 for forfeits/walkovers).
+        # Fall back to score comparison; if scores are equal and no marker, it's
+        # a draw with no winner (winner_id = 0).
+        win_marker = self._parse_win_marker(content)
+        if win_marker == 1:
+            winner_id = p1["id"]
+        elif win_marker == 2:
+            winner_id = p2["id"]
+        elif scores[0] > scores[1]:
             winner_id = p1["id"]
         elif scores[1] > scores[0]:
             winner_id = p2["id"]
         else:
             winner_id = 0
+
+        # Normalize a marked winner's score to 1:0 in the winner's favor.
+        # PlusForward can mark a winner (forfeit/walkover) while the raw score
+        # reads 0:0; storing 1:0 makes every downstream consumer (match page,
+        # head-to-head, ratings) see a meaningful win instead of a phantom draw.
+        if winner_id and scores[0] == scores[1]:
+            if winner_id == p1["id"]:
+                scores = (1, 0)
+            else:
+                scores = (0, 1)
 
         return MatchDetail(
             match_id=match_id,
@@ -154,44 +172,76 @@ class MatchDetailParser:
         """Parse player information from match content.
 
         Each player dict includes: id, name, country.
+
+        The country flag lives inside the same .m_name_flag block as the player
+        link, so we parse per-block: for each m_name_flag, grab the player link
+        and the flag within that same block. This avoids grabbing unrelated
+        flags from page navigation (the old code took the first two flags on
+        the whole page, which were usually header/nav flags, not the players').
         """
         players = []
 
-        # /player/{id}/{name}/{category_id}/{game-slug}/
-        player_pattern = re.compile(
-            r'<a href="/player/(\d+)/([^/]+)/\d+/[^/]+/">\s*([^<]+)</a>',
+        # A .m_name_flag block contains the player link and their country flag.
+        block_pattern = re.compile(
+            r'<div class="m_name_flag">(.*?)</div>\s*</div>',
+            re.DOTALL | re.IGNORECASE,
+        )
+        link_pattern = re.compile(
+            r'<a href="/player/(\d+)/([^/"]+)/\d+/[^"]*/">\s*([^<]+)</a>',
             re.IGNORECASE,
         )
+        flag_pattern = re.compile(r's_flag\s+s_flag-([a-z0-9]{2,3})', re.IGNORECASE)
 
-        for m in player_pattern.finditer(content):
-            player_id = int(m.group(1))
-            display_name = m.group(3).strip()
+        for block in block_pattern.finditer(content):
+            block_html = block.group(1)
+            lm = link_pattern.search(block_html)
+            if not lm:
+                continue
+            player_id = int(lm.group(1))
+            display_name = html_module.unescape(lm.group(3).strip())
+            fm = flag_pattern.search(block_html)
+            country = fm.group(1).lower() if fm else ""
             players.append({
                 "id": player_id,
-                "name": html_module.unescape(display_name),
-                "country": "",
+                "name": display_name,
+                "country": country,
             })
-
-        # Find country flags
-        flag_pattern = re.compile(
-            r'<span class="s_flag\s+s_flag-([a-z]{2})"[^>]*title="([^"]+)"'
-        )
-        flags = flag_pattern.findall(content)
-        for i, (code, country) in enumerate(flags[:2]):
-            if i < len(players):
-                players[i]["country"] = code
+            if len(players) >= 2:
+                break
 
         return players
 
     def _parse_scores(self, content: str) -> Optional[tuple[int, int]]:
         """Parse match scores."""
         score_pattern = re.compile(
-            r'<div class="res"><div(?:\s+class="(?:win|loss)")?>(-?\d+)</div></div>'
+            r'<div class="res"><div(?P<cls>\s+class="(?:win|loss)")?>(?P<score>-?\d+)</div></div>'
         )
-        scores = score_pattern.findall(content)
+        scores = [(m.group('score'), m.group('cls')) for m in score_pattern.finditer(content)]
         if len(scores) >= 2:
-            return (int(scores[0]), int(scores[1]))
+            return (int(scores[0][0]), int(scores[1][0]))
         return None
+
+    def _parse_win_marker(self, content: str) -> int:
+        """Return 1 if plusforward marks player 1 as the winner via class='win',
+        2 if player 2, else 0 (no explicit marker / draw).
+
+        PlusForward marks the winner with class='win' on the winner's score div,
+        even when the score is 0:0 (e.g. forfeit / walkover). We honor that
+        explicit marker when present; otherwise the caller falls back to score
+        comparison.
+        """
+        score_pattern = re.compile(
+            r'<div class="res"><div(?P<cls>\s+class="(?:win|loss)")?>(?P<score>-?\d+)</div></div>'
+        )
+        items = [m.group('cls') or '' for m in score_pattern.finditer(content)]
+        if len(items) >= 2:
+            w1 = 'class="win"' in items[0]
+            w2 = 'class="win"' in items[1]
+            if w1 and not w2:
+                return 1
+            if w2 and not w1:
+                return 2
+        return 0
 
     def _parse_match_info(self, content: str) -> dict:
         """Parse match metadata (date, tournament, format, etc.)."""
@@ -291,14 +341,20 @@ class MatchDetailParser:
             p1_score = int(m.group(4))
             p2_score = int(m.group(5))
             p2_name = m.group(6).strip()
-            # Map ID: extract from the data-image attribute of this row's span.
-            # The span is the first <span ...> inside the <td class="map">.
+            # Map ID + image: extract from the data-image attribute of this
+            # row's span (e.g. /files/images/maps/11_bloodrun.jpg -> id 11).
             map_id = 0
+            image = ""
             span = re.search(r'<td class="map">\s*<span[^>]*>', m.group(0))
             if span:
-                img = re.search(r'data-image="[^"]*/maps/(\d+)_[^"]*"', span.group(0))
+                img = re.search(r'data-image="([^"]*)/maps/(\d+)_[^"]*"', span.group(0))
                 if img:
-                    map_id = int(img.group(1))
+                    image = img.group(1) + "/maps/" + img.group(2) + "_"
+                    map_id = int(img.group(2))
+                    # Recover the full image path from the span's data-image.
+                    full = re.search(r'data-image="([^"]+)"', span.group(0))
+                    if full:
+                        image = full.group(1)
             maps.append(MapResult(
                 map_name=map_name,
                 player1_score=p1_score,
@@ -306,6 +362,7 @@ class MatchDetailParser:
                 player1_name=p1_name,
                 player2_name=p2_name,
                 map_id=map_id,
+                image=image,
             ))
 
         return maps
@@ -420,6 +477,14 @@ def store_parsed_match(db: Database, detail: MatchDetail, resolver: TournamentRe
     # Insert maps (if any)
     db.insert_match_maps(detail.match_id, detail.maps, detail.played_at)
 
+    # Populate the canonical maps table (map_id -> name/image/game) from the
+    # parsed map data, so the player map chart and tournament map plaques have
+    # names/images. ReplacingMergeTree dedups by map_id.
+    if detail.maps:
+        for mp in detail.maps:
+            if mp.map_id > 0 and mp.map_name and mp.map_name != "?":
+                db.upsert_map(mp.map_id, mp.map_name, mp.image, detail.game_name)
+
 
 def _parse_worker_init():
     """Initialize thread-local resources (one per worker thread).
@@ -508,7 +573,7 @@ def parse_all_matches(limit: int = 0, workers: int = 0) -> tuple[int, int]:
     query = (
         "SELECT match_id, played_at, raw_html FROM match_registry FINAL "
         "WHERE status = 'downloaded' "
-        "ORDER BY played_at DESC"
+        "ORDER BY played_at ASC"
     )
     if limit > 0:
         query += f" LIMIT {limit}"

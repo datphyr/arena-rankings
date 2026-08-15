@@ -55,6 +55,26 @@ def _coerce_datetime(value):
     return datetime(1970, 1, 1)
 
 
+def discovery_complete() -> bool:
+    """True once discovery has scanned back to the oldest match.
+
+    Opens its own connection and checks the discovery_state latch. Used by the
+    download/parse pipeline components to gate their first run: they hold off
+    until discovery has catalogued the full match history (oldest match found)
+    so processing runs oldest→newest and nothing is missed.
+    """
+    try:
+        db = Database()
+        try:
+            return db.is_backward_complete()
+        finally:
+            db.close()
+    except Exception:
+        # If we can't check the gate, fail closed (don't start the pipeline
+        # on a half-scanned history).
+        return False
+
+
 class Database:
     """ClickHouse database client."""
 
@@ -221,6 +241,16 @@ class Database:
             [(key, str(value))],
         )
 
+    def is_backward_complete(self) -> bool:
+        """True once discovery has scanned back to the oldest match.
+
+        Used as the gate for the download/parse pipeline: they wait until
+        discovery has catalogued the full match history (oldest match found)
+        before starting to process, so ratings are computed chronologically
+        and nothing is missed. Latches to True forever once reached.
+        """
+        return self.get_discovery_state("backward_complete", "0") == "1"
+
     def get_last_known_page(self) -> int:
         """Get the last known page from discovery state (0 if not set)."""
         val = self.get_discovery_state("last_known_page", "0")
@@ -250,6 +280,24 @@ class Database:
             "INSERT INTO games "
             "(game_id, name) VALUES",
             [(game_id, name)],
+        )
+
+    # --- Maps ---
+
+    def upsert_map(self, map_id: int, name: str, image: str = "", game: str = ""):
+        """Insert or update a map record (map_id -> name/image/game).
+
+        Populated by the pipeline from parsed match map data (ReplacingMergeTree
+        dedups by map_id, so re-parsing the same map just overwrites metadata).
+        The maps table is the canonical source for map names/images used by the
+        player map chart and tournament map plaques.
+        """
+        if map_id <= 0 or not name:
+            return
+        self.client.execute(
+            "INSERT INTO maps "
+            "(map_id, name, image, game) VALUES",
+            [(map_id, name, image, game)],
         )
 
     # --- Player aliases ---

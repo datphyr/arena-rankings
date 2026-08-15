@@ -30,7 +30,7 @@ def get_pending_matches(db: Database, limit: int = 0) -> list[tuple[int, datetim
     query = (
         "SELECT match_id, played_at FROM match_registry FINAL "
         "WHERE status = 'discovered' "
-        "ORDER BY played_at DESC"
+        "ORDER BY played_at ASC"
     )
     if limit > 0:
         query += f" LIMIT {limit}"

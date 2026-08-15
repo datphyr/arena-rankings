@@ -22,11 +22,16 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from config import DAEMON_RESTART_DELAY, GLICKO2_PERIOD
 from src.daemon import run_daemon
-from src.db_client import Database
+from src.db_client import Database, discovery_complete
 from src.rankings_compute import compute_elo, compute_glicko2, store_ratings, _check_match_state
 
 
 def cycle(args):
+    if not discovery_complete():
+        # Hold off until discovery has scanned back to the oldest match, so
+        # ratings are computed over the complete history (oldest→newest).
+        return "waiting for discovery (backward scan not complete)"
+
     db = Database()
 
     # Determine which games to compute ratings for
