@@ -921,6 +921,9 @@ def _h2h_page(request: Request, p1, p2, p1_id=None, p2_id=None, game="", partial
             p1_match = _smart_match_mode(p1, dx.name_exists)
             p2_match = _smart_match_mode(p2, dx.name_exists)
             ctx["result"] = dx.get_head_to_head(p1, p2, game=game, match=p1_match, match2=p2_match, p1_id=p1_id, p2_id=p2_id)
+            # The game filter should only offer games the two players have
+            # actually played each other in (not every game in the DB).
+            ctx["games"] = sorted({m["game"] for m in ctx["result"]["matches"] if m.get("game")})
             # Server-side sort of the match history (consistent with matches/tournaments).
             ctx["result"]["matches"] = _sort_matches(ctx["result"]["matches"], sort_col, sort_dir)
             # Convert match datetimes for template use
@@ -929,6 +932,19 @@ def _h2h_page(request: Request, p1, p2, p1_id=None, p2_id=None, game="", partial
             # Current rating for each player (best rating across systems/games)
             ctx["p1_ratings"] = _ratings_by_system(dx.get_player_ratings(p1))
             ctx["p2_ratings"] = _ratings_by_system(dx.get_player_ratings(p2))
+            # Per-map win-rate for player 1 vs player 2 (respects the game filter).
+            # Resolve ids if not already known (name-based URLs).
+            hp1 = ctx["result"].get("p1_id") or p1_id
+            hp2 = ctx["result"].get("p2_id") or p2_id
+            if hp1 and hp2:
+                ctx["h2h_map_edges"] = dx.get_h2h_map_edges(hp1, hp2, game=game)
+                ctx["h2h_map_games"] = sorted({m["game"] for m in ctx["h2h_map_edges"]["maps"] if m.get("game")})
+            else:
+                ctx["h2h_map_edges"] = {"overall": 0, "maps": []}
+                ctx["h2h_map_games"] = []
+        else:
+            ctx["h2h_map_edges"] = {"overall": 0, "maps": []}
+            ctx["h2h_map_games"] = []
     if partial:
         return templates.TemplateResponse(request, "_h2h_results.html", ctx)
     return templates.TemplateResponse(request, "h2h.html", ctx)
@@ -1030,6 +1046,16 @@ def api_h2h(p1: str, p2: str, game: str = ""):
         p1_match = _smart_match_mode(p1, dx.name_exists)
         p2_match = _smart_match_mode(p2, dx.name_exists)
         return dx.get_head_to_head(p1, p2, game=game, match=p1_match, match2=p2_match)
+
+
+@app.get("/api/h2h/map-edges")
+def api_h2h_map_edges(p1_id: int, p2_id: int, game: str = ""):
+    """Per-map win-rate for player 1 vs player 2, filtered by game.
+    Returns the same shape as the page's `h2h_map_edges` JSON so the chart can
+    be re-rendered in place when the game filter changes."""
+    game = _resolve_game(game)
+    with DataProvider() as dx:
+        return dx.get_h2h_map_edges(p1_id, p2_id, game=game)
 
 
 if __name__ == "__main__":

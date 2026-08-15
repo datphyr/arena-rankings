@@ -61,6 +61,10 @@
       bind();
       // Re-init client-side sortable tables in the swapped content.
       if (window.initSortableTables) window.initSortableTables(next);
+      // Rebuild any chart whose builder is exposed globally (e.g. the h2h map
+      // chart). The builder reads fresh data from the swapped canvas's
+      // data-edges attribute, so it renders the new filter's data.
+      if (window.buildH2hMapEdgeChart) window.buildH2hMapEdgeChart();
     }
   }
 

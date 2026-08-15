@@ -1052,6 +1052,26 @@ a.tier-link:hover .tag { filter: brightness(1.2); }
 .filters button:hover { filter: brightness(1.15); box-shadow: 0 4px 16px var(--glow-orange); }
 .filters label { color: var(--text-dim); font-size: 0.85rem; font-weight: 500; }
 
+/* Swap-players button in the h2h filter form: subtle, icon-like, not a
+   loud gradient CTA (it's a convenience control, not a primary action). */
+.filters button.swap-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-weight: 700;
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.filters button.swap-btn:hover {
+  color: var(--copper);
+  border-color: var(--copper);
+  filter: none;
+  box-shadow: none;
+}
+
 /* ─── Autocomplete dropdown ─────────────────────────── */
 .ac-wrap {
   position: relative;

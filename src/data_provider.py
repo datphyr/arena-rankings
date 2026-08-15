@@ -3575,38 +3575,56 @@ class DataProvider:
             out.append({"game": game, "placements": [{"place": p, "count": counts[p]} for p in sorted(counts)]})
         return out
 
-    def get_player_map_edges(self, player_id: int, min_games: int = 5, game: str = "") -> dict:
+    def get_map_edges(self, player_id: int, opponent_id: int | None = None,
+                      min_games: int = 5, game: str = "") -> dict:
         """Per-map win-rate edge for a player, centered on their overall win rate.
 
-        For each map the player has played (>= min_games), computes:
+        Shared by the player page and the head-to-head page. For each map the
+        player has played (>= min_games), computes from `player_id`'s perspective:
           - wins / losses on that map
           - win_rate (0..1)
           - edge = win_rate - overall_win_rate (signed, in fraction)
-        Returns {"overall": float, "maps": [{name, wins, losses, win_rate, edge}]}
-        sorted by games played descending. edge > 0 = overperforms on that map
-        (green), edge < 0 = underperforms (red). `game` filters to one game
-        (empty = all games).
+        Returns {"overall": float, "maps": [{name, image, game, wins, losses,
+        win_rate, edge}]} sorted by edge descending. edge > 0 = overperforms on
+        that map (green), edge < 0 = underperforms (red). `game` filters to one
+        game (empty = all games).
+
+        When `opponent_id` is None, all of the player's matches are considered
+        (player page). When `opponent_id` is set, only matches between the two
+        players are considered, still from `player_id`'s perspective (head-to-head).
         """
         game_cond = " AND mp.game = %(game)s" if game else ""
+        if opponent_id is not None:
+            where = (
+                "((m.player1_id = %(pid)s AND m.player2_id = %(oid)s)"
+                " OR (m.player1_id = %(oid)s AND m.player2_id = %(pid)s))"
+                " AND mm.map_id != 0"
+            )
+            params = {"pid": player_id, "oid": opponent_id,
+                      **({"game": game} if game else {})}
+        else:
+            where = "(m.player1_id = %(pid)s OR m.player2_id = %(pid)s) AND mm.map_id != 0"
+            params = {"pid": player_id, **({"game": game} if game else {})}
         rows = self.db.client.execute(
             """
-            SELECT mp.name, mp.image, mp.game, mm.player1_score, mm.player2_score, m.player1_id, m.player2_id
+            SELECT mp.name, mp.image, mp.game, mm.player1_score, mm.player2_score,
+                   m.player1_id, m.player2_id
             FROM match_maps mm FINAL
             LEFT JOIN matches m ON m.match_id = mm.match_id
             LEFT JOIN maps mp FINAL ON mp.map_id = mm.map_id
-            WHERE (m.player1_id = %(pid)s OR m.player2_id = %(pid)s) AND mm.map_id != 0
-            """ + game_cond,
-            {"pid": player_id, **({"game": game} if game else {})},
+            WHERE """ + where + game_cond,
+            params,
         )
         stats: dict[str, dict] = {}
         images: dict[str, str] = {}
         games: dict[str, str] = {}
-        for name, image, game, s1, s2, p1, p2 in rows:
+        for name, image, gname, s1, s2, p1, p2 in rows:
             if not name:
                 continue
             st = stats.setdefault(name, {"wins": 0, "losses": 0})
             images.setdefault(name, image or "")
-            games.setdefault(name, game or "")
+            games.setdefault(name, gname or "")
+            # Always from player_id's perspective: player wins if their score is higher.
             if p1 == player_id:
                 if s1 > s2:
                     st["wins"] += 1
@@ -3637,6 +3655,16 @@ class DataProvider:
             })
         maps.sort(key=lambda m: -m["edge"])
         return {"overall": round(overall, 4), "maps": maps}
+
+    def get_player_map_edges(self, player_id: int, min_games: int = 5, game: str = "") -> dict:
+        """Per-map win-rate edge for a player (player page).
+        Thin wrapper over get_map_edges with no opponent."""
+        return self.get_map_edges(player_id, opponent_id=None, min_games=min_games, game=game)
+
+    def get_h2h_map_edges(self, p1_id: int, p2_id: int, min_games: int = 1, game: str = "") -> dict:
+        """Per-map win-rate for player 1 against player 2 (head-to-head).
+        Thin wrapper over get_map_edges with an opponent, from p1's perspective."""
+        return self.get_map_edges(p1_id, opponent_id=p2_id, min_games=min_games, game=game)
 
     def get_player_summary(
         self,
