@@ -52,6 +52,14 @@ PF_COOKIE_HEADER = os.environ.get(
 # of throughput vs. rate-limit risk on PlusForward.
 DOWNLOADER_WORKERS = int(os.environ.get("DOWNLOADER_WORKERS", "1"))
 
+# Wall detection — consecutive invalid posts (generic "Post | Plus Forward"
+# title) that must appear before we treat it as the end of the sequence (the
+# wall) rather than a run of deleted posts. The largest deleted block observed
+# is ~85 posts, so 250 is a safe margin: it bypasses any deleted block without
+# false positives. Set lower to detect the wall sooner, higher to tolerate
+# larger deleted blocks.
+WALL_CONSECUTIVE = int(os.environ.get("WALL_CONSECUTIVE", "100"))
+
 # Parser workers — default: use all CPU cores
 # Set to 1 for single-threaded (debugging), or N to limit.
 PARSER_WORKERS = int(os.environ.get("PARSER_WORKERS", str(os.cpu_count() or 1)))

@@ -33,6 +33,7 @@ from typing import Optional
 
 from src.db_client import Database
 from src.fetcher import PageFetcher
+from config import WALL_CONSECUTIVE
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +42,6 @@ logger = logging.getLogger(__name__)
 # "Invalid post id." body text is unreliable due to transient partial loads).
 GENERIC_TITLE = "Post | Plus Forward"
 TITLE_RE = re.compile(r"<title>([^<]*)</title>", re.IGNORECASE)
-
-# Deleted blocks are bounded; the largest observed is ~85 posts.
-# Using 250 as a safe margin — well above any realistic deleted block,
-# but small enough that we detect the real wall promptly.
-WALL_CONSECUTIVE = 250  # consecutive invalid posts to consider it the wall
 
 
 def _is_wall(fetcher: "PostDownloader", post_id: int, consec_bad: int) -> tuple[bool, bool]:
