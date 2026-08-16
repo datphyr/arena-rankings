@@ -1199,7 +1199,7 @@ class DataProvider:
         by_id: dict[int, str] = {}  # map_id -> name (ordered)
         order: list[int] = []
         rows = self.db.client.execute(
-            "SELECT raw_html FROM tournaments WHERE tournament_id = %(t)s",
+            "SELECT raw_html FROM raw_posts WHERE post_id = %(t)s",
             {"t": tournament_id},
         )
         raw = rows[0][0] if rows else ""
@@ -1676,23 +1676,27 @@ class DataProvider:
             return results[offset:offset + limit]
 
     def get_ratings_for_players(
-        self, player_ids: list, system: str = "glicko2", game: str = ""
+        self, player_ids: list, system: str = "glicko2", game: str = "", min_matches: int = 0
     ) -> dict:
         """Batch-fetch a rating (default glicko2, all games) for a set of player IDs.
 
-        Returns {player_id: rating_value}.
+        Returns {player_id: rating_value}. If min_matches > 0, only players with
+        at least that many matches are included (so e.g. Glicko-2 ratings below
+        the 30-match threshold are not shown as if they were valid).
         """
         if not player_ids:
             return {}
         gid = self.db.resolve_game_id(game)
+        mm_cond = " AND matches_played >= %(mm)s" if min_matches > 0 else ""
         rows = self.db.client.execute(
-            """
+            f"""
             SELECT player_id, rating
             FROM player_ratings FINAL
             WHERE rating_system = %(sys)s AND game_id = %(gid)s
-              AND player_id IN %(ids)s
+              AND player_id IN %(ids)s{mm_cond}
             """,
-            {"sys": system, "gid": gid, "ids": tuple(player_ids)},
+            {"sys": system, "gid": gid, "ids": tuple(player_ids),
+             **({"mm": min_matches} if min_matches > 0 else {})},
         )
         return {r[0]: round(r[1], 1) for r in rows}
 
@@ -2960,7 +2964,7 @@ class DataProvider:
         unknown_ids = [mr[4] for mr in map_rows if mr[4] == 0]
         if unknown_ids:
             reg = self.db.client.execute(
-                "SELECT raw_html FROM match_registry WHERE match_id = %(mid)s", {"mid": match_id}
+                "SELECT raw_html FROM raw_posts WHERE post_id = %(mid)s", {"mid": match_id}
             )
             if reg and reg[0][0]:
                 for m in re.finditer(
@@ -3281,14 +3285,13 @@ class DataProvider:
         date_range = (mrow[1], mrow[2])
         tournaments = mrow[3]
         total_players = self.db.client.execute("SELECT count() FROM players FINAL")[0][0]
-        # Combine the match_registry counts (downloaded + discovered) into one
-        # query instead of two round-trips.
+        # Combine the raw_posts counts (parsed + total) into one query.
         reg = self.db.client.execute(
             """
             SELECT
-                countIf(status = 'parsed') AS downloaded,
-                uniqExact(match_id) AS discovered
-            FROM match_registry
+                countIf(status = 'parsed') AS parsed,
+                count() AS total
+            FROM raw_posts
             """
         )[0]
         total_downloaded = reg[0]

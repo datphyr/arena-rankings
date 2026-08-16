@@ -55,18 +55,19 @@ def _coerce_datetime(value):
     return datetime(1970, 1, 1)
 
 
-def discovery_complete() -> bool:
-    """True once discovery has scanned back to the oldest match.
+def download_complete() -> bool:
+    """True once the download stage has scanned to the end of posts (hit the wall).
 
     Opens its own connection and checks the discovery_state latch. Used by the
-    download/parse pipeline components to gate their first run: they hold off
-    until discovery has catalogued the full match history (oldest match found)
-    so processing runs oldest→newest and nothing is missed.
+    parse/rank pipeline components to gate their first run: they hold off until
+    the download stage has catalogued the full post history (reached the
+    'Invalid post id.' wall) so processing runs oldest→newest and nothing is
+    missed.
     """
     try:
         db = Database()
         try:
-            return db.is_backward_complete()
+            return db.is_download_complete()
         finally:
             db.close()
     except Exception:
@@ -162,67 +163,85 @@ class Database:
     def __exit__(self, *args):
         self.close()
 
-    # --- Match Registry ---
+    # --- Raw Posts ---
 
-    def register_matches(self, match_ids: list[int], played_at_timestamps: Optional[list] = None) -> int:
-        """Insert newly discovered match IDs into registry. Skips already-known IDs.
+    def store_raw_post(self, post_id: int, raw_html: str, status: str = "downloaded", reason: str = ""):
+        """Insert or update a raw post (downloaded HTML + processing status).
 
-        Args:
-            match_ids: List of match IDs.
-            played_at_timestamps: Optional list of datetime values (same length as match_ids).
-                Timestamp from the matchlist results page — when the match was played.
-
-        Returns:
-            Number of newly registered matches.
+        ReplacingMergeTree dedups by post_id, so re-downloading a post
+        overwrites its previous row.
         """
-        if not match_ids:
-            return 0
-
-        rows = self.client.execute(
-            "SELECT match_id FROM match_registry FINAL WHERE match_id IN %(ids)s",
-            {"ids": tuple(match_ids)},
-        )
-        existing = {r[0] for r in rows}
-
-        new_indices = [i for i, mid in enumerate(match_ids) if mid not in existing]
-        if not new_indices:
-            return 0
-
-        zero_ts = datetime(1970, 1, 1)
-        data = []
-        for i in new_indices:
-            mid = match_ids[i]
-            ts = played_at_timestamps[i] if played_at_timestamps and i < len(played_at_timestamps) else zero_ts
-            data.append((mid, ts, "", "discovered"))
         self.client.execute(
-            "INSERT INTO match_registry "
-            "(match_id, played_at, raw_html, status) VALUES",
-            data,
+            "INSERT INTO raw_posts (post_id, raw_html, status, reason) VALUES",
+            [(post_id, raw_html, status, reason)],
         )
-        return len(new_indices)
 
-    def registry_match_exists(self, match_id: int) -> bool:
-        """Check if a match_id is already in the registry."""
+    def store_raw_posts(self, posts: list[tuple]):
+        """Batch-insert raw posts. Each tuple: (post_id, raw_html, status, reason)."""
+        if not posts:
+            return
+        self.client.execute(
+            "INSERT INTO raw_posts (post_id, raw_html, status, reason) VALUES",
+            posts,
+        )
+
+    def raw_post_exists(self, post_id: int) -> bool:
+        """Check if a post_id is already in raw_posts."""
         rows = self.client.execute(
-            "SELECT 1 FROM match_registry WHERE match_id = %(mid)s LIMIT 1",
-            {"mid": match_id},
+            "SELECT 1 FROM raw_posts WHERE post_id = %(pid)s LIMIT 1",
+            {"pid": post_id},
         )
         return len(rows) > 0
 
-    def registry_get_highest_match_id(self) -> int:
-        """Get the highest match_id in the registry (0 if empty)."""
-        rows = self.client.execute("SELECT max(match_id) FROM match_registry FINAL")
+    def raw_post_get(self, post_id: int) -> Optional[tuple]:
+        """Return (post_id, raw_html, status, reason) for a post, or None."""
+        rows = self.client.execute(
+            "SELECT post_id, raw_html, status, reason FROM raw_posts FINAL WHERE post_id = %(pid)s",
+            {"pid": post_id},
+        )
+        return rows[0] if rows else None
+
+    def raw_post_get_html(self, post_id: int) -> str:
+        """Return the raw_html for a post, or empty string if not stored."""
+        rows = self.client.execute(
+            "SELECT raw_html FROM raw_posts FINAL WHERE post_id = %(pid)s",
+            {"pid": post_id},
+        )
+        return rows[0][0] if rows else ""
+
+    def raw_post_get_highest_id(self) -> int:
+        """Get the highest post_id in raw_posts (0 if empty)."""
+        rows = self.client.execute("SELECT max(post_id) FROM raw_posts FINAL")
         return rows[0][0] if rows and rows[0][0] else 0
 
-    def registry_count_total(self) -> int:
-        """Total matches in registry."""
-        rows = self.client.execute("SELECT count() FROM match_registry FINAL")
+    def raw_post_count_total(self) -> int:
+        """Total posts in raw_posts."""
+        rows = self.client.execute("SELECT count() FROM raw_posts FINAL")
         return rows[0][0] if rows else 0
 
-    def registry_get_all_ids(self) -> set[int]:
-        """Get all known match IDs from the registry."""
-        rows = self.client.execute("SELECT match_id FROM match_registry FINAL")
+    def raw_post_get_all_ids(self) -> set[int]:
+        """Get all known post IDs from raw_posts."""
+        rows = self.client.execute("SELECT post_id FROM raw_posts FINAL")
         return {r[0] for r in rows}
+
+    def raw_post_get_downloaded(self, limit: int = 0) -> list[tuple]:
+        """Get posts with status 'downloaded' (ready to parse), oldest first.
+
+        Returns list of (post_id, raw_html) tuples.
+        """
+        query = (
+            "SELECT post_id, raw_html FROM raw_posts FINAL "
+            "WHERE status = 'downloaded' ORDER BY post_id ASC"
+        )
+        if limit > 0:
+            query += f" LIMIT {limit}"
+        rows = self.client.execute(query)
+        return [(r[0], r[1]) for r in rows]
+
+    def raw_post_mark(self, post_id: int, status: str, reason: str = ""):
+        """Update a post's status (and optional reason), preserving its HTML."""
+        html = self.raw_post_get_html(post_id)
+        self.store_raw_post(post_id, html, status, reason)
 
     # --- Discovery State ---
 
@@ -241,24 +260,20 @@ class Database:
             [(key, str(value))],
         )
 
-    def is_backward_complete(self) -> bool:
-        """True once discovery has scanned back to the oldest match.
-
-        Used as the gate for the download/parse pipeline: they wait until
-        discovery has catalogued the full match history (oldest match found)
-        before starting to process, so ratings are computed chronologically
-        and nothing is missed. Latches to True forever once reached.
+    def is_download_complete(self) -> bool:
+        """True once the download stage has hit the post wall (scanned past the
+        last valid post). Latches to True forever once reached.
         """
-        return self.get_discovery_state("backward_complete", "0") == "1"
+        return self.get_discovery_state("download_complete", "0") == "1"
 
-    def get_last_known_page(self) -> int:
-        """Get the last known page from discovery state (0 if not set)."""
-        val = self.get_discovery_state("last_known_page", "0")
+    def get_last_scanned_post(self) -> int:
+        """Get the last post_id scanned by the download stage (0 if not set)."""
+        val = self.get_discovery_state("last_scanned_post", "0")
         return int(val)
 
-    def set_last_known_page(self, page: int):
-        """Update the last known page in discovery state."""
-        self.set_discovery_state("last_known_page", str(page))
+    def set_last_scanned_post(self, post_id: int):
+        """Update the last scanned post id in discovery state."""
+        self.set_discovery_state("last_scanned_post", str(post_id))
 
     # --- Players ---
 
@@ -330,7 +345,6 @@ class Database:
         tournament_id: int,
         name: str,
         tier: str = "",
-        raw_html: str = "",
         game: str = "",
         prize_money: str = "",
         tourney_format: str = "",
@@ -344,30 +358,29 @@ class Database:
 
         All columns live in the single tournaments table. The parsed fields
         (game, prize, formats, maplist, rankings) are extracted from the
-        tournament page HTML by the TournamentResolver; raw_html is the cached
-        page source.
+        tournament page HTML by the TournamentResolver. The raw page HTML
+        itself lives in raw_posts (post_id = tournament_id).
         """
         schedule_start = _coerce_datetime(schedule_start)
         schedule_end = _coerce_datetime(schedule_end)
         self.client.execute(
             "INSERT INTO tournaments "
-            "(tournament_id, name, tier, raw_html, game, prize_money, "
+            "(tournament_id, name, tier, game, prize_money, "
             " tourney_format, match_format, schedule_start, schedule_end, "
             " maplist, rankings) VALUES",
             [(
-                tournament_id, name, tier, raw_html, game, prize_money,
+                tournament_id, name, tier, game, prize_money,
                 tourney_format, match_format, schedule_start, schedule_end,
                 maplist or [], rankings,
             )],
         )
 
     def get_tournament_html(self, tournament_id: int) -> str:
-        """Return the cached raw_html for a tournament, or empty string if not stored."""
-        rows = self.client.execute(
-            "SELECT raw_html FROM tournaments FINAL WHERE tournament_id = %(t)s",
-            {"t": tournament_id},
-        )
-        return rows[0][0] if rows else ""
+        """Return the cached raw_html for a tournament, or empty string if not stored.
+
+        The HTML lives in raw_posts (post_id = tournament_id).
+        """
+        return self.raw_post_get_html(tournament_id)
 
     def get_tournament_details(self, tournament_id: int) -> dict:
         """Return parsed tournament metadata dict, or None if not stored."""
@@ -881,12 +894,14 @@ class Database:
         """Load tournament tiers for tournaments that have raw_html stored.
 
         Used by the resolver preload — only tournaments with cached HTML
-        can skip the network fetch. Tournaments with tier but no raw_html
-        still need to be fetched.
+        (in raw_posts) can skip the network fetch. Tournaments with tier but
+        no raw_html still need to be fetched.
 
         Returns dict mapping tournament_id -> tier string.
         """
         rows = self.client.execute(
-            "SELECT tournament_id, tier FROM tournaments FINAL WHERE raw_html != ''"
+            "SELECT t.tournament_id, t.tier FROM tournaments t FINAL "
+            "JOIN raw_posts rp FINAL ON rp.post_id = t.tournament_id "
+            "WHERE rp.raw_html != ''"
         )
         return {tid: tier for tid, tier in rows}

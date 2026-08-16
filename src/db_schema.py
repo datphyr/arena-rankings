@@ -1,7 +1,8 @@
 """ClickHouse DDL schema for Arena Rankings System.
 
 Tables:
-  - match_registry: central index of discovered matches + raw HTML storage
+  - raw_posts: central store of downloaded PlusForward post HTML (matches,
+    tournaments, and everything else) + processing status
   - players: player profiles (ID, name, country)
   - games: game lookup table (game_id -> name)
   - tournaments: tournament metadata (ID, name, tier)
@@ -15,6 +16,10 @@ Normalization principle: IDs are the primary keys everywhere. Names live only
 in their canonical tables (players, games, tournaments, maps). Hot tables
 (matches, match_maps) reference entities by ID only. All IDs come from the
 parse step of the pipeline (PlusForward page data), never hand-crafted.
+
+Raw HTML lives only in raw_posts (post_id -> html). The pipeline downloads
+all posts into raw_posts (status 'downloaded'), then parses them into the
+structured tables, marking each 'parsed' or 'skipped' (with a reason).
 """
 
 # Drop existing database and recreate
@@ -32,26 +37,26 @@ DROP_TABLES = [
     "DROP TABLE IF EXISTS arena_rankings.player_aliases",
     "DROP TABLE IF EXISTS arena_rankings.rating_history",
     "DROP TABLE IF EXISTS arena_rankings.player_ratings",
-    "DROP TABLE IF EXISTS arena_rankings.match_registry",
+    "DROP TABLE IF EXISTS arena_rankings.raw_posts",
     "DROP TABLE IF EXISTS arena_rankings.tournament_brackets",
 ]
 
 # DDL statements in dependency order
 DDL_STATEMENTS = [
-    # match_registry — Central index of discovered matches + raw HTML storage
-    # match_id is the permanent PlusForward post ID (stable, never shifts)
-    # raw_html is empty string until downloaded in Phase 2
-    # played_at: when the match was played (from matchlist results page at discovery)
-    # status: discovered → downloaded → parsed | failed
+    # raw_posts — Central store of downloaded PlusForward post HTML.
+    # post_id is the permanent PlusForward post ID (stable, never shifts).
+    # raw_html is the full downloaded page (sidebars stripped via the anon
+    # settings cookie). status: downloaded → parsed | skipped. reason records
+    # why a post was skipped (e.g. 'not a match', 'team format', 'invalid').
     """
-    CREATE TABLE IF NOT EXISTS arena_rankings.match_registry (
-        match_id UInt64,
-        played_at DateTime DEFAULT toDateTime(0),
+    CREATE TABLE IF NOT EXISTS arena_rankings.raw_posts (
+        post_id UInt64,
         raw_html String DEFAULT '',
-        status LowCardinality(String) DEFAULT 'discovered'
+        status LowCardinality(String) DEFAULT 'downloaded',
+        reason String DEFAULT ''
     )
     ENGINE = ReplacingMergeTree()
-    ORDER BY (played_at, match_id)
+    ORDER BY post_id
     """,
 
     # players — Player profiles extracted from match pages
@@ -80,18 +85,18 @@ DDL_STATEMENTS = [
     """,
 
     # tournaments — Tournament metadata extracted from the tournament page itself
-    # (PlusForward post page at {BASE_URL}/post/{tournament_id}/). Name, tier, and
-    # raw_html are populated by the TournamentResolver when it fetches the page.
-    # The *_parsed columns (game, prize, formats, maplist, rankings) are extracted
-    # from the same page's .tour_info / .tour_rankings blocks. rankings is a JSON
-    # array: [{"position": "1st", "player_id": 123, "player_name": "...", "prize": "60 USD"}]
+    # (PlusForward post page at {BASE_URL}/post/{tournament_id}/). Name and tier are
+    # populated by the TournamentResolver when it fetches the page. The raw HTML
+    # lives in raw_posts (post_id = tournament_id); the *_parsed columns (game,
+    # prize, formats, maplist, rankings) are extracted from the same page's
+    # .tour_info / .tour_rankings blocks. rankings is a JSON array:
+    # [{"position": "1st", "player_id": 123, "player_name": "...", "prize": "60 USD"}]
     # tournament_id is the PlusForward post ID of the tournament page
     """
     CREATE TABLE IF NOT EXISTS arena_rankings.tournaments (
         tournament_id UInt64,
         name String,
         tier LowCardinality(String) DEFAULT '',
-        raw_html String DEFAULT '',
         game LowCardinality(String) DEFAULT '',
         prize_money String DEFAULT '',
         tourney_format LowCardinality(String) DEFAULT '',

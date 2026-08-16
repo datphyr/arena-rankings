@@ -7,7 +7,7 @@ backups/<db>_<timestamp>.tar.zst
 
 Why Parquet + zstd + HTTP:
   - Parquet with zstd compresses the raw HTML extremely well (~100x), so the
-    3.2GB match_registry becomes ~30MB.
+    raw_posts HTML becomes a small fraction of its size.
   - The HTTP interface (port 8123) returns raw format bytes, which the native
     driver can't (it parses into tuples). Streaming via requests avoids loading
     the whole table into memory (no OOM).
@@ -62,7 +62,7 @@ ALL_TABLES = [
     "tournaments",
     "matches",
     "match_maps",
-    "match_registry",
+    "raw_posts",
     "rating_history",
     "player_ratings",
 ]

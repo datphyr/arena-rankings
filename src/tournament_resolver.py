@@ -33,9 +33,8 @@ DEFAULT_TIER = ""
 class TournamentResolver:
     """Resolve tournament tier + metadata by fetching and parsing the tournament page.
 
-    Uses ClickHouse for HTML caching — raw_html is stored in the tournaments table,
-    same pattern as match_registry stores match HTML. Parsed metadata is stored in
-    the same tournaments row.
+    Uses ClickHouse for HTML caching — raw HTML is stored in raw_posts
+    (post_id = tournament_id). Parsed metadata is stored in the tournaments row.
     """
 
     # Class-level stats for observability.
@@ -147,7 +146,7 @@ class TournamentResolver:
                             # Preserve existing metadata; only update the name.
                             det = self._db.get_tournament_details(tournament_id) or {}
                             self._db.upsert_tournament(
-                                tournament_id, parsed_name, tier, raw_html=html,
+                                tournament_id, parsed_name, tier,
                                 game=det.get("game", ""),
                                 prize_money=det.get("prize_money", ""),
                                 tourney_format=det.get("tourney_format", ""),
@@ -194,8 +193,10 @@ class TournamentResolver:
         # name only if the page has no name (avoids clobbering a known name
         # with empty when resolving a tournament page without a title).
         name = self._parse_name(html) or self._get_existing_name(tournament_id)
+        # Store the raw page HTML in raw_posts (post_id = tournament_id).
+        self._db.store_raw_post(tournament_id, html, "parsed")
         self._db.upsert_tournament(
-            tournament_id, name, tier, raw_html=html,
+            tournament_id, name, tier,
             game=details["game"], prize_money=details["prize_money"],
             tourney_format=details["tourney_format"], match_format=details["match_format"],
             schedule_start=details["schedule_start"], schedule_end=details["schedule_end"],

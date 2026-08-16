@@ -12,7 +12,7 @@ Accepts positional arguments to choose what to reset:
     python3 reset.py --dry-run rankings  # show what would happen
 
 Data categories:
-    downloaded  → match_registry (IDs + raw HTML), tournaments (names, tiers, HTML), discovery_state
+    downloaded  → raw_posts (downloaded post HTML), tournaments (names, tiers), discovery_state
     parsed      → matches, match_maps, players (extracted from raw HTML)
     rankings    → player_ratings, rating_history (computed from matches)
 """
@@ -62,7 +62,7 @@ from src.db_schema import CREATE_DATABASE, DDL_STATEMENTS, DROP_DATABASE
 # Tables by category
 RANKING_TABLES = ["player_ratings", "rating_history"]
 PARSED_TABLES = ["matches", "match_maps", "players"]
-DOWNLOADED_TABLES = ["match_registry", "tournaments", "discovery_state"]
+DOWNLOADED_TABLES = ["raw_posts", "tournaments", "discovery_state"]
 
 VALID_TARGETS = ["rankings", "parsed", "all"]
 
@@ -127,35 +127,35 @@ def reset_parsed(client: Client, db_name: str, dry: bool) -> None:
             truncate_table(client, table, db_name)
             print(f"    → truncated")
 
-    # Reset status in match_registry from 'parsed'/'failed' → 'discovered'
+    # Reset status in raw_posts from 'parsed'/'skipped' → 'downloaded'
     # so the parser reprocesses them from stored raw_html.
-    reg_count = table_count(client, "match_registry", db_name)
+    reg_count = table_count(client, "raw_posts", db_name)
     parsed_count = client.execute(
-        "SELECT count() FROM match_registry FINAL WHERE status != 'discovered'"
+        "SELECT count() FROM raw_posts FINAL WHERE status != 'downloaded'"
     )[0][0]
-    print(f"\n  match_registry: {reg_count} rows ({parsed_count} to reset to discovered)")
+    print(f"\n  raw_posts: {reg_count} rows ({parsed_count} to reset to downloaded)")
 
     if not dry and parsed_count > 0:
-        # ReplacingMergeTree: insert new rows with status='discovered'
-        # for all matches that aren't already discovered.
+        # ReplacingMergeTree: insert new rows with status='downloaded'
+        # for all posts that aren't already downloaded.
         rows = client.execute(
-            "SELECT match_id, played_at, raw_html FROM match_registry FINAL "
-            "WHERE status != 'discovered'"
+            "SELECT post_id, raw_html FROM raw_posts FINAL "
+            "WHERE status != 'downloaded'"
         )
         if rows:
             BATCH = 2000
             total = 0
             for i in range(0, len(rows), BATCH):
                 batch = rows[i:i + BATCH]
-                data = [(r[0], r[1], r[2], "discovered") for r in batch]
+                data = [(r[0], r[1], "downloaded", "") for r in batch]
                 client.execute(
-                    "INSERT INTO match_registry "
-                    "(match_id, played_at, raw_html, status) VALUES",
+                    "INSERT INTO raw_posts "
+                    "(post_id, raw_html, status, reason) VALUES",
                     data,
                 )
                 total += len(data)
-                print(f"    → {total}/{len(rows)} matches reset to discovered", end="\r")
-            print(f"    → {total}/{len(rows)} matches reset to discovered")
+                print(f"    → {total}/{len(rows)} posts reset to downloaded", end="\r")
+            print(f"    → {total}/{len(rows)} posts reset to downloaded")
 
     print("\n  ✓ Parsed data cleared. Daemon will reprocess on next cycle.")
 
@@ -163,10 +163,10 @@ def reset_parsed(client: Client, db_name: str, dry: bool) -> None:
 def reset_all(client: Client, db_name: str, dry: bool, do_restore: bool) -> None:
     """Full reset: drop database, recreate tables, optionally restore downloaded data.
 
-    Downloaded tables (match_registry, tournaments, discovery_state) are preserved
-    via backup.py (Parquet+zstd single archive) so the 5GB+ match_registry raw HTML
-    is backed up durably and restored OOM-free. backup.py is the single source of
-    truth for backup/restore.
+    Downloaded tables (raw_posts, tournaments, discovery_state) are preserved
+    via backup.py (Parquet+zstd single archive) so the raw_posts HTML is backed
+    up durably and restored OOM-free. backup.py is the single source of truth
+    for backup/restore.
     """
     import backup as backup_mod
 

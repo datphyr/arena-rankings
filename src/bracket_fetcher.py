@@ -511,7 +511,9 @@ def backfill(db, limit: int = 0, max_age_days: int = None):
     """
     import datetime
     f = BracketFetcher(db)
-    rows = db.client.execute("SELECT tournament_id, raw_html FROM tournaments FINAL WHERE raw_html != ''")
+    rows = db.client.execute(
+        "SELECT post_id, raw_html FROM raw_posts FINAL WHERE raw_html != ''"
+    )
     todo = []
     cutoff = None
     if max_age_days:

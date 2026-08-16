@@ -1,16 +1,15 @@
 # Arena Rankings
 
-Automated esports player rankings for competitive arena shooters. The project continuously discovers matches from [PlusForward](https://www.plusforward.net), downloads the match pages, parses them, and computes **Elo** and **Glicko-2** ratings that are served through a web site, a JSON API, and Discord/Twitch chat bots. It is game-agnostic and tracks multiple titles side by side (e.g. Quake Champions, Quake Live, Quake 3 Arena, Quake 3 CPMA, Quake 4, Quake World), each with its own leaderboards and ratings.
+Automated esports player rankings for competitive arena shooters. The project downloads **all** posts from [PlusForward](https://www.plusforward.net) into a central raw store, parses the match/tournament pages, and computes **Elo** and **Glicko-2** ratings that are served through a web site, a JSON API, and Discord/Twitch chat bots. It is game-agnostic and tracks multiple titles side by side (e.g. Quake Champions, Quake Live, Quake 3 Arena, Quake 3 CPMA, Quake 4, Quake World), each with its own leaderboards and ratings.
 
 ## Overview
 
 Arena Rankings is a full data pipeline + front-end for competitive player ratings:
 
-1. **Discovery** — scans the PlusForward matchlist and registers new matches.
-2. **Download** — batch-downloads each match's HTML page.
-3. **Parse** — extracts structured data (players, scores, maps, tournaments) from the HTML.
-4. **Rank** — computes **Elo** and **Glicko-2** ratings from the parsed matches.
-5. **Serve** — exposes the results via a web app, a JSON API, and Discord/Twitch bots.
+1. **Download** — scans `/post/1` → `/post/N` sequentially and stores every page's HTML in the `raw_posts` table (status `downloaded`). Sidebar cookies shrink each page ~50%.
+2. **Parse** — reads `raw_posts`, extracts structured data (players, scores, maps, tournaments) into the normalized tables, marking each post `parsed` or `skipped` (with a reason).
+3. **Rank** — computes **Elo** and **Glicko-2** ratings from the parsed matches.
+4. **Serve** — exposes the results via a web app, a JSON API, and Discord/Twitch bots.
 
 All components are supervised by a daemon (`daemon.py`) that starts them in dependency order and restarts any that crash.
 
@@ -19,14 +18,14 @@ Data is stored in **ClickHouse**.
 ## Architecture
 
 ```
- PlusForward (matchlist + match pages)
+ PlusForward (all posts /post/1..N)
         │
         ▼
- ┌─────────────┐   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
- │  discovery  │──>│  download   │──>│    parse    │──>│    rank     │
- └─────────────┘   └─────────────┘   └─────────────┘   └─────────────┘
-        │               │               │               │
-        └───────────────┴───────┬───────┴───────────────┘
+ ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
+ │  download   │──>│    parse    │──>│    rank     │
+ └─────────────┘   └─────────────┘   └─────────────┘
+        │               │               │
+        └───────────────┴───────┬───────┘
                                 ▼
                          ┌─────────────┐
                          │  ClickHouse │
@@ -40,8 +39,8 @@ Data is stored in **ClickHouse**.
      └─────────┘           └─────────┘           └─────────┘
 ```
 
-- **Pipeline wrappers** (top-level scripts): `discovery.py`, `download.py`, `parse.py`, `rank.py`, `reset.py`, `backup.py`.
-- **Shared logic** lives in `src/`: match discovery/download/parsing, rankings computation, the database client/schema, the data provider (single query layer used by every consumer), and the bots/web app.
+- **Pipeline wrappers** (top-level scripts): `download.py`, `parse.py`, `rank.py`, `reset.py`, `backup.py`.
+- **Shared logic** lives in `src/`: post download, parsing, rankings computation, the database client/schema, the data provider (single query layer used by every consumer), and the bots/web app.
 - **`cli.py`** provides a command-line interface into the same data.
 - **`daemon.py`** supervises every component as a subprocess and forwards signals for graceful shutdown.
 

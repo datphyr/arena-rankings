@@ -326,8 +326,13 @@ def home(request: Request, sort: str = Query("elo", pattern="^(elo|glicko2)$")):
         ctx["stats"] = dx.get_stats()
         ctx["tier_stats"] = dx.get_tournament_stats()
         ctx["top_elo"] = dx.get_top_players(game="", system="elo", limit=10, min_matches=MIN_MATCHES_ELO, fetch_peaks=False)
-        # Batch-fetch glicko2 ratings for the top Elo players (combined)
-        glicko = dx.get_ratings_for_players([p["player_id"] for p in ctx["top_elo"]], system="glicko2", game="")
+        # Batch-fetch glicko2 ratings for the top Elo players (combined). Only
+        # include players with >= MIN_MATCHES_GLICKO2 matches, so a sub-threshold
+        # Glicko-2 rating is never shown as if it were valid.
+        glicko = dx.get_ratings_for_players(
+            [p["player_id"] for p in ctx["top_elo"]], system="glicko2", game="",
+            min_matches=MIN_MATCHES_GLICKO2,
+        )
         for p in ctx["top_elo"]:
             p["glicko"] = glicko.get(p["player_id"])
         ctx["top_glicko"] = dx.get_top_players(game="", system="glicko2", limit=10, min_matches=MIN_MATCHES_GLICKO2, fetch_peaks=False)
@@ -359,7 +364,10 @@ def top_players_partial(request: Request, sort: str = Query("elo", pattern="^(el
                 p["elo"] = elo.get(p["player_id"])
         else:
             players = dx.get_top_players(game="", system="elo", limit=10, min_matches=MIN_MATCHES_ELO, fetch_peaks=False)
-            glicko = dx.get_ratings_for_players([p["player_id"] for p in players], system="glicko2", game="")
+            glicko = dx.get_ratings_for_players(
+                [p["player_id"] for p in players], system="glicko2", game="",
+                min_matches=MIN_MATCHES_GLICKO2,
+            )
             for p in players:
                 p["glicko"] = glicko.get(p["player_id"])
     return templates.TemplateResponse(request, "_top_players.html", {"top_players": players, "top_sort": sort})

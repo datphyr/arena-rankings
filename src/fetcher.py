@@ -27,6 +27,7 @@ from typing import Optional
 
 from config import (
     HTTP_TIMEOUT,
+    PF_COOKIE_HEADER,
     RATE_LIMIT_DELAY,
     RETRY_BACKOFF,
     USER_AGENTS,
@@ -84,16 +85,21 @@ class PageFetcher:
             self._last_request_time = time.time()
 
             try:
+                cmd = [
+                    "curl", "-s", "--compressed",
+                    "--connect-timeout", str(HTTP_TIMEOUT),
+                    "--max-time", str(HTTP_TIMEOUT),
+                    "-A", ua,
+                    "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "-H", "Accept-Language: en-US,en;q=0.5",
+                ]
+                # Send the PlusForward cookie header (accepts cookies + disables
+                # sidebars) so the server omits sidebar HTML, halving page size.
+                if PF_COOKIE_HEADER:
+                    cmd += ["-H", f"Cookie: {PF_COOKIE_HEADER}"]
+                cmd += [url]
                 result = subprocess.run(
-                    [
-                        "curl", "-s", "--compressed",
-                        "--connect-timeout", str(HTTP_TIMEOUT),
-                        "--max-time", str(HTTP_TIMEOUT),
-                        "-A", ua,
-                        "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                        "-H", "Accept-Language: en-US,en;q=0.5",
-                        url,
-                    ],
+                    cmd,
                     capture_output=True,
                     timeout=HTTP_TIMEOUT + 2,
                 )

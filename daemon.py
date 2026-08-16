@@ -51,14 +51,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import DAEMON_RESTART_DELAY
+from config import DAEMON_RESTART_DELAY, DOWNLOADER_WORKERS
 
 logger = logging.getLogger("arena")
 
 # Components in dependency order: (name, script, default args)
-# Note: "discord" is the Discord bot — Twitch bot will be added later
+# Note: "discord" is the Discord bot — Twitch bot will be added later.
+# There is no separate discovery stage: download scans /post/N sequentially.
 COMPONENTS = [
-    ("discovery", "discovery.py", ["--daemon"]),
     ("download",  "download.py",  ["--daemon"]),
     ("parse",     "parse.py",     ["--daemon"]),
     ("rank",      "rank.py",      ["--daemon"]),
@@ -72,12 +72,8 @@ COMPONENT_WIDTH = max(len(n) for n, _, _ in COMPONENTS)
 
 # Map inner logger names to component names for clean prefixes
 LOGGER_NAME_MAP = {
-    "match_discovery": "discovery",
-    "src.match_discovery": "discovery",
-    "match_downloader": "download",
-    "src.match_downloader": "download",
-    "match_download": "download",
-    "src.match_download": "download",
+    "post_downloader": "download",
+    "src.post_downloader": "download",
     "match_parser": "parse",
     "src.match_parser": "parse",
     "rankings_compute": "rank",
@@ -297,7 +293,7 @@ def main():
     parser.add_argument("--no-discord", action="store_true", help="Skip Discord bot")
     parser.add_argument("--no-twitch", action="store_true", help="Skip Twitch bot")
     parser.add_argument("--no-web", action="store_true", help="Skip web site")
-    parser.add_argument("--workers", "-w", type=int, default=1, help="Download workers (default: 1)")
+    parser.add_argument("--workers", "-w", type=int, default=DOWNLOADER_WORKERS, help=f"Download workers (default: {DOWNLOADER_WORKERS})")
     parser.add_argument("--delay", type=int, default=DAEMON_RESTART_DELAY, help=f"Restart delay for crashed components (default: {DAEMON_RESTART_DELAY})")
     parser.add_argument("--restart-delay", type=int, default=0, help="Override restart delay for crashed components (default: 0 = instant restart). Takes precedence over --delay.")
     parser.add_argument("--verbose", "-v", action="store_true", help="Debug logging")

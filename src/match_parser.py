@@ -69,6 +69,48 @@ class MatchDetailParser:
             logger.error(f"parse failed: {match_id}: {e}")
             return None
 
+    def parse_with_reason(self, html: str, match_id: int) -> tuple[Optional[MatchDetail], str]:
+        """Parse a post, returning (detail, reason).
+
+        On success reason is ''. On failure reason is a short classifier:
+          - 'not a match'  : page has no match area (news/VOD/forum/etc.)
+          - 'invalid'      : page is a deleted/invalid post
+          - 'team format'  : a match but not 1v1 duel (2v2, TDM, CTF, ...)
+          - 'parse error'  : a duel match that failed to parse fully
+        """
+        try:
+            detail = self._parse(html, match_id)
+            if detail is not None:
+                return detail, ""
+            return None, self._classify_skip(html, match_id)
+        except Exception as e:
+            logger.error(f"parse failed: {match_id}: {e}")
+            return None, "parse error"
+
+    def _classify_skip(self, html: str, match_id: int) -> str:
+        """Classify why a post failed to parse into a MatchDetail."""
+        html = html or ""
+        # Deleted post: title is exactly 'deleted | Plus Forward'.
+        m = re.search(r"<title>([^<]*)</title>", html, re.IGNORECASE)
+        if m and m.group(1).strip().lower().startswith("deleted"):
+            return "invalid"
+        # No match area at all → not a match post (news, VOD, forum, ...).
+        if not re.search(r'<div class="match">', html):
+            return "not a match"
+        # Has a match area but isn't a 1v1 duel (team format).
+        m = re.search(r'<div class="match">(.*?)</div><!--posthits=', html, re.DOTALL)
+        if not m:
+            m = re.search(r'<div class="match">(.*?)</div>\s*<div class="sharelinks">', html, re.DOTALL)
+        if m:
+            info = self._parse_match_info(m.group(1))
+            fmt = info.get("format", "").lower()
+            if fmt and "duel" not in fmt and "1v1" not in fmt:
+                return "team format"
+            # Has a match area but no scores → upcoming/live match, not yet played.
+            if self._parse_scores(m.group(1)) is None:
+                return "not played"
+        return "parse error"
+
     def _parse(self, html: str, match_id: int) -> Optional[MatchDetail]:
         """Internal parse implementation."""
         # Find the main match area
@@ -499,6 +541,44 @@ def _parse_worker_init():
     return _parse_worker_init._local
 
 
+def _is_tournament_post(html: str) -> bool:
+    """True if the page is a tournament page (has tournament structure)."""
+    return bool(html) and "postinnercontent" in html and "tour_info" in html
+
+
+def _parse_post(db, parser, resolver, bracket_fetcher, post_id: int, raw_html: str) -> tuple[bool, str]:
+    """Parse a single downloaded post (match or tournament) and store it.
+
+    Returns (success, reason). On success reason is ''. On failure reason is a
+    short classifier ('not a match', 'team format', 'invalid', 'parse error').
+    """
+    # Tournament post → resolve via TournamentResolver (stores metadata + HTML).
+    if _is_tournament_post(raw_html):
+        try:
+            resolver.resolve(post_id)
+            db.raw_post_mark(post_id, "parsed")
+            return True, ""
+        except Exception as e:
+            logger.error(f"tournament resolve failed: {post_id}: {e}")
+            db.raw_post_mark(post_id, "skipped", "parse error")
+            return False, "parse error"
+
+    # Match post → parse via MatchDetailParser.
+    detail, reason = parser.parse_with_reason(raw_html, post_id)
+    if detail is None:
+        db.raw_post_mark(post_id, "skipped", reason or "parse error")
+        return False, reason or "parse error"
+
+    try:
+        store_parsed_match(db, detail, resolver, bracket_fetcher)
+        db.raw_post_mark(post_id, "parsed")
+        return True, ""
+    except Exception as e:
+        logger.error(f"store failed: {post_id}: {e}")
+        db.raw_post_mark(post_id, "skipped", "parse error")
+        return False, "parse error"
+
+
 def _parse_worker(task: tuple, preloaded_tiers: dict = None) -> tuple[int, bool, str]:
     """Parse and store a single match in a worker thread.
 
@@ -522,27 +602,11 @@ def _parse_worker(task: tuple, preloaded_tiers: dict = None) -> tuple[int, bool,
         if preloaded_tiers:
             local.resolver.preload_tiers(preloaded_tiers)
 
-    match_id, orig_played_at, raw_html = task
+    match_id, raw_html = task
     try:
-        detail = local.parser.parse(raw_html, match_id)
-        if detail is None:
-            # INSERT new row with failed status, same played_at so ReplacingMergeTree dedups
-            local.db.client.execute(
-                "INSERT INTO match_registry "
-                "(match_id, played_at, raw_html, status) VALUES",
-                [(match_id, orig_played_at, raw_html, "failed")],
-            )
-            return match_id, False, "parse failed"
-
-        # Store structured data first (tier resolution happens here)
-        store_parsed_match(local.db, detail, local.resolver, local.bracket_fetcher)
-        # Only mark as parsed if store succeeded
-        local.db.client.execute(
-            "INSERT INTO match_registry "
-            "(match_id, played_at, raw_html, status) VALUES",
-            [(match_id, detail.played_at, raw_html, "parsed")],
-        )
-        return match_id, True, ""
+        ok, reason = _parse_post(local.db, local.parser, local.resolver,
+                                 local.bracket_fetcher, match_id, raw_html)
+        return match_id, ok, reason
     except Exception as e:
         return match_id, False, str(e)
 
@@ -569,21 +633,13 @@ def parse_all_matches(limit: int = 0, workers: int = 0) -> tuple[int, int]:
 
     db = Database()
 
-    # Get all matches with raw_html downloaded but not yet parsed
-    query = (
-        "SELECT match_id, played_at, raw_html FROM match_registry FINAL "
-        "WHERE status = 'downloaded' "
-        "ORDER BY played_at ASC"
-    )
-    if limit > 0:
-        query += f" LIMIT {limit}"
-
-    rows = db.client.execute(query)
+    # Get all posts downloaded but not yet parsed (status 'downloaded').
+    rows = db.raw_post_get_downloaded(limit)
     total = len(rows)
     db.close()
 
     if total == 0:
-        logger.debug("no matches to parse")
+        logger.debug("no posts to parse")
         return 0, 0
 
     logger.info(f"{total} to parse | {workers}w")
@@ -602,38 +658,18 @@ def parse_all_matches(limit: int = 0, workers: int = 0) -> tuple[int, int]:
         fetcher = PageFetcher()
         resolver = TournamentResolver(db, fetcher)
         try:
-            for i, (match_id, orig_played_at, raw_html) in enumerate(rows, 1):
-                detail = parser.parse(raw_html, match_id)
-                if detail is None:
-                    failure += 1
-                    db.client.execute(
-                        "INSERT INTO match_registry "
-                        "(match_id, played_at, raw_html, status) VALUES",
-                        [(match_id, orig_played_at, raw_html, "failed")],
-                    )
+            for i, (match_id, raw_html) in enumerate(rows, 1):
+                ok, reason = _parse_post(db, parser, resolver, None, match_id, raw_html)
+                if ok:
+                    success += 1
                 else:
-                    try:
-                        store_parsed_match(db, detail, resolver)
-                        db.client.execute(
-                            "INSERT INTO match_registry "
-                            "(match_id, played_at, raw_html, status) VALUES",
-                            [(match_id, detail.played_at, raw_html, "parsed")],
-                        )
-                        success += 1
-                    except Exception as e:
-                        logger.error(f"store failed: {match_id}: {e}")
-                        db.client.execute(
-                            "INSERT INTO match_registry "
-                            "(match_id, played_at, raw_html, status) VALUES",
-                            [(match_id, orig_played_at, raw_html, "failed")],
-                        )
-                        failure += 1
+                    failure += 1
 
                 if i % progress_interval == 0 or i == total:
                     elapsed = time.time() - start_time
                     rate = i / elapsed if elapsed > 0 else 0
                     pct = i * 100 // total
-                    logger.debug(f"{i}/{total} ({pct}%) — {success} ok, {failure} fail, {rate:.1f}/s")
+                    logger.debug(f"{i}/{total} ({pct}%) — {success} ok, {failure} skip, {rate:.1f}/s")
         finally:
             db.close()
     else:
@@ -647,8 +683,8 @@ def parse_all_matches(limit: int = 0, workers: int = 0) -> tuple[int, int]:
 
         try:
             with ThreadPoolExecutor(max_workers=workers) as executor:
-                futures = {executor.submit(_parse_worker, (mid, played_at, html), preloaded_tiers): mid
-                           for mid, played_at, html in rows}
+                futures = {executor.submit(_parse_worker, (mid, html), preloaded_tiers): mid
+                           for mid, html in rows}
 
                 for i, future in enumerate(as_completed(futures), 1):
                     mid = futures[future]
@@ -658,7 +694,9 @@ def parse_all_matches(limit: int = 0, workers: int = 0) -> tuple[int, int]:
                             success += 1
                         else:
                             failure += 1
-                            if err and err != "parse failed":
+                            # Expected skips (not a match / team format / invalid)
+                            # are common — don't log them as warnings.
+                            if err and err not in ("not a match", "team format", "invalid", "not played", "parse error"):
                                 logger.warning(f"parse failed: {match_id}: {err}")
                     except Exception as e:
                         logger.error(f"parse error: {mid}: {e}")
@@ -668,7 +706,7 @@ def parse_all_matches(limit: int = 0, workers: int = 0) -> tuple[int, int]:
                         elapsed = time.time() - start_time
                         rate = i / elapsed if elapsed > 0 else 0
                         pct = i * 100 // total
-                        logger.debug(f"{i}/{total} ({pct}%) — {success} ok, {failure} fail, {rate:.1f}/s")
+                        logger.debug(f"{i}/{total} ({pct}%) — {success} ok, {failure} skip, {rate:.1f}/s")
         finally:
             # Worker DB connections are closed when threads exit.
             # For long-running processes, we rely on thread cleanup.

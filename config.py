@@ -31,7 +31,25 @@ USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 ]
 
-# Downloader workers — network limited, single-threaded by default
+# PlusForward anonymous settings cookie (pf_anon_settings) with both sidebars
+# and all sidebar boxes (streams/activity/calendar/matches) disabled. This makes
+# the server omit the sidebar HTML entirely, roughly halving each page's size.
+# Obtained once via POST /settings/ with anon_updatesettings=1 (no account
+# needed). Override via PF_ANON_SETTINGS_COOKIE if you want different prefs.
+PF_ANON_SETTINGS_COOKIE = os.environ.get(
+    "PF_ANON_SETTINGS_COOKIE",
+    "%7B%22tz%22%3A%22UTC%22%2C%22cindents%22%3A0%2C%22theme%22%3A%22default%22%2C%22featured%22%3A1%2C%22topbar%22%3A%22default%22%2C%22sidebar%22%3A%7B%22left%22%3A%7B%22enabled%22%3A0%2C%22boxes%22%3A%5B%5D%7D%2C%22right%22%3A%7B%22enabled%22%3A0%2C%22boxes%22%3A%5B%5D%7D%7D%7D",
+)
+# Cookie header sent on every PlusForward request (accepts cookies + disables
+# sidebars). Empty string = no cookie header.
+PF_COOKIE_HEADER = os.environ.get(
+    "PF_COOKIE_HEADER",
+    f"pf_cookiewarning=1; pf_anon_settings={PF_ANON_SETTINGS_COOKIE}",
+)
+
+# Downloader workers — concurrent post downloads. Measured: ~5/s at 1 worker,
+# ~38/s at 8 workers, ~34/s at 16 (network-bound plateau). 8 is a good balance
+# of throughput vs. rate-limit risk on PlusForward.
 DOWNLOADER_WORKERS = int(os.environ.get("DOWNLOADER_WORKERS", "1"))
 
 # Parser workers — default: use all CPU cores
