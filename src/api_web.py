@@ -929,9 +929,10 @@ def _h2h_page(request: Request, p1, p2, p1_id=None, p2_id=None, game="", partial
             # Convert match datetimes for template use
             for m in ctx["result"]["matches"]:
                 m["played_at_str"] = _fmt_dt(m.get("played_at"))
-            # Current rating for each player (best rating across systems/games)
-            ctx["p1_ratings"] = _ratings_by_system(dx.get_player_ratings(p1))
-            ctx["p2_ratings"] = _ratings_by_system(dx.get_player_ratings(p2))
+            # Current rating for each player (respects the game filter: shows
+            # the per-game rating when a game is selected, overall when all).
+            ctx["p1_ratings"] = _ratings_by_system(dx.get_player_ratings(p1, game=game))
+            ctx["p2_ratings"] = _ratings_by_system(dx.get_player_ratings(p2, game=game))
             # Per-map win-rate for player 1 vs player 2 (respects the game filter).
             # Resolve ids if not already known (name-based URLs).
             hp1 = ctx["result"].get("p1_id") or p1_id
@@ -939,12 +940,16 @@ def _h2h_page(request: Request, p1, p2, p1_id=None, p2_id=None, game="", partial
             if hp1 and hp2:
                 ctx["h2h_map_edges"] = dx.get_h2h_map_edges(hp1, hp2, game=game)
                 ctx["h2h_map_games"] = sorted({m["game"] for m in ctx["h2h_map_edges"]["maps"] if m.get("game")})
+                # Net Elo delta for each player across their h2h matches (like /rivals).
+                ctx["h2h_rating_deltas"] = dx.get_h2h_rating_deltas(hp1, hp2, game=game)
             else:
                 ctx["h2h_map_edges"] = {"overall": 0, "maps": []}
                 ctx["h2h_map_games"] = []
+                ctx["h2h_rating_deltas"] = {"p1": 0.0, "p2": 0.0}
         else:
             ctx["h2h_map_edges"] = {"overall": 0, "maps": []}
             ctx["h2h_map_games"] = []
+            ctx["h2h_rating_deltas"] = {"p1": 0.0, "p2": 0.0}
     if partial:
         return templates.TemplateResponse(request, "_h2h_results.html", ctx)
     return templates.TemplateResponse(request, "h2h.html", ctx)

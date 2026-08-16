@@ -3,26 +3,21 @@
 {% block content %}
 <div class="section-head"><h2>Matches</h2>
 <form class="filters section-filters" method="get" action="/matches">
-  <label>Game</label>
   <select name="game">
     <option value="">All games</option>
     {% for g in games %}
     <option value="{{ g }}" {{ 'selected' if game == g }}>{{ g }}</option>
     {% endfor %}
   </select>
-  <label>Player</label>
-  <input type="text" name="player" value="{{ player }}" placeholder="Player name" style="width:140px" data-autocomplete="player">
+  <input type="text" name="player" value="{{ player }}" placeholder="Player" style="width:140px" data-autocomplete="player">
   <input type="hidden" name="player_id" value="{{ player_id or '' }}">
-  <label>Tournament</label>
-  <input type="text" name="tournament" value="{{ tournament }}" placeholder="Tournament name" style="width:160px" data-autocomplete="tournament">
-  <label>Tier</label>
+  <input type="text" name="tournament" value="{{ tournament }}" placeholder="Tournament" style="width:160px" data-autocomplete="tournament">
   <select name="tier">
     <option value="">All tiers</option>
     <option value="premier" {{ 'selected' if tier == 'premier' }}>Premier</option>
     <option value="major" {{ 'selected' if tier == 'major' }}>Major</option>
     <option value="minor" {{ 'selected' if tier == 'minor' }}>Minor</option>
   </select>
-  <label>Limit</label>
   <select name="limit">
     <option value="100" {{ 'selected' if limit == '100' }}>100</option>
     <option value="1000" {{ 'selected' if limit == '1000' }}>1000</option>

@@ -1346,6 +1346,12 @@ a.page-link:hover {
 .highlight-box .value.burgundy { background: linear-gradient(120deg, var(--burgundy), var(--accent)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
 .highlight-box .value.cream { background: linear-gradient(120deg, var(--cream), var(--gold)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
 .highlight-box .value.taupe { background: linear-gradient(120deg, var(--taupe), var(--copper)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+/* Solid win/loss colors for plaque values, matching the main VS card's
+   win/loss numbers (solid --green / --red, not gradients). Used by the h2h
+   rating-delta plaques. */
+.highlight-box .value.win { color: var(--green); }
+.highlight-box .value.loss { color: var(--red); }
+.highlight-box .value.draw { color: var(--text-faint); }
 
 /* ─── Charts ────────────────────────────────────────────── */
 .chart-box { position: relative; height: 321px; }

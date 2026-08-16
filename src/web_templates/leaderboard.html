@@ -4,26 +4,21 @@
 <div class="section-head">
   <h2>Leaderboard</h2>
 <form class="filters section-filters" method="get" action="/leaderboard">
-  <label>Game</label>
   <select name="game">
     <option value="">All games</option>
     {% for g in games %}
     <option value="{{ g }}" {{ 'selected' if game == g }}>{{ g }}</option>
     {% endfor %}
   </select>
-  <label>System</label>
   <select name="system">
     <option value="elo" {{ 'selected' if system == 'elo' }}>Elo</option>
     <option value="glicko2" {{ 'selected' if system == 'glicko2' }}>Glicko-2</option>
   </select>
-  <label>Sort</label>
   <select name="sort">
     <option value="rating" {{ 'selected' if sort == 'rating' }}>Current rating</option>
     <option value="peak" {{ 'selected' if sort == 'peak' }}>All-time peak</option>
   </select>
-  <label>As of</label>
-  <input type="date" name="date" value="{{ date or '' }}">
-  <label>Limit</label>
+  <input type="date" name="date" value="{{ date or '' }}" title="As of">
   <select name="limit">
     <option value="100" {{ 'selected' if limit == '100' }}>100</option>
     <option value="1000" {{ 'selected' if limit == '1000' }}>1000</option>

@@ -22,6 +22,10 @@
 
 <div class="highlight-row" style="margin-top:12px;">
   <div class="highlight-box">
+    <div class="label">{{ result.player1 }} rating</div>
+    <div class="value {{ 'win' if h2h_rating_deltas.p1 > 0 else 'loss' if h2h_rating_deltas.p1 < 0 else 'draw' }}">{{ "%+.0f"|format(h2h_rating_deltas.p1) if h2h_rating_deltas.p1 else '0' }}</div>
+  </div>
+  <div class="highlight-box">
     <div class="label">{{ result.player1 }} win rate</div>
     <div class="value copper">{{ "%.0f%%"|format(result.p1_wins / result.total * 100) if result.total > 0 else '' }}</div>
   </div>
@@ -32,6 +36,10 @@
   <div class="highlight-box">
     <div class="label">{{ result.player2 }} win rate</div>
     <div class="value copper">{{ "%.0f%%"|format(result.p2_wins / result.total * 100) if result.total > 0 else '' }}</div>
+  </div>
+  <div class="highlight-box">
+    <div class="label">{{ result.player2 }} rating</div>
+    <div class="value {{ 'win' if h2h_rating_deltas.p2 > 0 else 'loss' if h2h_rating_deltas.p2 < 0 else 'draw' }}">{{ "%+.0f"|format(h2h_rating_deltas.p2) if h2h_rating_deltas.p2 else '0' }}</div>
   </div>
 </div>
 

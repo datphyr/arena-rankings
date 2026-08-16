@@ -3,19 +3,16 @@
 {% block content %}
 <div class="section-head"><h2>Head-to-Head</h2>
 <form class="filters section-filters" method="get" action="/h2h" id="h2hForm">
-  <label>Game</label>
   <select name="game">
     <option value="">All games</option>
     {% for g in games %}
     <option value="{{ g }}" {{ 'selected' if game == g }}>{{ g }}</option>
     {% endfor %}
   </select>
-  <label>Player 1</label>
-  <input type="text" name="p1" value="{{ p1 }}" placeholder="e.g. rapha" data-autocomplete="player">
+  <input type="text" name="p1" value="{{ p1 }}" placeholder="Player 1" data-autocomplete="player">
   <input type="hidden" name="p1_id" value="{{ p1_id or '' }}">
   <button type="button" class="btn swap-btn" id="swapBtn" title="Swap players" aria-label="Swap players">⇄</button>
-  <label>Player 2</label>
-  <input type="text" name="p2" value="{{ p2 }}" placeholder="e.g. cYpheR" data-autocomplete="player">
+  <input type="text" name="p2" value="{{ p2 }}" placeholder="Player 2" data-autocomplete="player">
   <input type="hidden" name="p2_id" value="{{ p2_id or '' }}">
   <button type="submit" name="clear" value="1" class="btn">Clear filters</button>
 </form>
@@ -42,8 +39,16 @@
     form.setAttribute("action", "/h2h/" + slug);
     // Drop the redundant p1/p2 name params from the submitted query — the
     // ids (p1_id/p2_id) are authoritative, so the names are unnecessary.
+    // Disable only for the duration of this submit so the fields stay
+    // editable afterward (FormData reads them synchronously, then we
+    // re-enable on the next tick). Permanently disabling would lock the
+    // fields once both players are filled.
     p1.disabled = true;
     p2.disabled = true;
+    setTimeout(function () {
+      p1.disabled = false;
+      p2.disabled = false;
+    }, 0);
   });
 })();
 

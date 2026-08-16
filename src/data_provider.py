@@ -1559,12 +1559,14 @@ class DataProvider:
 
         if not game:
             # All Games: fetch main game per player via separate query.
-            # No FINAL: the All Games aggregate rows have zero duplicates for
-            # both elo and glicko2, so FINAL is a no-op (and costs a sort).
+            # Use FINAL so ReplacingMergeTree dedups by (player_id, game_id,
+            # rating_system) even before background merges run — otherwise
+            # unmerged duplicate rows (from repeated recompute inserts) would
+            # show the same player multiple times.
             query = """
                 SELECT player_id, rating, rd, vol, wins, losses, matches_played,
                        last_match_date, first_match_date
-                FROM player_ratings
+                FROM player_ratings FINAL
                 WHERE rating_system = %(sys)s AND game_id = 0
             """
             if min_matches > 0:
@@ -1583,11 +1585,12 @@ class DataProvider:
             main_games = {}
             peaks = {}
             if player_ids:
-                # Per-game elo rows have zero duplicates (FINAL is a no-op and
-                # costs a sort); glicko2 per-game rows have duplicates, so keep
-                # FINAL only for glicko2. Queried fresh each call (no cache) so
-                # main game reflects the latest ratings after a reset.
-                mg_final = " FINAL" if system == "glicko2" else ""
+                # Use FINAL so ReplacingMergeTree dedups by
+                # (player_id, game_id, rating_system) even before background
+                # merges run — unmerged duplicate rows would otherwise skew
+                # the argMax main-game pick. Queried fresh each call (no cache)
+                # so main game reflects the latest ratings after a reset.
+                mg_final = " FINAL"
                 mg_rows = self.db.client.execute(
                     f"SELECT pr.player_id, argMax(g.name, pr.matches_played) AS main_game "
                     f"FROM player_ratings pr{mg_final} "
@@ -1624,9 +1627,11 @@ class DataProvider:
                 results = _sort_players(results, sort_col, sort_dir)
             return results[offset:offset + limit]
         else:
-            # Per-game: elo rows have zero duplicates (FINAL is a no-op), but
-            # glicko2 rows have duplicates, so keep FINAL only for glicko2.
-            final_clause = " FINAL" if system == "glicko2" else ""
+            # Per-game: use FINAL so ReplacingMergeTree dedups by
+            # (player_id, game_id, rating_system) even before background merges
+            # run — unmerged duplicate rows (from repeated recompute inserts)
+            # would otherwise show the same player multiple times.
+            final_clause = " FINAL"
             query = f"""
                 SELECT player_id, rating, rd, vol, wins, losses, matches_played,
                        last_match_date, first_match_date
@@ -1683,7 +1688,7 @@ class DataProvider:
         rows = self.db.client.execute(
             """
             SELECT player_id, rating
-            FROM player_ratings
+            FROM player_ratings FINAL
             WHERE rating_system = %(sys)s AND game_id = %(gid)s
               AND player_id IN %(ids)s
             """,
@@ -2109,7 +2114,7 @@ class DataProvider:
 
     # --- Player lookup ---
 
-    def get_player_ratings(self, player_name: str, min_matches: dict | int = 0, player_id: int | None = None) -> list[dict]:
+    def get_player_ratings(self, player_name: str, min_matches: dict | int = 0, player_id: int | None = None, game: str = "") -> list[dict]:
         """All ratings for a player across games and systems.
 
         min_matches: either an int (applied to all systems) or a dict mapping
@@ -2120,21 +2125,27 @@ class DataProvider:
         player_id: optional explicit id. When provided (e.g. from an id-based
         URL), it is used instead of resolving player_name, which avoids picking
         the wrong player when two players share the same name.
+
+        game: optional game name to filter to (empty = all games). When set,
+        only that game's rating rows are returned (per-game rating, not the
+        'All Games' aggregate).
         """
         player_id = player_id if player_id is not None else self._player_id(player_name)
         if player_id is None:
             return []
         canon = self._canonical_name(player_id)
+        gid = self.db.resolve_game_id(game) if game else None
+        game_cond = " AND pr.game_id = %(gid)s" if gid else ""
         rows = self.db.client.execute(
-            """
+            f"""
             SELECT pr.player_id, g.name AS game_name, pr.rating_system, pr.rating, pr.rd, pr.vol,
                    pr.wins, pr.losses, pr.matches_played, pr.last_match_id, pr.last_match_date, pr.first_match_date
             FROM player_ratings pr FINAL
             LEFT JOIN games g FINAL ON g.game_id = pr.game_id
-            WHERE pr.player_id = %(pid)s
+            WHERE pr.player_id = %(pid)s{game_cond}
             ORDER BY pr.rating_system, pr.rating DESC
             """,
-            {"pid": player_id},
+            {"pid": player_id, **({"gid": gid} if gid else {})},
         )
 
         player_id = rows[0][0] if rows else None
@@ -2475,33 +2486,24 @@ class DataProvider:
                 w = p2n
             else:
                 w = None  # draw / unknown
-            # Normalize to requested order: player1/player2 must match the
-            # requested player1/player2, swapping stored names/scores as needed.
-            # For exact mode compare by player_id; for partial/regex compare
-            # against the raw patterns.
-            if match == "exact":
-                p1_matches = (p1id == p1_id)
-            elif match == "regex":
-                import re
-                p1_matches = bool(re.search(player1, p1n, re.IGNORECASE))
-            else:
-                p1_matches = (player1.lower() in p1n.lower())
-            if p1_matches:
-                disp1, disp2, ds1, ds2 = p1n, p2n, s1, s2
-            else:
-                disp1, disp2, ds1, ds2 = p2n, p1n, s2, s1
+            # Keep the match as it was actually played: player1/player2 and
+            # their scores reflect the stored order (the higher seed / first-
+            # listed player is player1), NOT the requested VS order. The
+            # winner is authoritative from winner_id, so win/loss coloring in
+            # the template (m.winner == m.player1/player2) stays correct.
+            disp1, disp2, ds1, ds2 = p1n, p2n, s1, s2
             # Map display names to canonical (most-used) spelling per player_id.
             canon = self._canonical_names([p1id, p2id])
-            disp1 = canon.get(p1id if p1_matches else p2id, disp1)
-            disp2 = canon.get(p2id if p1_matches else p1id, disp2)
+            disp1 = canon.get(p1id, disp1)
+            disp2 = canon.get(p2id, disp2)
             matches.append({
                 "match_id": mid,
                 "player1": disp1,
                 "player2": disp2,
-                "player1_id": p1id if p1_matches else p2id,
-                "player2_id": p2id if p1_matches else p1id,
-                "player1_country": self._country(p1id if p1_matches else p2id),
-                "player2_country": self._country(p2id if p1_matches else p1id),
+                "player1_id": p1id,
+                "player2_id": p2id,
+                "player1_country": self._country(p1id),
+                "player2_country": self._country(p2id),
                 "score": f"{ds1}-{ds2}",
                 "score1": ds1,
                 "score2": ds2,
@@ -3373,7 +3375,7 @@ class DataProvider:
         rows = self.db.client.execute(
             """
             SELECT player_id, matches_played, wins, losses
-            FROM player_ratings
+            FROM player_ratings FINAL
             WHERE rating_system = 'elo' AND game_id = 0
             ORDER BY matches_played DESC
             LIMIT %(lim)s
@@ -3665,6 +3667,95 @@ class DataProvider:
         """Per-map win-rate for player 1 against player 2 (head-to-head).
         Thin wrapper over get_map_edges with an opponent, from p1's perspective."""
         return self.get_map_edges(p1_id, opponent_id=p2_id, min_games=min_games, game=game)
+
+    def get_h2h_rating_deltas(self, p1_id: int, p2_id: int, game: str = "") -> dict:
+        """Net Elo delta for each player across their head-to-head matches.
+
+        Mirrors get_player_rivals: for each h2h match, a player's delta is
+        their Elo snapshot at that match minus their snapshot at the previous
+        match in the same game (from rating_history). Returns
+        {"p1": float, "p2": float} — the summed signed delta for each player
+        (negative = net rating lost). `game` filters to one game (empty = all).
+        """
+        gid = self.db.resolve_game_id(game) if game else None
+        # All h2h matches between the two players.
+        mrows = self.db.client.execute(
+            """
+            SELECT match_id, player1_id, player2_id, played_at, game_id
+            FROM matches
+            WHERE ((player1_id = %(p1)s AND player2_id = %(p2)s)
+                   OR (player1_id = %(p2)s AND player2_id = %(p1)s))
+            {game_cond}
+            ORDER BY played_at, match_id
+            """.format(game_cond="AND game_id = %(gid)s" if gid else ""),
+            {"p1": p1_id, "p2": p2_id, **({"gid": gid} if gid else {})},
+        )
+        if not mrows:
+            return {"p1": 0.0, "p2": 0.0}
+        # Rating snapshots for delta computation. When a specific game is
+        # selected use that game's per-game series; when all games, use the
+        # combined 'All Games' series (game_id = 0), matching get_player_rivals.
+        if game:
+            hrows = self.db.client.execute(
+                """
+                SELECT match_id, played_at, rating, game_id
+                FROM rating_history
+                WHERE player_id IN (%(p1)s, %(p2)s) AND rating_system = 'elo' AND game_id = %(gid)s
+                ORDER BY game_id, played_at, match_id
+                """,
+                {"p1": p1_id, "p2": p2_id, "gid": gid},
+            )
+        else:
+            hrows = self.db.client.execute(
+                """
+                SELECT match_id, played_at, rating, game_id
+                FROM rating_history
+                WHERE player_id IN (%(p1)s, %(p2)s) AND rating_system = 'elo' AND game_id = 0
+                ORDER BY played_at, match_id
+                """,
+                {"p1": p1_id, "p2": p2_id},
+            )
+        # Per-player: rating-at-match map + per-game history for prev lookups.
+        at_map: dict[int, dict[int, float]] = {p1_id: {}, p2_id: {}}
+        hist: dict[int, dict[int, list]] = {p1_id: {}, p2_id: {}}
+        # rating_history rows are per player, so include player_id to attribute
+        # each row to the right player.
+        if game:
+            hrows = self.db.client.execute(
+                """
+                SELECT player_id, match_id, played_at, rating, game_id
+                FROM rating_history
+                WHERE player_id IN (%(p1)s, %(p2)s) AND rating_system = 'elo' AND game_id = %(gid)s
+                ORDER BY game_id, played_at, match_id
+                """,
+                {"p1": p1_id, "p2": p2_id, "gid": gid},
+            )
+        else:
+            hrows = self.db.client.execute(
+                """
+                SELECT player_id, match_id, played_at, rating, game_id
+                FROM rating_history
+                WHERE player_id IN (%(p1)s, %(p2)s) AND rating_system = 'elo' AND game_id = 0
+                ORDER BY played_at, match_id
+                """,
+                {"p1": p1_id, "p2": p2_id},
+            )
+        for pid, mid, ts, rating, gid_row in hrows:
+            at_map[pid][mid] = rating
+            key = gid_row if game else 0
+            hist[pid].setdefault(key, []).append((ts, mid, rating))
+        deltas = {p1_id: 0.0, p2_id: 0.0}
+        for mid, p1, p2, played_at, gid_row in mrows:
+            for pid in (p1, p2):
+                cur = at_map[pid].get(mid)
+                if cur is None:
+                    continue
+                key = gid_row if game else 0
+                h = hist[pid].get(key, [])
+                idx = bisect.bisect_left(h, (played_at, mid))
+                prev = h[idx - 1][2] if idx > 0 else None
+                deltas[pid] += cur - (prev if prev is not None else 1500.0)
+        return {"p1": round(deltas[p1_id], 1), "p2": round(deltas[p2_id], 1)}
 
     def get_player_summary(
         self,

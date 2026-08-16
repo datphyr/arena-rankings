@@ -3,21 +3,18 @@
 {% block content %}
 <div class="section-head"><h2>Tournaments</h2>
 <form class="filters section-filters" method="get" action="/tournaments">
-  <label>Game</label>
   <select name="game">
     <option value="">All games</option>
     {% for g in games %}
     <option value="{{ g }}" {{ 'selected' if game == g }}>{{ g }}</option>
     {% endfor %}
   </select>
-  <label>Tier</label>
   <select name="tier">
     <option value="">All tiers</option>
     <option value="premier" {{ 'selected' if tier == 'premier' }}>Premier</option>
     <option value="major" {{ 'selected' if tier == 'major' }}>Major</option>
     <option value="minor" {{ 'selected' if tier == 'minor' }}>Minor</option>
   </select>
-  <label>Limit</label>
   <select name="limit">
     <option value="100" {{ 'selected' if limit == '100' }}>100</option>
     <option value="1000" {{ 'selected' if limit == '1000' }}>1000</option>
