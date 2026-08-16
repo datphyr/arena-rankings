@@ -3558,7 +3558,7 @@ class DataProvider:
             "SELECT game, rankings FROM tournaments FINAL WHERE rankings != '[]'"
         )
         per_game: dict[str, dict[int, int]] = {}
-        for (game, rankings) in rows:
+        for (row_game, rankings) in rows:
             if not rankings:
                 continue
             try:
@@ -3572,7 +3572,11 @@ class DataProvider:
                     m = _re.match(r"(\d+)", entry.get("position") or "")
                     if m:
                         place = int(m.group(1))
-                        counts = per_game.setdefault(game or "", {})
+                        # Prefer the per-entry game (multi-game event pages tag
+                        # each placement with its own game); fall back to the
+                        # tournament row's game for older entries without it.
+                        game = entry.get("game") or row_game or ""
+                        counts = per_game.setdefault(game, {})
                         counts[place] = counts.get(place, 0) + 1
         out = []
         for game in sorted(per_game):

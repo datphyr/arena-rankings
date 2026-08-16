@@ -66,7 +66,7 @@ class MatchDetailParser:
         try:
             return self._parse(html, match_id)
         except Exception as e:
-            logger.error(f"parse failed: {match_id}: {e}")
+            logger.error(f"parse failed {match_id}: {e}")
             return None
 
     def parse_with_reason(self, html: str, match_id: int) -> tuple[Optional[MatchDetail], str]:
@@ -84,7 +84,7 @@ class MatchDetailParser:
                 return detail, ""
             return None, self._classify_skip(html, match_id)
         except Exception as e:
-            logger.error(f"parse failed: {match_id}: {e}")
+            logger.error(f"parse failed {match_id}: {e}")
             return None, "parse error"
 
     def _classify_skip(self, html: str, match_id: int) -> str:
@@ -126,7 +126,6 @@ class MatchDetailParser:
                 re.DOTALL,
             )
         if not match_area:
-            logger.warning(f"no match area: {match_id}")
             return None
 
         content = match_area.group(1)
@@ -145,7 +144,6 @@ class MatchDetailParser:
         # Parse players
         players = self._parse_players(content)
         if len(players) < 2:
-            logger.warning(f"no players found: {match_id}")
             return None
 
         p1, p2 = players[0], players[1]
@@ -153,7 +151,6 @@ class MatchDetailParser:
         # Parse scores
         scores = self._parse_scores(content)
         if scores is None:
-            logger.warning(f"no scores: {match_id}")
             return None
 
         # Parse category_id from player link URLs as fallback
@@ -546,12 +543,42 @@ def _is_tournament_post(html: str) -> bool:
     return bool(html) and "postinnercontent" in html and "tour_info" in html
 
 
+# A parent aggregation page is a PlusForward event/landing page that hosts 2+
+# sub-tournaments, each with its own dedicated post (e.g. "QuakeCon 2016" links
+# to separate QL / QW / QC sub-events). These pages have NO matches of their own
+# and only embed their sub-events' standings — so they are indexes, not
+# tournaments. The sub-events are parsed independently as the real tournaments;
+# treating the parent as a tournament too would duplicate every placement.
+# Detector: the page's main content contains 2+ title-prefixed sub-event links
+# ("<div class=\"title\"><i class=\"pfcat-N\"></i> <a href=\"/post/N/\">...").
+# Standalone tournaments reference at most 1 such link and carry their own data.
+_PARENT_SUB_LINK = re.compile(
+    r'<div class="title">\s*<i class="pfcat-[^"]*"></i>\s*<a href="/post/\d+/')
+
+
+def _is_parent_aggregation_page(html: str) -> bool:
+    """True if the page is a multi-sub-event index (parent) page, not a tournament."""
+    if not html:
+        return False
+    m = re.search(r'<div id="postinnercontent">(.*?)(?:</div>\s*<div class="sidebar|$)',
+                  html, re.DOTALL)
+    body = m.group(1) if m else html
+    return len(_PARENT_SUB_LINK.findall(body)) >= 2
+
+
 def _parse_post(db, parser, resolver, bracket_fetcher, post_id: int, raw_html: str) -> tuple[bool, str]:
     """Parse a single downloaded post (match or tournament) and store it.
 
     Returns (success, reason). On success reason is ''. On failure reason is a
-    short classifier ('not a match', 'team format', 'invalid', 'parse error').
+    short classifier ('not a match', 'team format', 'invalid', 'parent index',
+    'parse error').
     """
+    # Parent aggregation pages (multi-sub-event indexes) are not tournaments —
+    # skip them so their sub-events (parsed separately) aren't double-counted.
+    if _is_parent_aggregation_page(raw_html):
+        db.raw_post_mark(post_id, "skipped", "parent index")
+        return False, "parent index"
+
     # Tournament post → resolve via TournamentResolver (stores metadata + HTML).
     if _is_tournament_post(raw_html):
         try:
@@ -559,7 +586,7 @@ def _parse_post(db, parser, resolver, bracket_fetcher, post_id: int, raw_html: s
             db.raw_post_mark(post_id, "parsed")
             return True, ""
         except Exception as e:
-            logger.error(f"tournament resolve failed: {post_id}: {e}")
+            logger.error(f"tournament resolve failed {post_id}: {e}")
             db.raw_post_mark(post_id, "skipped", "parse error")
             return False, "parse error"
 
@@ -574,7 +601,7 @@ def _parse_post(db, parser, resolver, bracket_fetcher, post_id: int, raw_html: s
         db.raw_post_mark(post_id, "parsed")
         return True, ""
     except Exception as e:
-        logger.error(f"store failed: {post_id}: {e}")
+        logger.error(f"store failed {post_id}: {e}")
         db.raw_post_mark(post_id, "skipped", "parse error")
         return False, "parse error"
 
@@ -642,7 +669,7 @@ def parse_all_matches(limit: int = 0, workers: int = 0) -> tuple[int, int]:
         logger.debug("no posts to parse")
         return 0, 0
 
-    logger.info(f"{total} to parse | {workers}w")
+    logger.debug(f"{total} to parse, {workers} workers")
 
     success = 0
     failure = 0
@@ -669,7 +696,7 @@ def parse_all_matches(limit: int = 0, workers: int = 0) -> tuple[int, int]:
                     elapsed = time.time() - start_time
                     rate = i / elapsed if elapsed > 0 else 0
                     pct = i * 100 // total
-                    logger.debug(f"{i}/{total} ({pct}%) — {success} ok, {failure} skip, {rate:.1f}/s")
+                    logger.debug(f"{i}/{total} ({pct}%) {success} ok, {failure} skip, {rate:.1f}/s")
         finally:
             db.close()
     else:
@@ -679,7 +706,7 @@ def parse_all_matches(limit: int = 0, workers: int = 0) -> tuple[int, int]:
         db = Database()
         preloaded_tiers = db.get_tournament_tiers_with_html()
         db.close()
-        logger.debug(f"preloading {len(preloaded_tiers)} tiers into {workers}w")
+        logger.debug(f"preloading {len(preloaded_tiers)} tiers, {workers} workers")
 
         try:
             with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -697,7 +724,7 @@ def parse_all_matches(limit: int = 0, workers: int = 0) -> tuple[int, int]:
                             # Expected skips (not a match / team format / invalid)
                             # are common — don't log them as warnings.
                             if err and err not in ("not a match", "team format", "invalid", "not played", "parse error"):
-                                logger.warning(f"parse failed: {match_id}: {err}")
+                                logger.warning(f"parse failed {match_id}: {err}")
                     except Exception as e:
                         logger.error(f"parse error: {mid}: {e}")
                         failure += 1
@@ -706,13 +733,13 @@ def parse_all_matches(limit: int = 0, workers: int = 0) -> tuple[int, int]:
                         elapsed = time.time() - start_time
                         rate = i / elapsed if elapsed > 0 else 0
                         pct = i * 100 // total
-                        logger.debug(f"{i}/{total} ({pct}%) — {success} ok, {failure} skip, {rate:.1f}/s")
+                        logger.debug(f"{i}/{total} ({pct}%) {success} ok, {failure} skip, {rate:.1f}/s")
         finally:
             # Worker DB connections are closed when threads exit.
             # For long-running processes, we rely on thread cleanup.
             pass
 
     elapsed = time.time() - start_time
-    logger.info(f"done: {success} ok, {failure} fail, {total} total, {elapsed:.0f}s")
+    logger.debug(f"done: {success} ok, {failure} fail, {total} total, {elapsed:.0f}s")
     return success, failure
 

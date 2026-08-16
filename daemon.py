@@ -42,7 +42,6 @@ systemd unit (/etc/systemd/system/arena-pipeline.service):
 import argparse
 import logging
 import os
-import re
 import signal
 import subprocess
 import sys
@@ -67,125 +66,8 @@ COMPONENTS = [
     ("web",       "api_web.py",     ["--daemon"]),
 ]
 
-# Align component names to fixed width
-COMPONENT_WIDTH = max(len(n) for n, _, _ in COMPONENTS)
 
-# Map inner logger names to component names for clean prefixes
-LOGGER_NAME_MAP = {
-    "post_downloader": "download",
-    "src.post_downloader": "download",
-    "match_parser": "parse",
-    "src.match_parser": "parse",
-    "rankings_compute": "rank",
-    "src.rankings_compute": "rank",
-    "bot_discord": "discord",
-    "src.bot_discord": "discord",
-    "discord": "discord",
-    "bot_twitch": "twitch",
-    "src.bot_twitch": "twitch",
-    "twitch": "twitch",
-    "api_web": "web",
-    "src.api_web": "web",
-    "web": "web",
-    "uvicorn": "web",
-    "fetcher": "fetch",
-    "src.fetcher": "fetch",
-    "tournament_resolver": "parse",
-    "src.tournament_resolver": "parse",
-    "daemon": None,
-    "src.daemon": None,
-}
-
-# Ensure width covers mapped names like 'fetch'
-COMPONENT_WIDTH = max(COMPONENT_WIDTH, max(len(v) for v in LOGGER_NAME_MAP.values() if v))
-
-# Regex to parse child log lines:
-#   2026-08-02 21:49:01 INFO [match_discovery]: message
-#   2026-08-02 21:49:01 WARNING [match_downloader]: message
-LOG_RE = re.compile(
-    r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+'
-    r'(DEBUG|INFO|WARNING|ERROR|WARN|CRITICAL)\s+'
-    r'\[([^\]]+)\]:\s*(.*)$'
-)
-
-# Normalize log levels to canonical forms
-LEVEL_MAP = {
-    "WARN": "WARN",
-    "WARNING": "WARN",
-    "CRITICAL": "ERROR",
-    "ERROR": "ERROR",
-    "INFO": "INFO",
-    "DEBUG": "DEBUG",
-}
-
-# Aligned level strings (5 chars to fit ERROR)
-LEVEL_WIDTH = 5
-
-
-def format_line(timestamp: str, level: str, component: str, message: str) -> str:
-    """Format a unified log line with aligned fields."""
-    lvl = LEVEL_MAP.get(level, level)[:LEVEL_WIDTH].ljust(LEVEL_WIDTH)
-    comp = component.ljust(COMPONENT_WIDTH)
-    return f"{timestamp} {lvl} [{comp}] {message}"
-
-
-def parse_child_line(line: str, fallback_component: str) -> str | None:
-    """Parse a child process log line and reformat it.
-
-    Returns the reformatted line, or None to skip it.
-    """
-    line = line.rstrip('\n')
-    if not line:
-        return None
-
-    m = LOG_RE.match(line)
-    if not m:
-        # Non-log line (e.g. traceback) — pass through with component prefix
-        return f"{'':20} {'':{LEVEL_WIDTH}} [{fallback_component.ljust(COMPONENT_WIDTH)}] {line}"
-
-    ts, level, logger_name, message = m.groups()
-
-    # Map logger name to component name
-    component = LOGGER_NAME_MAP.get(logger_name)
-    if component is None:
-        # Check if it's a daemon framework line to skip
-        if logger_name in ("daemon", "src.daemon"):
-            return None
-        # Map by prefix for discord.py library logs (discord.client, discord.gateway, etc.)
-        if logger_name.startswith("discord.") or logger_name == "discord":
-            component = "discord"
-        else:
-            component = logger_name  # unknown logger, pass through
-
-    # Skip daemon framework lines that shouldn't reach output
-    if message.startswith("=== ") or message.startswith("--- "):
-        return None
-    if message in ("interrupted", "cycle failed"):
-        return None
-
-    return format_line(ts, level, component, message)
-
-
-from config import LOG_LEVEL
-
-
-def setup_logging(verbose: bool):
-    arena_tag = "arena".ljust(COMPONENT_WIDTH)
-    level = logging.DEBUG if verbose else getattr(logging, LOG_LEVEL.upper(), logging.INFO)
-    logging.basicConfig(
-        level=level,
-        format=f"%(asctime)s %(levelname)-{LEVEL_WIDTH}s [{arena_tag}] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        stream=sys.stdout,
-        force=True,
-    )
-    # Silence noisy third-party library loggers.
-    for noisy in ("clickhouse_driver", "discord.http", "discord.gateway",
-                  "discord.client", "discord.shard", "discord.webhook",
-                  "urllib3", "asyncio"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
-    # tzlocal spams DEBUG lines about /etc/localtime on every import
-    logging.getLogger("tzlocal").setLevel(logging.WARNING)
+from src.logging_setup import configure_logging
 
 
 class Supervisor:
@@ -259,10 +141,10 @@ class Supervisor:
                 name = key.data
                 line = key.fileobj.readline()
                 if line:
-                    reformatted = parse_child_line(line.decode('utf-8', errors='replace'), name)
-                    if reformatted:
-                        sys.stdout.write(reformatted + '\n')
-                        sys.stdout.flush()
+                    # Children already emit clean, uniformly formatted lines via the
+                    # shared logging config — relay them verbatim to journald/stdout.
+                    sys.stdout.write(line.decode('utf-8', errors='replace'))
+                    sys.stdout.flush()
 
     def stop_all(self):
         self.stopping = True
@@ -296,10 +178,11 @@ def main():
     parser.add_argument("--workers", "-w", type=int, default=DOWNLOADER_WORKERS, help=f"Download workers (default: {DOWNLOADER_WORKERS})")
     parser.add_argument("--delay", type=int, default=DAEMON_RESTART_DELAY, help=f"Restart delay for crashed components (default: {DAEMON_RESTART_DELAY})")
     parser.add_argument("--restart-delay", type=int, default=0, help="Override restart delay for crashed components (default: 0 = instant restart). Takes precedence over --delay.")
+    parser.add_argument("--log-file", default=None, help="Optional rotating log file for the whole pipeline (in addition to stdout)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Debug logging")
     args = parser.parse_args()
 
-    setup_logging(args.verbose)
+    configure_logging(verbose=args.verbose, log_file=args.log_file)
 
     # Build component list, applying args
     components = []

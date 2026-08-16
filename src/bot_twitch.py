@@ -559,7 +559,7 @@ class TwitchBot:
             else:
                 await self._send(response, target_channel)
         else:
-            logger.debug(f"NORESP #{target_channel} !{cmd} — no handler or None returned")
+            logger.debug(f"NORESP #{target_channel} !{cmd}: no handler or None returned")
 
     async def _send(self, messages: list[str], channel: Optional[str] = None):
         targets = [channel] if channel else self.channels

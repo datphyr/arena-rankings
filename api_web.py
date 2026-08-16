@@ -36,7 +36,7 @@ def cycle(args):
 
     host = args.host or os.environ.get("WEB_HOST", "0.0.0.0")
     port = args.port or int(os.environ.get("WEB_PORT", "8080"))
-    logger.info(f"Starting web server on http://{host}:{port}")
+    logger.info(f"web server on http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="info")
     return "web server stopped"
 
@@ -46,6 +46,7 @@ def main():
     parser.add_argument("--daemon", action="store_true", help="daemon mode (restart on crash)")
     parser.add_argument("--host", default=None, help="bind host (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=None, help="bind port (default: 8080)")
+    parser.add_argument("--log-file", default=None, help="Optional rotating log file (in addition to stdout)")
     parser.add_argument("--verbose", action="store_true", help="debug logging")
     args = parser.parse_args()
 
@@ -56,6 +57,7 @@ def main():
         daemon=args.daemon,
         delay=DAEMON_RESTART_DELAY,
         verbose=args.verbose,
+        log_file=args.log_file,
     )
 
 

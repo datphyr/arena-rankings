@@ -420,7 +420,7 @@ def _check_match_state(db: Database, game_name: str, rating_system: str) -> tupl
         "OR rating < 0 OR rating > 10000 OR rd < 0 OR rd > 10000"
     )[0][0]
     if bad:
-        logger.warning(f"{_game_label(game_name)}: {bad} corrupted rating rows detected — forcing full recompute")
+        logger.warning(f"{_game_label(game_name)}: {bad} corrupted rating rows, forcing full recompute")
         return "backfill", db_count, hist_count
 
     return "up_to_date", db_count, hist_count
@@ -449,7 +449,7 @@ def compute_elo(db: Database, game_name: str = "", full_recompute: bool = False,
         db.clear_rating_history(rating_system="elo", game_name=game_name)
         matches = db.get_all_matches_for_game(game_name)
         ratings = defaultdict(lambda: {"rating": 1500.0, "wins": 0, "losses": 0, "matches": 0, "name": "", "last_match_id": 0, "last_match_date": datetime(1970, 1, 1), "first_match_date": datetime(1970, 1, 1)})
-        logger.info(f"Elo {_game_label(game_name)}: from scratch — {len(matches)} matches")
+        logger.info(f"Elo {_game_label(game_name)}: from scratch, {len(matches)} matches")
     else:
         # Incremental: load existing ratings, find where we left off
         existing = db.load_ratings(game_name, "elo")
@@ -457,7 +457,7 @@ def compute_elo(db: Database, game_name: str = "", full_recompute: bool = False,
             # No previous computation — start fresh
             matches = db.get_all_matches_for_game(game_name)
             ratings = defaultdict(lambda: {"rating": 1500.0, "wins": 0, "losses": 0, "matches": 0, "name": "", "last_match_id": 0, "last_match_date": datetime(1970, 1, 1), "first_match_date": datetime(1970, 1, 1)})
-            logger.info(f"Elo {_game_label(game_name)}: from scratch — {len(matches)} matches [no prior]")
+            logger.info(f"Elo {_game_label(game_name)}: from scratch, {len(matches)} matches [no prior]")
         else:
             ratings = defaultdict(lambda: {"rating": 1500.0, "wins": 0, "losses": 0, "matches": 0, "name": "", "last_match_id": 0, "last_match_date": datetime(1970, 1, 1), "first_match_date": datetime(1970, 1, 1)}, existing)
 
@@ -468,15 +468,13 @@ def compute_elo(db: Database, game_name: str = "", full_recompute: bool = False,
             else:
                 state, total_in_db, total_in_hist = _check_match_state(db, game_name, "elo")
             if state == "up_to_date":
-                logger.debug(f"Elo {_game_label(game_name)}: up to date, skipping")
                 return None
             elif state == "backfill":
-                logger.debug(f"Elo {_game_label(game_name)}: backfill detected ({total_in_db} DB vs {total_in_hist} hist) — full recompute")
                 matches = db.get_all_matches_for_game(game_name)
                 ratings = defaultdict(lambda: {"rating": 1500.0, "wins": 0, "losses": 0, "matches": 0, "name": "", "last_match_id": 0, "last_match_date": datetime(1970, 1, 1), "first_match_date": datetime(1970, 1, 1)})
                 db.clear_ratings(rating_system="elo", game_name=game_name)
                 db.clear_rating_history(rating_system="elo", game_name=game_name)
-                logger.info(f"Elo {_game_label(game_name)}: full recompute — {len(matches)} matches [backfill]")
+                logger.info(f"Elo {_game_label(game_name)}: full recompute, {len(matches)} matches [backfill]")
             else:  # new_matches
                 last_match_id = db.get_last_processed_match_id(game_name, "elo")
                 last_time = db.get_last_processed_match_time(game_name, "elo")
@@ -495,16 +493,15 @@ def compute_elo(db: Database, game_name: str = "", full_recompute: bool = False,
                     if last_time is not None and earliest_new is not None and earliest_new < last_time:
                         logger.warning(
                             f"Elo {_game_label(game_name)}: out-of-order matches "
-                            f"(earliest new {earliest_new} < last rated {last_time}) — full recompute")
+                            f"(earliest new {earliest_new} < last rated {last_time}), full recompute")
                         matches = db.get_all_matches_for_game(game_name)
                         ratings = defaultdict(lambda: {"rating": 1500.0, "wins": 0, "losses": 0, "matches": 0, "name": "", "last_match_id": 0, "last_match_date": datetime(1970, 1, 1), "first_match_date": datetime(1970, 1, 1)})
                         db.clear_ratings(rating_system="elo", game_name=game_name)
                         db.clear_rating_history(rating_system="elo", game_name=game_name)
-                        logger.info(f"Elo {_game_label(game_name)}: full recompute — {len(matches)} matches [out-of-order]")
+                        logger.info(f"Elo {_game_label(game_name)}: full recompute, {len(matches)} matches [out-of-order]")
                     else:
-                        logger.info(f"Elo {_game_label(game_name)}: incremental — {len(matches)} new")
+                        logger.info(f"Elo {_game_label(game_name)}: incremental, {len(matches)} new")
                 else:
-                    logger.debug(f"Elo {_game_label(game_name)}: up to date, skipping")
                     return None
 
     if not matches:
@@ -516,8 +513,6 @@ def compute_elo(db: Database, game_name: str = "", full_recompute: bool = False,
 
     # Load tournament tiers for tier-based K-factor
     tournament_tiers = db.get_tournament_tiers()
-    if tournament_tiers:
-        logger.debug(f"Elo {_game_label(game_name)}: {len(tournament_tiers)} tiers loaded")
 
     for row in matches:
         match_id, p1_id, p2_id, p1_score, p2_score, winner_id, played_at, game, tournament_id = row
@@ -608,7 +603,7 @@ def compute_glicko2(db: Database, game_name: str = "", full_recompute: bool = Fa
             "first_match_date": datetime(1970, 1, 1),
         })
         # Reset wins/losses/matches to 0 for full recompute — they'll be recounted
-        logger.info(f"Glicko-2 {_game_label(game_name)}: from scratch — {len(matches)} matches")
+        logger.info(f"Glicko-2 {_game_label(game_name)}: from scratch, {len(matches)} matches")
     else:
         # Incremental: load existing ratings
         existing = db.load_ratings(game_name, "glicko2")
@@ -627,7 +622,7 @@ def compute_glicko2(db: Database, game_name: str = "", full_recompute: bool = Fa
                 "last_match_date": datetime(1970, 1, 1),
                 "first_match_date": datetime(1970, 1, 1),
             })
-            logger.info(f"Glicko-2 {_game_label(game_name)}: from scratch — {len(matches)} matches [no prior]")
+            logger.info(f"Glicko-2 {_game_label(game_name)}: from scratch, {len(matches)} matches [no prior]")
         else:
             ratings = defaultdict(lambda: {
                 "rating": glicko.INITIAL_RATING,
@@ -651,10 +646,8 @@ def compute_glicko2(db: Database, game_name: str = "", full_recompute: bool = Fa
             else:
                 state, total_in_db, total_in_hist = _check_match_state(db, game_name, "glicko2")
             if state == "up_to_date":
-                logger.debug(f"Glicko-2 {_game_label(game_name)}: up to date, skipping")
                 return None
             elif state == "backfill":
-                logger.debug(f"Glicko-2 {_game_label(game_name)}: backfill detected ({total_in_db} DB vs {total_in_hist} hist) — full recompute")
                 matches = db.get_all_matches_for_game(game_name)
                 ratings = defaultdict(lambda: {
                     "rating": glicko.INITIAL_RATING,
@@ -670,13 +663,13 @@ def compute_glicko2(db: Database, game_name: str = "", full_recompute: bool = Fa
                     })
                 db.clear_ratings(rating_system="glicko2", game_name=game_name)
                 db.clear_rating_history(rating_system="glicko2", game_name=game_name)
-                logger.info(f"Glicko-2 {_game_label(game_name)}: full recompute — {len(matches)} matches [backfill]")
+                logger.info(f"Glicko-2 {_game_label(game_name)}: full recompute, {len(matches)} matches [backfill]")
             else:  # new_matches — incremental update
                 # Find the last processed date and reload from there
                 last_date = db.get_last_processed_date(game_name, "glicko2")
                 if last_date is None:
                     matches = db.get_all_matches_for_game(game_name)
-                    logger.info(f"Glicko-2 {_game_label(game_name)}: from scratch — {len(matches)} matches [no history]")
+                    logger.info(f"Glicko-2 {_game_label(game_name)}: from scratch, {len(matches)} matches [no history]")
                 else:
                     # Reload matches from the last processed period forward
                     # The last period may have been incomplete (more matches added to same period)
@@ -723,7 +716,7 @@ def compute_glicko2(db: Database, game_name: str = "", full_recompute: bool = Fa
                     # Delete history for the last period so we don't get duplicates
                     db.delete_rating_history_from_date(game_name, "glicko2", period_start)
 
-                    logger.info(f"Glicko-2 {_game_label(game_name)}: incremental — {len(matches)} from {period_start}")
+                    logger.info(f"Glicko-2 {_game_label(game_name)}: incremental, {len(matches)} from {period_start}")
 
     if not matches:
         return None

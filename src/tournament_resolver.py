@@ -132,30 +132,53 @@ class TournamentResolver:
             if tier:
                 html = self._db.get_tournament_html(tournament_id)
                 if html:
-                    # Fast path: tier + html already stored. But if the name is
-                    # empty (e.g. parsed before name extraction existed), recover
-                    # it from the cached HTML rather than leaving it blank.
+                    # Fast path: tier + html already stored. But if the name or
+                    # game is empty (e.g. parsed before name/game extraction
+                    # existed), recover them from the cached HTML rather than
+                    # leaving them blank.
                     name_rows = self._db.client.execute(
-                        "SELECT name FROM tournaments FINAL WHERE tournament_id = %(t)s",
+                        "SELECT name, game FROM tournaments FINAL WHERE tournament_id = %(t)s",
                         {"t": tournament_id},
                     )
                     existing_name = name_rows[0][0] if name_rows else ""
-                    if not existing_name:
-                        parsed_name = self._parse_name(html)
-                        if parsed_name:
-                            # Preserve existing metadata; only update the name.
-                            det = self._db.get_tournament_details(tournament_id) or {}
-                            self._db.upsert_tournament(
-                                tournament_id, parsed_name, tier,
-                                game=det.get("game", ""),
-                                prize_money=det.get("prize_money", ""),
-                                tourney_format=det.get("tourney_format", ""),
-                                match_format=det.get("match_format", ""),
-                                schedule_start=det.get("schedule_start"),
-                                schedule_end=det.get("schedule_end"),
-                                maplist=det.get("maplist") or [],
-                                rankings=det.get("rankings", "[]"),
-                            )
+                    existing_game = name_rows[0][1] if name_rows else ""
+                    if not existing_name or not existing_game:
+                        det = self._db.get_tournament_details(tournament_id) or {}
+                        parsed_details = self._parse_tournament_details(html)
+                        # Recover name: prefer the page title; fall back to the
+                        # existing stored name.
+                        new_name = self._parse_name(html) or existing_name
+                        # Recover game: prefer the title text; fall back to the
+                        # pfcat category icon resolved via the games table.
+                        new_game = existing_game or parsed_details.get("game") or ""
+                        id_to_name = {gid: nm for nm, gid in self._db._game_id_cache().items()}
+                        if not new_game and parsed_details.get("game_category_id"):
+                            new_game = id_to_name.get(parsed_details["game_category_id"], "")
+                        # Refresh rankings too: freshly re-parse from the cached
+                        # HTML so each entry carries its correct game (multi-game
+                        # pages), resolved from the canonical category id.
+                        new_rankings = parsed_details.get("rankings", "[]")
+                        try:
+                            import json as _json
+                            entries = _json.loads(new_rankings)
+                            for e in entries:
+                                if isinstance(e, dict) and e.get("game_category_id"):
+                                    e["game"] = id_to_name.get(e["game_category_id"], e.get("game", ""))
+                            new_rankings = _json.dumps(entries, ensure_ascii=False)
+                        except Exception:
+                            pass
+                        # Preserve existing metadata; only update name/game/rankings.
+                        self._db.upsert_tournament(
+                            tournament_id, new_name, tier,
+                            game=new_game,
+                            prize_money=det.get("prize_money", ""),
+                            tourney_format=det.get("tourney_format", ""),
+                            match_format=det.get("match_format", ""),
+                            schedule_start=det.get("schedule_start"),
+                            schedule_end=det.get("schedule_end"),
+                            maplist=det.get("maplist") or [],
+                            rankings=new_rankings,
+                        )
                     TournamentResolver.db_hits += 1
                     return tier
                 # Tier exists but raw_html is missing — fall through to download.
@@ -193,16 +216,43 @@ class TournamentResolver:
         # name only if the page has no name (avoids clobbering a known name
         # with empty when resolving a tournament page without a title).
         name = self._parse_name(html) or self._get_existing_name(tournament_id)
+        # Fall back to the pfcat category icon for the game when the title text
+        # is empty (older pages). Resolve category id -> game name via the
+        # games table; unknown/absent ids keep the empty game.
+        game = details["game"]
+        if not game:
+            cat = details.get("game_category_id") or 0
+            if cat:
+                id_to_name = {gid: nm for nm, gid in self._db._game_id_cache().items()}
+                game = id_to_name.get(cat, "")
+        # Resolve each rankings entry's game from its pfcat category id (the
+        # canonical game name via the games table). The title-derived `game` is
+        # only a fallback for entries whose category is unknown (0). Multi-game
+        # event pages mix games; the row-level `game` only reflects the first.
+        rankings_json = details["rankings"]
+        if rankings_json not in ("", "[]"):
+            try:
+                import json as _json
+                entries = _json.loads(rankings_json)
+                id_to_name = {gid: nm for nm, gid in self._db._game_id_cache().items()}
+                for e in entries:
+                    if isinstance(e, dict):
+                        cat = e.get("game_category_id") or 0
+                        if cat:
+                            e["game"] = id_to_name.get(cat, e.get("game", ""))
+                rankings_json = _json.dumps(entries, ensure_ascii=False)
+            except Exception:
+                pass
         # Store the raw page HTML in raw_posts (post_id = tournament_id).
         self._db.store_raw_post(tournament_id, html, "parsed")
         self._db.upsert_tournament(
             tournament_id, name, tier,
-            game=details["game"], prize_money=details["prize_money"],
+            game=game, prize_money=details["prize_money"],
             tourney_format=details["tourney_format"], match_format=details["match_format"],
             schedule_start=details["schedule_start"], schedule_end=details["schedule_end"],
-            maplist=details["maplist"], rankings=details["rankings"],
+            maplist=details["maplist"], rankings=rankings_json,
         )
-        if details["rankings"] != "[]" or details["maplist"]:
+        if rankings_json != "[]" or details["maplist"]:
             TournamentResolver.parsed_details += 1
         return tier
 
@@ -336,6 +386,16 @@ class TournamentResolver:
         if game_m:
             details["game"] = game_m.group(1).strip()
 
+        # Fallback game source: some (older) tournament pages have an empty
+        # title after the icon, but still carry the pfcat category icon that
+        # identifies the game. Stash the raw category id so the caller can
+        # resolve it to a game name via the games table if the text parse
+        # came up empty.
+        details["game_category_id"] = 0
+        cat_m = re.search(r'<div class="title">\s*<i class="pfcat-(\d+)"', body, re.DOTALL)
+        if cat_m:
+            details["game_category_id"] = int(cat_m.group(1))
+
         # Info block fields: <div class="tc_title">Label</div><div>Value</div>
         def info_value(label):
             pat = re.compile(
@@ -372,21 +432,58 @@ class TournamentResolver:
         if maplist:
             details["maplist"] = maplist
 
-        # Final rankings: .tour_rankings table rows
+        # Final rankings: .tour_rankings table rows.
         #   <td class="position">1st</td> ... <a class="profile" href="/player/16947/...">Name</a> ... <td class="prizemoney">60 USD</td>
-        rankings = []
-        rank_rows = re.findall(
+        #
+        # A single PlusForward event page can host MULTIPLE sub-tournaments, one
+        # per game (e.g. ESWC, QuakeCon, TimCon pages list Q3 + QC + QL + ...
+        # events with separate .tour_rankings tables). Parse each rankings block
+        # in its own sub-event scope so every entry is tagged with the game it
+        # actually belongs to (from that sub-event's pfcat category icon). This
+        # lets downstream consumers (e.g. the player-page placements chart)
+        # attribute placements to the correct game instead of the page's first.
+        ranking_re = re.compile(
             r'<tr>.*?<td class="position">([^<]+)</td>.*?'
             r'<a class="profile" href="/player/(\d+)/[^"]*"[^>]*>(?:<span[^>]*></span>\s*)?([^<]+)</a>.*?'
             r'<td class="prizemoney">([^<]*)</td>',
-            body, re.DOTALL)
-        for pos, pid, pname, prize in rank_rows:
-            rankings.append({
-                "position": pos.strip(),
-                "player_id": int(pid),
-                "player_name": pname.strip(),
-                "prize": prize.strip(),
-            })
+            re.DOTALL)
+        rankings = []
+        # Locate each sub-event title and its pfcat category id, in page order.
+        sub_titles = list(re.finditer(
+            r'<div class="title">\s*<i class="pfcat-(\d+)"', body, re.DOTALL))
+        for i, st in enumerate(sub_titles):
+            cat = int(st.group(1))
+            # This sub-event's block ends at the next sub-event title.
+            end = sub_titles[i + 1].start() if i + 1 < len(sub_titles) else len(body)
+            block = body[st.start():end]
+            # Try to recover the game name from the title text for this block.
+            title_game = ""
+            gm = re.search(
+                r'<i class="pfcat-\d+"></i>\s*<a href="[^"]*">([^<]+)</a>',
+                block, re.DOTALL)
+            if gm:
+                title_game = re.sub(r"^[^-]+-\s*", "", _html.unescape(gm.group(1)).strip()).strip()
+            for pos, pid, pname, prize in ranking_re.findall(block):
+                rankings.append({
+                    "position": pos.strip(),
+                    "player_id": int(pid),
+                    "player_name": pname.strip(),
+                    "prize": prize.strip(),
+                    "game": title_game,
+                    "game_category_id": cat,
+                })
+        # Fallback: if no titled sub-events were found, parse the whole body as
+        # one block (older/simple pages with a single rankings table).
+        if not rankings:
+            for pos, pid, pname, prize in ranking_re.findall(body):
+                rankings.append({
+                    "position": pos.strip(),
+                    "player_id": int(pid),
+                    "player_name": pname.strip(),
+                    "prize": prize.strip(),
+                    "game": "",
+                    "game_category_id": 0,
+                })
         if rankings:
             details["rankings"] = json.dumps(rankings, ensure_ascii=False)
 

@@ -124,13 +124,13 @@ async def _safe_defer(interaction: discord.Interaction) -> bool:
         logger.warning(f"defer timeout: {interaction.user}")
         return False
     except discord.NotFound:
-        logger.warning(f"defer failed: not found: {interaction.user}")
+        logger.warning(f"defer failed {interaction.user}: not found")
         return False
     except discord.HTTPException as e:
-        logger.warning(f"defer failed: HTTP {e.status}: {interaction.user}")
+        logger.warning(f"defer failed {interaction.user}: HTTP {e.status}")
         return False
     except Exception as e:
-        logger.warning(f"defer failed: {type(e).__name__}: {e}")
+        logger.warning(f"defer failed {interaction.user}: {type(e).__name__}: {e}")
         return False
 
 
@@ -144,11 +144,11 @@ async def _safe_followup(interaction: discord.Interaction, content: str, *, retr
             )
             return
         except asyncio.TimeoutError:
-            logger.warning(f"followup timeout ({attempt+1}/{retries})")
+            logger.warning(f"followup timeout ({attempt + 1}/{retries})")
         except discord.HTTPException as e:
-            logger.warning(f"followup HTTP {e.status} ({attempt+1}/{retries})")
+            logger.warning(f"followup HTTP {e.status} ({attempt + 1}/{retries})")
         except Exception as e:
-            logger.warning(f"followup {type(e).__name__} ({attempt+1}/{retries})")
+            logger.warning(f"followup {type(e).__name__} ({attempt + 1}/{retries})")
         if attempt < retries - 1:
             await asyncio.sleep(2)
     logger.error(f"followup failed after {retries} attempts ({len(content)} chars)")
@@ -227,7 +227,7 @@ def create_bot(token: str) -> ArenaBot:
         content = _wrap_codeblock(text)
         await _safe_followup(interaction, content)
         _store_debounce(interaction, "top", content)
-        logger.info(f"/top → {len(content)} chars")
+        logger.info(f"/top: {len(content)} chars")
 
     @bot.tree.command(name="player", description="All ratings for a player")
     async def player(interaction: discord.Interaction, name: str):
@@ -239,7 +239,7 @@ def create_bot(token: str) -> ArenaBot:
             text = f"Error: {e}"
         content = _wrap_codeblock(text)
         await _safe_followup(interaction, content)
-        logger.info(f"/player {name} → {len(content)} chars")
+        logger.info(f"/player {name}: {len(content)} chars")
 
     @bot.tree.command(name="history", description="Rating progression for a player")
     @app_commands.choices(game=GAME_CHOICES, system=SYSTEM_CHOICES)
@@ -259,7 +259,7 @@ def create_bot(token: str) -> ArenaBot:
             text = f"Error: {e}"
         content = _wrap_codeblock(text)
         await _safe_followup(interaction, content)
-        logger.info(f"/history {name} → {len(content)} chars")
+        logger.info(f"/history {name}: {len(content)} chars")
 
     @bot.tree.command(name="h2h", description="Head-to-head between two players")
     @app_commands.choices(game=GAME_CHOICES)
@@ -280,7 +280,7 @@ def create_bot(token: str) -> ArenaBot:
             text = f"Error: {e}"
         content = _wrap_codeblock(text)
         await _safe_followup(interaction, content)
-        logger.info(f"/h2h {player1} vs {player2} → {len(content)} chars")
+        logger.info(f"/h2h {player1} vs {player2}: {len(content)} chars")
 
     @bot.tree.command(name="matches", description="Recent matches")
     @app_commands.choices(game=GAME_CHOICES)
@@ -298,7 +298,7 @@ def create_bot(token: str) -> ArenaBot:
             text = f"Error: {e}"
         content = _wrap_codeblock(text)
         await _safe_followup(interaction, content)
-        logger.info(f"/matches → {len(content)} chars")
+        logger.info(f"/matches: {len(content)} chars")
 
     @bot.tree.command(name="player-matches", description="Recent matches for a player")
     @app_commands.choices(game=GAME_CHOICES)
@@ -317,7 +317,7 @@ def create_bot(token: str) -> ArenaBot:
             text = f"Error: {e}"
         content = _wrap_codeblock(text)
         await _safe_followup(interaction, content)
-        logger.info(f"/player-matches {name} → {len(content)} chars")
+        logger.info(f"/player-matches {name}: {len(content)} chars")
 
     @bot.tree.command(name="stats", description="Overall system stats")
     async def stats(interaction: discord.Interaction):
@@ -329,7 +329,7 @@ def create_bot(token: str) -> ArenaBot:
             text = f"Error: {e}"
         content = _wrap_codeblock(text)
         await _safe_followup(interaction, content)
-        logger.info(f"/stats → {len(content)} chars")
+        logger.info(f"/stats: {len(content)} chars")
 
     @bot.tree.command(name="games", description="List available games")
     async def games(interaction: discord.Interaction):
@@ -341,7 +341,7 @@ def create_bot(token: str) -> ArenaBot:
         content = _wrap_codeblock(text)
         try:
             await interaction.response.send_message(content=content)
-            logger.info(f"/games → {len(content)} chars")
+            logger.info(f"/games: {len(content)} chars")
         except (discord.NotFound, discord.HTTPException):
             pass
 

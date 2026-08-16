@@ -32,6 +32,8 @@ import sys
 import time
 from typing import Any, Callable, Optional
 
+from src.logging_setup import configure_logging
+
 logger = logging.getLogger("daemon")
 
 _running = True
@@ -43,30 +45,6 @@ def _signal_handler(signum, frame):
     raise KeyboardInterrupt
 
 
-def _setup(name: str, verbose: bool):
-    """Configure logging to stdout — systemd/journalctl handles rotation."""
-    from config import LOG_LEVEL
-    if verbose:
-        level = logging.DEBUG
-    else:
-        level = getattr(logging, LOG_LEVEL.upper(), logging.INFO)
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s %(levelname)s [%(name)s]: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        stream=sys.stdout,
-        force=True,
-    )
-    # Silence noisy third-party library loggers — keep our code at DEBUG.
-    # discord.py uses logger name "discord" — same as our stage_logger for the bot
-    # component. Only silence discord.py's sub-loggers, not the parent.
-    for noisy in ("clickhouse_driver", "discord.http", "discord.gateway",
-                  "discord.client", "discord.shard", "discord.webhook",
-                  "urllib3", "asyncio"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
-    logging.getLogger("tzlocal").setLevel(logging.WARNING)
-
-
 def run_daemon(
     name: str,
     cycle_fn: Callable[[Any], str],
@@ -74,6 +52,7 @@ def run_daemon(
     daemon: bool = False,
     delay: int = 60,
     verbose: bool = False,
+    log_file: Optional[str] = None,
 ) -> int:
     """Run a pipeline stage as a single run or daemon loop.
 
@@ -84,6 +63,7 @@ def run_daemon(
         daemon: If True, loop forever with delay between cycles.
         delay: Seconds between cycles in daemon mode.
         verbose: Enable debug logging.
+        log_file: Optional path to a rotating log file (in addition to stdout).
 
     Returns:
         Exit code (0 = clean, 1 = error in single mode).
@@ -97,7 +77,7 @@ def run_daemon(
         signal.signal(signal.SIGINT, _signal_handler)
         signal.signal(signal.SIGTERM, _signal_handler)
 
-    _setup(name, verbose)
+    configure_logging(verbose=verbose, log_file=log_file)
 
     stage_logger = logging.getLogger(name)
 
@@ -121,7 +101,7 @@ def run_daemon(
         try:
             result = cycle_fn(cycle_args)
             if result:
-                stage_logger.debug(f"cycle: {result}")
+                stage_logger.info(f"cycle: {result}")
         except KeyboardInterrupt:
             break
         except Exception as e:

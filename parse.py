@@ -33,6 +33,7 @@ def main():
     parser.add_argument("--delay", type=int, default=DAEMON_RESTART_DELAY, help=f"Seconds between cycles (default: {DAEMON_RESTART_DELAY})")
     parser.add_argument("--workers", "-w", type=int, default=0, help=f"Parser threads (0 = auto, default: {PARSER_WORKERS})")
     parser.add_argument("--limit", "-l", type=int, default=0, help="Max matches per cycle (0 = unlimited)")
+    parser.add_argument("--log-file", default=None, help="Optional rotating log file (in addition to stdout)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Debug logging")
     args = parser.parse_args()
 
@@ -43,6 +44,7 @@ def main():
         daemon=args.daemon,
         delay=args.delay,
         verbose=args.verbose,
+        log_file=args.log_file,
     ))
 
 

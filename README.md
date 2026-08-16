@@ -52,7 +52,7 @@ Data is stored in **ClickHouse**.
 - **Discord bot** — slash commands for rankings, player ratings, history, and H2H.
 - **Twitch bot** — chat commands in one or multiple channels.
 - **CLI** — `top`, `player`, `history`, `h2h`, `matches`, `player-matches`, `stats`, `games`, `tournaments`.
-- **Daemon supervisor** — unified, aligned logging; crash-restart for every component.
+- **Daemon supervisor** — unified logging (shared config, stdout + optional rotating file); crash-restart for every component.
 
 ## Requirements
 
@@ -120,7 +120,20 @@ python bot_discord.py                 # Discord bot
 python bot_twitch.py --channel chan1  # Twitch bot
 ```
 
-Every wrapper supports `--daemon` (loop forever with restart delay), `--delay N`, and `-v`.
+Every wrapper supports `--daemon` (loop forever with restart delay), `--delay N`, `--log-file PATH`, and `-v`.
+
+### Logging
+
+All components log through a single shared config (`src/logging_setup.py`), producing one uniform line format:
+
+```
+2026-08-16 23:15:11 INFO  [download] message
+```
+
+- Output always goes to **stdout** (systemd/journalctl under the service).
+- Pass `--log-file PATH` (or set `LOG_FILE`/`LOG_DIR`) to also write to a **rotating file** (`logs/arena.log` by default, 10 MB × 5 backups).
+- `-v` forces DEBUG; otherwise `LOG_LEVEL` applies (default `DEBUG`).
+- Noisy third-party loggers (clickhouse_driver, discord.*, urllib3, asyncio, tzlocal) are silenced to WARNING automatically.
 
 ### CLI queries
 

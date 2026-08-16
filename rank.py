@@ -49,6 +49,8 @@ def cycle(args):
         states[game] = (state, db_count, hist_count)
 
     total_ratings = 0
+    up_to_date = 0
+    changed = 0
 
     for game in games:
         state, db_count, hist_count = states[game]
@@ -58,6 +60,9 @@ def cycle(args):
             if ratings:
                 store_ratings(db, ratings, game, "elo")
                 total_ratings += len(ratings) - 1  # subtract _history key
+                changed += 1
+            elif state == "up_to_date":
+                up_to_date += 1
 
         if args.system in ("glicko2", "both"):
             ratings = compute_glicko2(db, game, period=GLICKO2_PERIOD, match_state=state, match_counts=(db_count, hist_count))
@@ -66,7 +71,9 @@ def cycle(args):
                 total_ratings += len(ratings) - 1  # subtract _history key
 
     db.close()
-    return f"{total_ratings} ratings"
+    if up_to_date:
+        return f"{total_ratings} ratings, {up_to_date}/{len(games)} games up to date"
+    return f"{total_ratings} ratings, {changed} game(s) recomputed"
 
 
 def main():
@@ -75,6 +82,7 @@ def main():
     parser.add_argument("--delay", type=int, default=DAEMON_RESTART_DELAY, help=f"Seconds between cycles (default: {DAEMON_RESTART_DELAY})")
     parser.add_argument("--game", "-g", type=str, default="", help="Game name filter (empty = all)")
     parser.add_argument("--system", "-s", type=str, default="both", choices=["elo", "glicko2", "both"], help="Rating system (default: both)")
+    parser.add_argument("--log-file", default=None, help="Optional rotating log file (in addition to stdout)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Debug logging")
     args = parser.parse_args()
 
@@ -85,6 +93,7 @@ def main():
         daemon=args.daemon,
         delay=args.delay,
         verbose=args.verbose,
+        log_file=args.log_file,
     ))
 
 

@@ -111,10 +111,14 @@ class PageFetcher:
                 if result.returncode in (0, 28) and body and len(body) > 100:
                     return body
 
-                logger.debug(f"curl rc={result.returncode}, {len(body)}b for {url}")
+                # First failure only — retries are expected under load; don't
+                # spam one line per attempt.
+                if attempt == 0:
+                    logger.debug(f"curl rc={result.returncode}, {len(body)}b for {url}")
 
             except (subprocess.TimeoutExpired, OSError) as e:
-                logger.debug(f"curl failed for {url}: {e}")
+                if attempt == 0:
+                    logger.debug(f"curl failed for {url}: {e}")
 
             attempt += 1
             if max_retries > 0 and attempt >= max_retries:
@@ -127,6 +131,6 @@ class PageFetcher:
             # Exponential backoff with jitter.
             wait = min(retry_delay ** attempt, 60)
             wait += random.uniform(0, wait * 0.3)
-            label = f"{attempt}/{max_retries}" if max_retries > 0 else f"{attempt}/∞"
-            logger.debug(f"fetch {label} failed for {url}, retry in {wait:.1f}s")
+            if attempt == 1:
+                logger.debug(f"retry {url} in {wait:.1f}s")
             time.sleep(wait)

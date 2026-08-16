@@ -64,6 +64,7 @@ def main():
     parser.add_argument("--token", default=None, help="Twitch OAuth token (overrides env)")
     parser.add_argument("--channel", default=None, help="Twitch channel(s) to join, comma-separated (overrides env)")
     parser.add_argument("--nickname", default=None, help="Bot nickname (overrides env, default: arenabot)")
+    parser.add_argument("--log-file", default=None, help="Optional rotating log file (in addition to stdout)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Debug logging")
     args = parser.parse_args()
 
@@ -74,6 +75,7 @@ def main():
         daemon=args.daemon,
         delay=args.delay,
         verbose=args.verbose,
+        log_file=args.log_file,
     ))
 
 

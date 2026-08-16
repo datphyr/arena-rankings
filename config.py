@@ -2,8 +2,13 @@
 
 import os
 
-# Log level: DEBUG, INFO, WARNING, ERROR (default INFO)
+# Log level: DEBUG, INFO, WARNING, ERROR (default DEBUG)
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "DEBUG")
+
+# Optional rotating log file (in addition to stdout/journald).
+# LOG_FILE is a full path; LOG_DIR is a directory (log file = <dir>/arena.log).
+LOG_FILE = os.environ.get("LOG_FILE", "")
+LOG_DIR = os.environ.get("LOG_DIR", "")
 
 # Daemon mode
 DAEMON_RESTART_DELAY = int(os.environ.get("DAEMON_RESTART_DELAY", "60"))

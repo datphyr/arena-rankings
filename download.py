@@ -39,6 +39,7 @@ def main():
 
     parser.add_argument("--workers", "-w", type=int, default=DOWNLOADER_WORKERS, help=f"Concurrent download workers (default: {DOWNLOADER_WORKERS})")
     parser.add_argument("--limit", "-l", type=int, default=0, help="Max posts per cycle (0 = unlimited)")
+    parser.add_argument("--log-file", default=None, help="Optional rotating log file (in addition to stdout)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Debug logging")
     args = parser.parse_args()
 
@@ -49,6 +50,7 @@ def main():
         daemon=args.daemon,
         delay=args.delay,
         verbose=args.verbose,
+        log_file=args.log_file,
     ))
 
 

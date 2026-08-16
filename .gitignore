@@ -10,6 +10,7 @@ venv/
 
 # Logs / runtime
 *.log
+logs/
 data/
 
 # ClickHouse backups (large)

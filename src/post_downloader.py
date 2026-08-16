@@ -143,7 +143,7 @@ def download_posts(limit: int = 0, workers: int = 1) -> tuple[int, int, bool]:
         start = db.get_last_scanned_post() + 1
         # If we've already hit the wall, skip scanning entirely.
         if db.is_download_complete():
-            logger.info("download already complete, nothing to do")
+            logger.debug("download already complete, nothing to do")
             return 0, True, True
 
         post_id = start
@@ -197,7 +197,7 @@ def download_posts(limit: int = 0, workers: int = 1) -> tuple[int, int, bool]:
                     consec_bad += 1
                     db.set_last_scanned_post(i)
                     if consec_bad >= WALL_CONSECUTIVE:
-                        logger.info(f"wall at post {i} (invalid after {consec_bad} bad posts), last valid = {i - 1}")
+                        logger.info(f"wall at post {i} (invalid after {consec_bad} bad posts), last valid {i - 1}")
                         db.set_discovery_state("download_complete", "1")
                         wall_hit = True
                         return downloaded, wall_hit, True
@@ -212,12 +212,12 @@ def download_posts(limit: int = 0, workers: int = 1) -> tuple[int, int, bool]:
                     if downloaded % 100 == 0:
                         elapsed = time.time() - start_time
                         rate = downloaded / elapsed if elapsed > 0 else 0
-                        logger.debug(f"{downloaded} posts ({i}) — {rate:.1f}/s")
+                        logger.debug(f"{downloaded} posts ({i}), {rate:.1f}/s")
                 # Advance post_id tracking: batch ended at the highest id in this batch.
             post_id = batch_ids[-1] + 1
 
         elapsed = time.time() - start_time
-        logger.info(f"done: {downloaded} downloaded, wall={wall_hit}, {elapsed:.0f}s")
+        logger.debug(f"done: {downloaded} downloaded, wall={wall_hit}, {elapsed:.0f}s")
 
         # Re-fetch upcoming ('not played') matches whose scheduled time has
         # passed, so the parse stage can pick them up once they finish.

@@ -221,7 +221,7 @@ class BracketFetcher:
             qs = urllib.parse.urlencode(params)
             url = f"{url}?{qs}"
         for attempt in range(_JSON_RETRIES):
-            body = self._curl("GET", url)
+            body = self._curl("GET", url, attempt=attempt)
             if body is None:
                 continue
             try:
@@ -234,7 +234,7 @@ class BracketFetcher:
     def _json_post(self, url: str, data: dict) -> Optional[dict]:
         """POST form-encoded data to a JSON API endpoint (with retry)."""
         for attempt in range(_JSON_RETRIES):
-            body = self._curl("POST", url, data=data)
+            body = self._curl("POST", url, data=data, attempt=attempt)
             if body is None:
                 continue
             try:
@@ -244,7 +244,7 @@ class BracketFetcher:
                 time.sleep(_JSON_RETRY_DELAY + random.uniform(0, 0.3))
         return None
 
-    def _curl(self, method: str, url: str, data: dict = None) -> Optional[str]:
+    def _curl(self, method: str, url: str, data: dict = None, attempt: int = 0) -> Optional[str]:
         """Raw curl GET/POST, returning the response body (or None)."""
         self._rate_limit()
         ua = random.choice(USER_AGENTS)
@@ -267,9 +267,11 @@ class BracketFetcher:
             body = result.stdout.decode("utf-8", errors="replace")
             if result.returncode in (0, 28) and body:
                 return body
-            logger.debug(f"curl rc={result.returncode}, {len(body)}b for {url}")
+            if attempt == 0:
+                logger.debug(f"curl rc={result.returncode}, {len(body)}b for {url}")
         except (subprocess.TimeoutExpired, OSError) as e:
-            logger.debug(f"curl failed for {url}: {e}")
+            if attempt == 0:
+                logger.debug(f"curl failed for {url}: {e}")
         return None
 
     def _rate_limit(self):

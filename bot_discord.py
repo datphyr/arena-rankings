@@ -47,6 +47,7 @@ def main():
     parser.add_argument("--daemon", "-d", action="store_true", help="Run in daemon mode")
     parser.add_argument("--delay", type=int, default=DAEMON_RESTART_DELAY, help=f"Seconds between cycles (default: {DAEMON_RESTART_DELAY})")
     parser.add_argument("--token", default=None, help="Discord bot token (overrides env)")
+    parser.add_argument("--log-file", default=None, help="Optional rotating log file (in addition to stdout)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Debug logging")
     args = parser.parse_args()
 
@@ -57,6 +58,7 @@ def main():
         daemon=args.daemon,
         delay=args.delay,
         verbose=args.verbose,
+        log_file=args.log_file,
     ))
 
 
