@@ -223,19 +223,33 @@ def _flag(code: str) -> str:
     )
 
 
+def _known_flags(codes: list[str]) -> list[str]:
+    """Return flag codes with unknown ('xx') entries dropped when any known
+    flag is present. If every code is unknown, return at most one 'xx' so a
+    single unknown placeholder can still be shown."""
+    known = [c for c in codes if c and c.strip().lower() not in _FLAG_NON_COUNTRY]
+    if known:
+        return known
+    return [c for c in codes if c][:1]
+
+
 def _flags_many(codes: list[str]) -> str:
     """Render a row of flag images, one per code (for the /player page).
 
     Used to show all of a player's flags ordered by how common they are.
+    Unknown ('xx') flags are skipped when at least one known flag is present;
+    only if every code is unknown is a single unknown placeholder shown.
     Empty input -> ''.
     """
     if not codes:
         return ""
-    return Markup("".join(_flag(c) for c in codes if c))
+    return Markup("".join(_flag(c) for c in _known_flags(codes)))
+
 
 
 templates.env.filters["flag"] = _flag
 templates.env.filters["flags"] = _flags_many
+templates.env.filters["known_flags"] = _known_flags
 
 # Map a game name to its plusforward.net category-icon class (pf_categories font).
 # Keys are the canonical game names used across the app. Unknown games render
