@@ -446,6 +446,19 @@ body::before {
   margin: 0 0 12px;
 }
 .peak-row .card { flex: 1; margin-bottom: 0; }
+/* The peak line mixes a large mono rating with smaller "by / in / on" text.
+   Centering them in a flex row keeps the big number level with the rest
+   instead of baseline-aligning it higher. */
+.peak-line {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  line-height: 1.2;
+}
+.peak-line .player-name { vertical-align: middle; }
+.peak-line .game-link { vertical-align: middle; }
 .stat-card {
   background: var(--bg-card);
   border: 1px solid var(--border-soft);
