@@ -1651,7 +1651,7 @@ class DataProvider:
                     "player_id": r[0],
                     "name": canon.get(r[0], f"player_{r[0]}"),
                     "country": countries.get(r[0], ""),
-                    "rating": round(r[1], 1),
+                    "rating": round(_glicko_rank_value(r[1], r[2]), 1) if system == "glicko2" else round(r[1], 1),
                     "rd": round(r[2], 1) if r[2] else None,
                     "vol": round(r[3], 4) if r[3] else None,
                     "wins": r[4],
@@ -1698,7 +1698,7 @@ class DataProvider:
                     "player_id": r[0],
                     "name": canon.get(r[0], f"player_{r[0]}"),
                     "country": countries.get(r[0], ""),
-                    "rating": round(r[1], 1),
+                    "rating": round(_glicko_rank_value(r[1], r[2]), 1) if system == "glicko2" else round(r[1], 1),
                     "rd": round(r[2], 1) if r[2] else None,
                     "vol": round(r[3], 4) if r[3] else None,
                     "wins": r[4],
@@ -1733,7 +1733,7 @@ class DataProvider:
         mm_cond = " AND matches_played >= %(mm)s" if min_matches > 0 else ""
         rows = self.db.client.execute(
             f"""
-            SELECT player_id, rating
+            SELECT player_id, rating, rd
             FROM player_ratings FINAL
             WHERE rating_system = %(sys)s AND game_id = %(gid)s
               AND player_id IN %(ids)s{mm_cond}
@@ -1741,6 +1741,10 @@ class DataProvider:
             {"sys": system, "gid": gid, "ids": tuple(player_ids),
              **({"mm": min_matches} if min_matches > 0 else {})},
         )
+        # Glicko-2 ratings are returned conservative (rating - rd), matching
+        # every other display site; Elo stays raw.
+        if system == "glicko2":
+            return {r[0]: round(_glicko_rank_value(r[1], r[2]), 1) for r in rows}
         return {r[0]: round(r[1], 1) for r in rows}
 
     def _get_top_players_by_peak(
@@ -1859,7 +1863,7 @@ class DataProvider:
                     "player_id": r[0],
                     "name": canon_names.get(r[0], self._canonical_name(r[0])),
                     "country": countries.get(r[0], ""),
-                    "rating": round(r[1], 1),
+                    "rating": round(_glicko_rank_value(r[1], r[2]), 1) if system == "glicko2" else round(r[1], 1),
                     "rd": round(r[2], 1) if r[2] else None,
                     "vol": round(r[3], 4) if r[3] else None,
                     "wins": r[4],
@@ -2074,7 +2078,7 @@ class DataProvider:
                 "player_id": r[0],
                 "name": names.get(r[0], f"player_{r[0]}"),
                 "country": countries.get(r[0], ""),
-                "rating": round(r[1], 1),
+                "rating": round(_glicko_rank_value(r[1], r[2]), 1) if system == "glicko2" else round(r[1], 1),
                 "rd": round(r[2], 1) if r[2] else None,
                 "vol": round(r[3], 4) if r[3] else None,
                 "wins": r[4],
@@ -2232,7 +2236,7 @@ class DataProvider:
                 "country": _rcountry.get(r[0], ""),
                 "game": r[1] or "All Games",
                 "system": r[2],
-                "rating": round(r[3], 1),
+                "rating": round(_glicko_rank_value(r[3], r[4]), 1) if r[2] == "glicko2" else round(r[3], 1),
                 "_raw_rating": r[3],
                 "rd": round(r[4], 1) if r[4] else None,
                 "_raw_rd": r[4],
