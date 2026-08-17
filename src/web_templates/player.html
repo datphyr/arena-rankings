@@ -4,7 +4,7 @@
 <div class="player-head">
   <div class="player-avatar" style="background: {{ player_id|avatar_gradient }};">{{ player_name[0]|upper }}</div>
   <div>
-    <h1><span class="player-name">{% if ratings and ratings[0].country %}<span class="flag flag-lg" title="{{ ratings[0].country|upper }}">{{ ratings[0].country|flag }}</span>{% endif %}{{ player_name }}</span>{% if summary and summary.aliases %}<span class="player-aliases"> ({{ summary.aliases|join(', ') }})</span>{% endif %}</h1>
+    <h1><span class="player-name">{% if player_flags %}<span class="flag flag-lg flag-row" title="{{ player_flags|join(', ') }}">{{ player_flags|flags }}</span>{% endif %}{{ player_name }}</span>{% if summary and summary.aliases %}<span class="player-aliases"> ({{ summary.aliases|join(', ') }})</span>{% endif %}</h1>
     {% if summary and (summary.first_match or summary.last_match) %}
     <div class="rank-pills">
       {% if summary.first_match %}

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="900" height="600" viewBox="0 0 900 600" role="img" aria-label="Unknown country">
+  <defs>
+    <linearGradient id="unknown-grad" gradientTransform="rotate(65)">
+      <stop offset="0%" stop-color="#2a2a2a"/>
+      <stop offset="100%" stop-color="#121212"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#unknown-grad)" d="M0 0h900v600H0z"/>
+</svg>

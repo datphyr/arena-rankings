@@ -145,7 +145,9 @@ DDL_STATEMENTS = [
         match_format LowCardinality(String) DEFAULT '',
         tournament_id UInt64 DEFAULT 0,
         stage_name String DEFAULT '',
-        played_at DateTime
+        played_at DateTime,
+        player1_country LowCardinality(String) DEFAULT '',
+        player2_country LowCardinality(String) DEFAULT ''
     )
     ENGINE = ReplacingMergeTree()
     ORDER BY (game_id, played_at, match_id)

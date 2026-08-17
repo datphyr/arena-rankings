@@ -567,6 +567,43 @@ class DataProvider:
         """ISO country code for a single player_id ('' if unknown)."""
         return self._countries([player_id])[player_id]
 
+    def _player_flag_counts(self, player_ids: list[int]) -> dict[int, list[tuple[str, int]]]:
+        """Most-common country flag per player, aggregated from per-match data.
+
+        Returns {player_id: [(country, count), ...]} ordered by count DESC then
+        country (stable tiebreak). Non-empty country codes only. Missing/unknown
+        players -> [] (no flag). Derived from matches.player{1,2}_country (set
+        by the parser from each match's s_flag class), so it reflects the flag
+        frequency across all of the player's parsed matches rather than just the
+        last-written value in players.country.
+        """
+        if not player_ids:
+            return {}
+        rows = self.db.client.execute(
+            """
+            SELECT player_id, country, count() AS c
+            FROM (
+                SELECT player1_id AS player_id, player1_country AS country
+                FROM matches FINAL WHERE player1_id IN %(ids)s AND player1_country != ''
+                UNION ALL
+                SELECT player2_id AS player_id, player2_country AS country
+                FROM matches FINAL WHERE player2_id IN %(ids)s AND player2_country != ''
+            )
+            GROUP BY player_id, country
+            ORDER BY player_id, c DESC, country
+            """,
+            {"ids": tuple(player_ids)},
+        )
+        out: dict[int, list[tuple[str, int]]] = {pid: [] for pid in player_ids}
+        for pid, country, c in rows:
+            out.setdefault(pid, []).append((country, c))
+        return out
+
+    def _player_most_common_flag(self, player_ids: list[int]) -> dict[int, str]:
+        """Top (most common) country flag per player; '' if none known."""
+        counts = self._player_flag_counts(player_ids)
+        return {pid: (lst[0][0] if lst else "") for pid, lst in counts.items()}
+
     # --- Map images (from the maps lookup table) ---
 
     def _map_rows(self) -> list[tuple]:
@@ -1283,9 +1320,9 @@ class DataProvider:
             """,
             {"t": tournament_id, "lim": limit},
         )
-        # Batch-fetch country codes for all involved players (from players table).
+        # Batch-fetch most-common country flag for all involved players.
         pids = {r[5] for r in rows} | {r[6] for r in rows}
-        countries = self._countries(list(pids))
+        countries = self._player_most_common_flag(list(pids))
         return [
             {
                 "match_id": r[0],
@@ -1581,7 +1618,7 @@ class DataProvider:
             # Batch-fetch main game (most matches) for all player IDs.
             player_ids = [r[0] for r in rows]
             canon = self._canonical_names(player_ids)
-            countries = self._countries(player_ids)
+            countries = self._player_most_common_flag(player_ids)
             main_games = {}
             peaks = {}
             if player_ids:
@@ -1648,7 +1685,7 @@ class DataProvider:
             rows = self.db.client.execute(query, params)
             player_ids = [r[0] for r in rows]
             canon = self._canonical_names(player_ids)
-            countries = self._countries(player_ids)
+            countries = self._player_most_common_flag(player_ids)
             peaks = self._fetch_peaks(player_ids, system) if fetch_peaks else {}
             results = [
                 {
@@ -1772,7 +1809,7 @@ class DataProvider:
             peak_map = {r[0]: (round(r[1] - r[3], 1), r[2], round(r[3], 1)) for r in peak_rows}
         else:
             peak_map = {r[0]: (round(r[1], 1), r[2], None) for r in peak_rows}
-        countries = self._countries(player_ids)
+        countries = self._player_most_common_flag(player_ids)
         # Pre-fetch canonical names ONCE (batched) — calling _canonical_name per
         # player in the merge loop below would issue one query per player (N+1).
         canon_names = self._canonical_names(player_ids)
@@ -1969,7 +2006,7 @@ class DataProvider:
         names = {}
         first_dates = {}
         peaks = {}
-        countries = self._countries(player_ids)
+        countries = self._player_most_common_flag(player_ids)
         if player_ids:
             # Display names come from the canonical source (matches + players),
             # not player_ratings (which no longer stores a name column).
@@ -2181,11 +2218,12 @@ class DataProvider:
                 rd_at_peak = round(r[4], 1) if r[0] == "glicko2" else None
                 peaks[(r[0], r[1] or "")] = (round(r[2], 1), r[3], rd_at_peak)
 
+        _rcountry = self._player_most_common_flag([r[0] for r in rows]) if rows else {}
         return [
             {
                 "player_id": r[0],
                 "name": canon,
-                "country": self._country(r[0]),
+                "country": _rcountry.get(r[0], ""),
                 "game": r[1] or "All Games",
                 "system": r[2],
                 "rating": round(r[3], 1),
@@ -2374,6 +2412,9 @@ class DataProvider:
         # Explicit ids (from autocomplete) take precedence over name resolution.
         p1_id = p1_id if p1_id is not None else (self._player_id(player1) if match == "exact" else None)
         p2_id = p2_id if p2_id is not None else (self._player_id(player2) if match2 == "exact" else None)
+        # Most-common flags for the two players ('' if unknown).
+        _h2h_ids = [i for i in (p1_id, p2_id) if i]
+        _h2h_countries = self._player_most_common_flag(_h2h_ids)
         if match == "exact" and match2 == "exact" and p1_id is not None and p2_id is not None:
             # Both resolved to ids: match by player_id (handles any spelling).
             where = (
@@ -2506,8 +2547,8 @@ class DataProvider:
                 "player2": disp2,
                 "player1_id": p1id,
                 "player2_id": p2id,
-                "player1_country": self._country(p1id),
-                "player2_country": self._country(p2id),
+                "player1_country": _h2h_countries.get(p1id, ""),
+                "player2_country": _h2h_countries.get(p2id, ""),
                 "score": f"{ds1}-{ds2}",
                 "score1": ds1,
                 "score2": ds2,
@@ -2524,8 +2565,8 @@ class DataProvider:
             "player2": player2,
             "p1_id": p1_id,
             "p2_id": p2_id,
-            "p1_country": self._country(p1_id) if p1_id else "",
-            "p2_country": self._country(p2_id) if p2_id else "",
+            "p1_country": _h2h_countries.get(p1_id, "") if p1_id else "",
+            "p2_country": _h2h_countries.get(p2_id, "") if p2_id else "",
             "p1_wins": p1_wins,
             "p2_wins": p2_wins,
             "total": total,
@@ -2626,7 +2667,7 @@ class DataProvider:
         rows = self.db.client.execute(query, params)
         ids = {r[5] for r in rows} | {r[6] for r in rows}
         canon = self._canonical_names(list(ids))
-        countries = self._countries(list(ids))
+        countries = self._player_most_common_flag(list(ids))
         matches = [
             {
                 "match_id": r[0],
@@ -2886,7 +2927,7 @@ class DataProvider:
         # under one spelling.
         ids = {r[5] for r in rows} | {r[6] for r in rows}
         canon = self._canonical_names(list(ids))
-        countries = self._countries(list(ids))
+        countries = self._player_most_common_flag(list(ids))
         return [
             {
                 "match_id": r[0],
@@ -2938,7 +2979,7 @@ class DataProvider:
         r = rows[0]
         ids = {r[5], r[6]}
         canon = self._canonical_names(list(ids))
-        countries = self._countries(list(ids))
+        countries = self._player_most_common_flag(list(ids))
         p1 = canon.get(r[5], r[1])
         p2 = canon.get(r[6], r[2])
         winner = _winner_from_ids(r[5], r[6], r[7], p1, p2)
@@ -3386,7 +3427,7 @@ class DataProvider:
             {"lim": limit},
         )
         canon = self._canonical_names([r[0] for r in rows])
-        countries = self._countries([r[0] for r in rows])
+        countries = self._player_most_common_flag([r[0] for r in rows])
         return [
             {
                 "player_id": r[0],
@@ -3477,7 +3518,7 @@ class DataProvider:
         return {
             "player_id": pid,
             "name": name,
-            "country": self._country(pid),
+            "country": self._player_most_common_flag([pid]).get(pid, ""),
             "peak": round(peak, 1),
             "peak_date": peak_date,
             "game": peak_game or "All Games",
@@ -3521,11 +3562,13 @@ class DataProvider:
             {"mme": mm_elo, "mmg": mm_glicko},
         )
         out: dict = {}
+        _pids = [pid for _, pid, _, _, _ in rows]
+        _flags = self._player_most_common_flag(_pids)
         for sys, pid, peak, peak_date, peak_game in rows:
             out[sys] = {
                 "player_id": pid,
                 "name": self._canonical_name(pid),
-                "country": self._country(pid),
+                "country": _flags.get(pid, ""),
                 "peak": round(peak, 1),
                 "peak_date": peak_date,
                 "game": peak_game or "All Games",
@@ -4004,7 +4047,7 @@ class DataProvider:
                 a["rating"] += delta
         opp_ids = list(agg.keys())
         opp_canon = self._canonical_names(opp_ids)
-        opp_countries = self._countries(opp_ids)
+        opp_countries = self._player_most_common_flag(opp_ids)
         rivals = [
             {
                 "name": opp_canon.get(oid, f"player_{oid}"),

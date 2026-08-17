@@ -178,20 +178,23 @@ templates.env.filters["avatar_gradient"] = _avatar_gradient
 
 # ISO 3166-1 alpha-2 country code -> flag IMAGE (flagcdn.com).
 # Emoji regional-indicator flags (U+1F1E6..) render as bare letters on many
-# systems/fonts, so we use real flag images instead. Non-country codes
-# (e.g. 'eu' = Europe, 'xx' = unknown) map to a neutral placeholder so the
-# layout stays aligned; unknown/empty -> '' (no flag).
-_FLAG_NEUTRAL = "🌐"
-_FLAG_NON_COUNTRY = {"eu", "xx"}
+# systems/fonts, so we use real flag images instead.
+#   - 'eu' (Europe) -> the real EU flag image (flagcdn has eu.svg).
+#   - 'xx' (PlusForward's "Unknown") -> a local neutral placeholder SVG
+#     (black flag, flagcdn-style 3:2) served from /static/flag-unknown.svg.
+#   - unknown/empty -> '' (no flag).
+_FLAG_NON_COUNTRY = {"xx"}
+_FLAG_EU = "eu"
 # PlusForward uses a few non-ISO codes; map them to a renderable flagcdn id.
 _FLAG_ALIAS = {"sca": "gb-sct"}  # Scotland -> Scotland flag (flagcdn)
+_FLAG_UNKNOWN_SRC = "/static/flag-unknown.svg"
 
 
 def _flag(code: str) -> str:
     """Return an <img> flag (flagcdn.com) for an ISO 3166-1 alpha-2 code.
 
     Rendered as safe HTML (Markup) so the <img> isn't escaped. Non-country
-    codes fall back to a neutral emoji placeholder.
+    codes fall back to a neutral placeholder.
     """
     if not code:
         return ""
@@ -202,7 +205,17 @@ def _flag(code: str) -> str:
     elif len(code) != 2 or not code.isalpha():
         return ""
     if code in _FLAG_NON_COUNTRY:
-        return _FLAG_NEUTRAL
+        # PlusForward's "Unknown" -> local black placeholder flag.
+        return Markup(
+            f'<img class="flag-img" src="{_FLAG_UNKNOWN_SRC}" '
+            f'alt="?" title="Unknown" loading="lazy">'
+        )
+    if code == _FLAG_EU:
+        # Europe -> real EU flag (flagcdn).
+        return Markup(
+            f'<img class="flag-img" src="https://flagcdn.com/eu.svg" '
+            f'alt="EU" title="EU" loading="lazy">'
+        )
     # Real flag image from flagcdn (SVG scales cleanly, no width variance).
     return Markup(
         f'<img class="flag-img" src="https://flagcdn.com/{code}.svg" '
@@ -210,7 +223,19 @@ def _flag(code: str) -> str:
     )
 
 
+def _flags_many(codes: list[str]) -> str:
+    """Render a row of flag images, one per code (for the /player page).
+
+    Used to show all of a player's flags ordered by how common they are.
+    Empty input -> ''.
+    """
+    if not codes:
+        return ""
+    return Markup("".join(_flag(c) for c in codes if c))
+
+
 templates.env.filters["flag"] = _flag
+templates.env.filters["flags"] = _flags_many
 
 # Map a game name to its plusforward.net category-icon class (pf_categories font).
 # Keys are the canonical game names used across the app. Unknown games render
@@ -495,6 +520,11 @@ def _player_page(request: Request, name: str, game: str = "", limit: int = 50, p
         # between two players (e.g. two "serious") doesn't resolve to the wrong
         # player. Falls back to name resolution for name-based URLs.
         ctx["player_id"] = player_id if player_id is not None else dx._player_id(name)
+        # All of the player's flags ordered by how common they are (most common
+        # first). Derived from per-match data; drives the header + multi-flag row.
+        flag_counts = dx._player_flag_counts([ctx["player_id"]]) if ctx["player_id"] else {}
+        ctx["player_flags"] = [c for c, _ in flag_counts.get(ctx["player_id"], [])]
+        ctx["player_country"] = ctx["player_flags"][0] if ctx["player_flags"] else ""
         ctx["ratings"] = dx.get_player_ratings(name, min_matches={"glicko2": MIN_MATCHES_GLICKO2, "elo": MIN_MATCHES_ELO}, player_id=ctx["player_id"])
         ctx["placements"] = dx.get_player_tournament_placements(ctx["player_id"]) if ctx["player_id"] else []
         ctx["map_edges"] = dx.get_player_map_edges(ctx["player_id"]) if ctx["player_id"] else {"overall": 0, "maps": []}
@@ -806,10 +836,10 @@ def _tournament_page(request: Request, tournament_id: int):
             ctx["rankings"] = _json.loads(det.get("rankings") or "[]")
         except Exception:
             ctx["rankings"] = []
-        # Enrich each standings row with the player's country (for the flag).
+        # Enrich each standings row with the player's most-common flag.
         if ctx["rankings"]:
             rids = [r.get("player_id") for r in ctx["rankings"] if r.get("player_id")]
-            countries = dx._countries(list(set(rids))) if rids else {}
+            countries = dx._player_most_common_flag(list(set(rids))) if rids else {}
             for r in ctx["rankings"]:
                 r["country"] = countries.get(r.get("player_id"), "")
         # Enrich each standings row with Elo + Glicko-2 rating deltas over the

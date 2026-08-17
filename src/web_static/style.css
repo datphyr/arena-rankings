@@ -892,6 +892,13 @@ a.peak-link:hover { color: var(--copper); text-decoration: underline; }
 .flag-lg {
   font-size: 1.1em;
 }
+/* A row of multiple flags (player page header): space them out. */
+.flag-row {
+  gap: 5px;
+}
+.flag-row .flag-img {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
 /* Larger flag for page headers (player page h1) — the fixed 20px width is
    too small next to a big heading, so bump it up here. */
 .flag-lg .flag-img {
