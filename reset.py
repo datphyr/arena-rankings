@@ -61,7 +61,14 @@ from src.db_schema import CREATE_DATABASE, DDL_STATEMENTS, DROP_DATABASE
 
 # Tables by category
 RANKING_TABLES = ["player_ratings", "rating_history"]
-PARSED_TABLES = ["matches", "match_maps", "players"]
+# All tables re-populated by the parser from raw HTML. `tournaments` is here
+# too: its parsed columns (game, prize, formats, maplist, rankings) are derived
+# from parsing, and parent aggregation pages (which the parser now skips) leave
+# stale empty-game rows behind — truncating the whole table lets the parser
+# rebuild it cleanly. It stays in DOWNLOADED_TABLES as well so `reset.py all`
+# still backs it up.
+PARSED_TABLES = ["matches", "match_maps", "players", "games", "maps",
+                 "player_aliases", "tournament_brackets", "tournaments"]
 DOWNLOADED_TABLES = ["raw_posts", "tournaments", "discovery_state"]
 
 VALID_TARGETS = ["rankings", "parsed", "all"]
@@ -117,7 +124,14 @@ def reset_rankings(client: Client, db_name: str, dry: bool) -> None:
 
 
 def reset_parsed(client: Client, db_name: str, dry: bool) -> None:
-    """Clear parsed data (matches, match_maps, players) and reset parse_status."""
+    """Clear parsed data (matches, maps, players, games, tournaments, ...) and reset parse_status.
+
+    Truncates every table the parser re-populates from raw HTML (PARSED_TABLES),
+    including `tournaments` — its parsed columns (game, prize, formats, maplist,
+    rankings) are derived from parsing, and truncating the whole table lets the
+    parser rebuild it cleanly (dropping stale parent-aggregation-page rows that
+    the parser now skips).
+    """
     print("→ Resetting parsed data\n")
 
     for table in PARSED_TABLES:
@@ -219,6 +233,13 @@ def reset_all(client: Client, db_name: str, dry: bool, do_restore: bool) -> None
     if archive_path:
         print("\n→ Restoring downloaded data...")
         backup_mod.do_restore(export_tables, archive_path)
+
+    # The tournaments table is rebuilt by the parser from raw HTML. Truncate it
+    # after restore so stale rows (e.g. parent aggregation pages the parser now
+    # skips, with empty games and duplicated rankings) don't survive the reset.
+    print("\n→ Clearing tournaments table (rebuilt by parser)...")
+    truncate_table(target, "tournaments", db_name)
+    print("  ✓ tournaments truncated")
 
     print("\n→ Final state:")
     tables = target.execute("SHOW TABLES")
