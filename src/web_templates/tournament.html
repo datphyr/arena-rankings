@@ -103,10 +103,10 @@
             {% set pos = r.position | ranknum %}
             <span class="rank-badge {{ 'rank-1' if pos == 1 else 'rank-2' if pos == 2 else 'rank-3' if pos == 3 else 'rank-4' if pos == 4 else 'rank-5' if pos == 5 }}">{{ pos }}</span>
           </td>
-          <td class="col-flex"><span class="player-name">{% if r.player_name %}{% if r.country %}<span class="flag" title="{{ r.country|upper }}">{{ r.country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ r.player_id }}/{{ slug(r.player_name) }}">{{ r.player_name }}</a>{% endif %}</span></td>
-          {% if has_matches %}<td class="num col-stat" data-stat="matches"><span class="win">{{ r.m_w }}</span>:<span class="loss">{{ r.m_l }}</span></td>{% endif %}
-          {% if has_maps %}<td class="num col-stat" data-stat="maps"><span class="win">{{ r.map_w }}</span>:<span class="loss">{{ r.map_l }}</span></td>{% endif %}
-          {% if has_frags %}<td class="num col-stat" data-stat="frags"><span class="win">{{ r.frags }}</span>:<span class="loss">{{ r.deaths }}</span></td>{% endif %}
+          <td class="col-flex"><span class="player-name">{% if r.player_name %}{% if r.is_unknown %}<img class="flag-img" src="/static/flag-unknown.svg" alt="?" title="Unknown" loading="lazy"><span class="unknown-player">{{ r.player_name }}</span>{% else %}{% if r.country %}<span class="flag" title="{{ r.country|upper }}">{{ r.country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ r.player_id }}/{{ slug(r.player_name) }}">{{ r.player_name }}</a>{% endif %}{% endif %}</span></td>
+          {% if has_matches %}<td class="num col-stat" data-stat="matches">{% if r.m_w is not none %}<span class="win">{{ r.m_w }}</span>:<span class="loss">{{ r.m_l }}</span>{% endif %}</td>{% endif %}
+          {% if has_maps %}<td class="num col-stat" data-stat="maps">{% if r.map_w is not none %}<span class="win">{{ r.map_w }}</span>:<span class="loss">{{ r.map_l }}</span>{% endif %}</td>{% endif %}
+          {% if has_frags %}<td class="num col-stat" data-stat="frags">{% if r.frags is not none %}<span class="win">{{ r.frags }}</span>:<span class="loss">{{ r.deaths }}</span>{% endif %}</td>{% endif %}
           <td class="num col-delta" data-stat="rating">{% if r.elo_delta is not none and r.elo_delta != 0 %}<span class="{{ 'win' if r.elo_delta > 0 else 'loss' if r.elo_delta < 0 }}" data-val="{{ r.elo_delta }}">{{ '%+.1f'|format(r.elo_delta) }}</span>{% else %}{% endif %}</td>
           <td class="num col-wr">{{ r.prize if r.prize else '' }}</td>
         </tr>
@@ -327,8 +327,11 @@
     }
     var maxWin = 0, maxLoss = 0, minWin = Infinity, minLoss = Infinity;
     cells.forEach(function (td) {
-      var w = parseInt(td.querySelector('.win').textContent, 10) || 0;
-      var l = parseInt(td.querySelector('.loss').textContent, 10) || 0;
+      var wSpan = td.querySelector('.win');
+      var lSpan = td.querySelector('.loss');
+      if (!wSpan || !lSpan) return; // dash cell (no data) — skip
+      var w = parseInt(wSpan.textContent, 10) || 0;
+      var l = parseInt(lSpan.textContent, 10) || 0;
       if (w > maxWin) maxWin = w;
       if (l > maxLoss) maxLoss = l;
       if (w < minWin) minWin = w;
@@ -337,6 +340,7 @@
     cells.forEach(function (td) {
       var wSpan = td.querySelector('.win');
       var lSpan = td.querySelector('.loss');
+      if (!wSpan || !lSpan) return; // dash cell (no data) — skip
       var w = parseInt(wSpan.textContent, 10) || 0;
       var l = parseInt(lSpan.textContent, 10) || 0;
       // min (closest to zero) -> yellow, max -> green (wins) / red (losses).

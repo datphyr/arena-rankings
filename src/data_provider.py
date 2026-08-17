@@ -644,6 +644,29 @@ class DataProvider:
         counts = self._player_flag_counts(player_ids)
         return {pid: (lst[0][0] if lst else "") for pid, lst in counts.items()}
 
+    def _players_known(self, player_ids: list[int]) -> set[int]:
+        """Return the subset of player_ids that have at least one recorded match.
+
+        Players with zero matches (e.g. entries that only appear in a scraped
+        tournament standings JSON but never actually played a recorded match)
+        are treated as "unknown" — callers skip linking them and show an
+        "unknown" flag instead.
+        """
+        if not player_ids:
+            return set()
+        rows = self.db.client.execute(
+            """
+            SELECT DISTINCT pid
+            FROM (
+                SELECT player1_id AS pid FROM matches WHERE player1_id IN %(ids)s
+                UNION ALL
+                SELECT player2_id AS pid FROM matches WHERE player2_id IN %(ids)s
+            )
+            """,
+            {"ids": tuple(player_ids)},
+        )
+        return {r[0] for r in rows}
+
     # --- Map images (from the maps lookup table) ---
 
     def _map_rows(self) -> list[tuple]:
@@ -791,6 +814,29 @@ class DataProvider:
         )
         self._games_cache = [r[0] for r in rows]
         return self._games_cache
+
+    def get_player_games(self, player_name: str, player_id: int | None = None) -> list[str]:
+        """Return the sorted list of games a player actually has matches in.
+
+        Used to populate the game filter dropdown on player-scoped pages (e.g.
+        /rivals) so it only offers games the player has played, not every game
+        in the DB.
+        """
+        p_id = player_id if player_id is not None else self._player_id(player_name)
+        if p_id is None:
+            return []
+        rows = self.db.client.execute(
+            """
+            SELECT DISTINCT g.name
+            FROM matches m
+            LEFT JOIN games g FINAL ON g.game_id = m.game_id
+            WHERE (m.player1_id = %(pid)s OR m.player2_id = %(pid)s)
+              AND g.name != ''
+            ORDER BY g.name
+            """,
+            {"pid": p_id},
+        )
+        return [r[0] for r in rows]
 
     def autocomplete(self, kind: str, q: str, limit: int = 20) -> list[dict] | list[str]:
         """Return matching names for autocomplete dropdowns.
@@ -1402,13 +1448,16 @@ class DataProvider:
         """Per-player match/map/frag stats for a tournament's final standings.
 
         Returns dict keyed by player_id:
-          {pid: {"m_w": int, "m_l": int, "map_w": int, "map_l": int,
-                  "frags": int, "deaths": int}}
+          {pid: {"m_w": int, "m_l": int, "map_w": int|None, "map_l": int|None,
+                  "frags": int|None, "deaths": int|None}}
 
         - m_w / m_l: match wins / losses in this tournament
-        - map_w / map_l: map wins / losses (from match_maps per-map scores)
-        - frags: total frags across all maps played
-        - deaths: total deaths (opponent frags) across all maps played
+        - map_w / map_l: map wins / losses (from match_maps per-map scores);
+          None when the player has matches but NO per-map data at all (so the
+          UI can show an empty cell instead of a misleading 0:0)
+        - frags: total frags across all maps played (None if no map data)
+        - deaths: total deaths (opponent frags) across all maps played (None
+          if no map data)
         """
         # Match wins/losses per player
         mrows = self.db.client.execute(
@@ -1422,9 +1471,9 @@ class DataProvider:
         for r in mrows:
             p1, p2, w = r[0], r[1], r[2]
             if p1 not in stats:
-                stats[p1] = {"m_w": 0, "m_l": 0, "map_w": 0, "map_l": 0, "frags": 0, "deaths": 0}
+                stats[p1] = {"m_w": 0, "m_l": 0, "map_w": None, "map_l": None, "frags": None, "deaths": None}
             if p2 not in stats:
-                stats[p2] = {"m_w": 0, "m_l": 0, "map_w": 0, "map_l": 0, "frags": 0, "deaths": 0}
+                stats[p2] = {"m_w": 0, "m_l": 0, "map_w": None, "map_l": None, "frags": None, "deaths": None}
             if w == p1:
                 stats[p1]["m_w"] += 1
                 stats[p2]["m_l"] += 1
@@ -1446,9 +1495,15 @@ class DataProvider:
         for r in map_rows:
             p1_score, p2_score, p1_id, p2_id = r[1], r[2], r[3], r[4]
             if p1_id not in stats:
-                stats[p1_id] = {"m_w": 0, "m_l": 0, "map_w": 0, "map_l": 0, "frags": 0, "deaths": 0}
+                stats[p1_id] = {"m_w": 0, "m_l": 0, "map_w": None, "map_l": None, "frags": None, "deaths": None}
             if p2_id not in stats:
-                stats[p2_id] = {"m_w": 0, "m_l": 0, "map_w": 0, "map_l": 0, "frags": 0, "deaths": 0}
+                stats[p2_id] = {"m_w": 0, "m_l": 0, "map_w": None, "map_l": None, "frags": None, "deaths": None}
+            # This player now HAS per-map data — convert None map/frag fields to
+            # 0 so increments work (None means "no map data at all").
+            for pid_ in (p1_id, p2_id):
+                s = stats[pid_]
+                if s["frags"] is None:
+                    s["map_w"] = s["map_l"] = s["frags"] = s["deaths"] = 0
             stats[p1_id]["frags"] += p1_score
             stats[p1_id]["deaths"] += p2_score
             stats[p2_id]["frags"] += p2_score
@@ -4214,7 +4269,12 @@ class DataProvider:
                 a["last"] = played_at
             cur = at_map.get(mid)
             if cur is not None:
-                key = gname if game else 0
+                # hist is keyed by game_id (int); when a specific game is
+                # selected all rows share that single game_id. Using gid (the
+                # resolved game_id) instead of the game NAME (gname) fixes the
+                # key-mismatch bug that made prev always None -> every delta
+                # became (absolute rating - 1500).
+                key = gid if game else 0
                 h = hist.get(key, [])
                 # Find this match's own snapshot (unique by match_id) and take
                 # the entry immediately before it as the previous snapshot.

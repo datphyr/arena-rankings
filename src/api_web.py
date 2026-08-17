@@ -754,11 +754,14 @@ def rivals(
         ctx["player"] = player
         ctx["player_id"] = player_id
         ctx["game"] = _resolve_game(game)
-        ctx["games"] = dx.get_games()
         # Resolve the player for the header/name display (id-authoritative).
         resolved_id = player_id if player_id is not None else dx._player_id(player)
         ctx["rivals_player_id"] = resolved_id
         ctx["rivals_player_name"] = dx._canonical_name(resolved_id) if resolved_id else player
+        # Only offer games the selected player actually has matches in (not
+        # every game in the DB), so the filter can't select a game with no
+        # data. Falls back to the full game list when no player is selected.
+        ctx["games"] = dx.get_player_games("", player_id=resolved_id) if resolved_id else dx.get_games()
         ctx["total"] = 0
         ctx["rivals"] = []
         if resolved_id:
@@ -883,12 +886,17 @@ def _tournament_page(request: Request, tournament_id: int):
             ctx["rankings"] = _json.loads(det.get("rankings") or "[]")
         except Exception:
             ctx["rankings"] = []
-        # Enrich each standings row with the player's most-common flag.
+        # Enrich each standings row with the player's most-common flag, and
+        # mark players with no recorded matches as "unknown" (so the UI skips
+        # linking them and shows an unknown flag instead).
         if ctx["rankings"]:
             rids = [r.get("player_id") for r in ctx["rankings"] if r.get("player_id")]
             countries = dx._player_most_common_flag(list(set(rids))) if rids else {}
+            known = dx._players_known(list(set(rids))) if rids else set()
             for r in ctx["rankings"]:
-                r["country"] = countries.get(r.get("player_id"), "")
+                pid = r.get("player_id")
+                r["country"] = countries.get(pid, "")
+                r["is_unknown"] = bool(pid) and pid not in known
         # Enrich each standings row with Elo + Glicko-2 rating deltas over the
         # tournament's own time window (for the colored delta columns).
         if ctx["rankings"]:
@@ -909,6 +917,9 @@ def _tournament_page(request: Request, tournament_id: int):
             for r in ctx["rankings"]:
                 ps = pstats.get(r.get("player_id"))
                 if ps:
+                    # Real player with matches in this tournament. Map/frag
+                    # fields may still be 0 (no per-map data) — keep those as
+                    # 0 (they played matches but no map detail was recorded).
                     r["m_w"] = ps["m_w"]
                     r["m_l"] = ps["m_l"]
                     r["map_w"] = ps["map_w"]
@@ -916,12 +927,16 @@ def _tournament_page(request: Request, tournament_id: int):
                     r["frags"] = ps["frags"]
                     r["deaths"] = ps["deaths"]
                 else:
-                    r["m_w"] = 0
-                    r["m_l"] = 0
-                    r["map_w"] = 0
-                    r["map_l"] = 0
-                    r["frags"] = 0
-                    r["deaths"] = 0
+                    # No recorded matches for this player in this tournament
+                    # (placeholder/absent/bye entry in the standings). Leave
+                    # stats as None so the template shows a dash instead of a
+                    # misleading 0:0.
+                    r["m_w"] = None
+                    r["m_l"] = None
+                    r["map_w"] = None
+                    r["map_l"] = None
+                    r["frags"] = None
+                    r["deaths"] = None
             # Whether any player has data for each stat — used to hide empty
             # columns entirely (e.g. no per-map data => no Maps/Frags columns).
             ctx["has_matches"] = any(r.get("m_w") or r.get("m_l") for r in ctx["rankings"])

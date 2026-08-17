@@ -1045,6 +1045,7 @@ a.tier-link:hover .tag { filter: brightness(1.2); }
 .tag-rose { background: rgba(232, 168, 124, 0.14); color: var(--rose-gold); border: 1px solid rgba(232, 168, 124, 0.28); }
 .tag-yellow { background: rgba(234, 179, 8, 0.14); color: var(--yellow); border: 1px solid rgba(234, 179, 8, 0.28); }
 .tag-burgundy { background: rgba(127, 29, 29, 0.18); color: var(--burgundy); border: 1px solid rgba(127, 29, 29, 0.32); }
+.unknown-player { color: var(--text-dim); }  /* standings player with no recorded matches (not linked) */
 
 /* Tier pill shown as an inline prefix before a tournament name. Keeps the
    pill and the name on one line with a small gap; the whole prefix clips

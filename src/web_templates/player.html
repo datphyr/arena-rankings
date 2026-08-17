@@ -133,6 +133,7 @@
   </div>
 </div>
 
+{% if history | length > 1 %}
 <div class="card">
   <div class="card-title"><span class="dot"></span>Rating History
     <form class="filters section-filters" method="get" action="/player/{{ player_id }}/{{ slug(player_name) }}" style="margin-left:auto;" id="histFilter">
@@ -147,6 +148,7 @@
   <div class="chart-box tall"><canvas id="historyChart"></canvas></div>
 </div>
 <div class="highlight-row" id="peak-plaques"></div>
+{% endif %}
 
 {% if summary and summary.rivals %}
 <div class="card">
@@ -241,6 +243,8 @@ const gameIconClass = {
 };
 
 function buildChart(history) {
+  // No chart canvas (rating history card hidden — player has <2 history points).
+  if (!chartEl) return;
   // Build data points with numeric x (epoch ms) so the x-axis is a LINEAR
   // time scale: horizontal distance is proportional to real elapsed time.
   // (A category scale would space every match equally, distorting gaps.)
