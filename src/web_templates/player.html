@@ -567,6 +567,11 @@ function buildPlacementsChart() {
   const gradFor = function (place) {
     if (rankGrads[place]) return rankGrads[place];
     if (maxPlace <= 5 || firstBeyond === null) return [beyondEnd];
+    // Only a single beyond-5 placement (e.g. just 7th): it is simultaneously
+    // the first-after-5th and the worst finish, so it falls back to the base
+    // rank color (--bg-hover) — the same color as the 6+ rank badge. This
+    // also avoids a 0/0 -> NaN interpolation that rendered opaque black.
+    if (maxPlace === firstBeyond) return [beyondEnd];
     // firstBeyond = midpoint, maxPlace = base rank color.
     const t = (place - firstBeyond) / (maxPlace - firstBeyond);
     return [mixRGB(beyondStart, beyondEnd, t)];
