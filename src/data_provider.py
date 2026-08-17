@@ -1349,6 +1349,70 @@ class DataProvider:
             for r in rows
         ]
 
+    def get_tournament_player_stats(self, tournament_id: int) -> dict:
+        """Per-player match/map/frag stats for a tournament's final standings.
+
+        Returns dict keyed by player_id:
+          {pid: {"m_w": int, "m_l": int, "map_w": int, "map_l": int,
+                  "frags": int, "deaths": int}}
+
+        - m_w / m_l: match wins / losses in this tournament
+        - map_w / map_l: map wins / losses (from match_maps per-map scores)
+        - frags: total frags across all maps played
+        - deaths: total deaths (opponent frags) across all maps played
+        """
+        # Match wins/losses per player
+        mrows = self.db.client.execute(
+            """
+            SELECT player1_id, player2_id, winner_id
+            FROM matches WHERE tournament_id = %(t)s
+            """,
+            {"t": tournament_id},
+        )
+        stats: dict[int, dict] = {}
+        for r in mrows:
+            p1, p2, w = r[0], r[1], r[2]
+            if p1 not in stats:
+                stats[p1] = {"m_w": 0, "m_l": 0, "map_w": 0, "map_l": 0, "frags": 0, "deaths": 0}
+            if p2 not in stats:
+                stats[p2] = {"m_w": 0, "m_l": 0, "map_w": 0, "map_l": 0, "frags": 0, "deaths": 0}
+            if w == p1:
+                stats[p1]["m_w"] += 1
+                stats[p2]["m_l"] += 1
+            elif w == p2:
+                stats[p2]["m_w"] += 1
+                stats[p1]["m_l"] += 1
+
+        # Map wins/losses + frags/deaths from match_maps
+        map_rows = self.db.client.execute(
+            """
+            SELECT mm.match_id, mm.player1_score, mm.player2_score,
+                   m.player1_id, m.player2_id
+            FROM match_maps mm
+            JOIN matches m ON mm.match_id = m.match_id
+            WHERE m.tournament_id = %(t)s
+            """,
+            {"t": tournament_id},
+        )
+        for r in map_rows:
+            p1_score, p2_score, p1_id, p2_id = r[1], r[2], r[3], r[4]
+            if p1_id not in stats:
+                stats[p1_id] = {"m_w": 0, "m_l": 0, "map_w": 0, "map_l": 0, "frags": 0, "deaths": 0}
+            if p2_id not in stats:
+                stats[p2_id] = {"m_w": 0, "m_l": 0, "map_w": 0, "map_l": 0, "frags": 0, "deaths": 0}
+            stats[p1_id]["frags"] += p1_score
+            stats[p1_id]["deaths"] += p2_score
+            stats[p2_id]["frags"] += p2_score
+            stats[p2_id]["deaths"] += p1_score
+            if p1_score > p2_score:
+                stats[p1_id]["map_w"] += 1
+                stats[p2_id]["map_l"] += 1
+            elif p2_score > p1_score:
+                stats[p2_id]["map_w"] += 1
+                stats[p1_id]["map_l"] += 1
+
+        return stats
+
     def get_tournament_rating_deltas(self, tournament_id: int) -> dict:
         """Elo + Glicko-2 rating change for each player in a tournament's final
         standings, over the tournament's own time window.

@@ -872,6 +872,34 @@ def _tournament_page(request: Request, tournament_id: int):
                 d = deltas.get(r.get("player_id"), {})
                 r["elo_delta"] = d.get("elo")
                 r["glicko2_delta"] = d.get("glicko2")
+        # Enrich each standings row with match/map/frag stats.
+        if ctx["rankings"]:
+            pstats = dx.get_tournament_player_stats(tournament_id)
+            for r in ctx["rankings"]:
+                ps = pstats.get(r.get("player_id"))
+                if ps:
+                    r["m_w"] = ps["m_w"]
+                    r["m_l"] = ps["m_l"]
+                    r["map_w"] = ps["map_w"]
+                    r["map_l"] = ps["map_l"]
+                    r["frags"] = ps["frags"]
+                    r["deaths"] = ps["deaths"]
+                else:
+                    r["m_w"] = 0
+                    r["m_l"] = 0
+                    r["map_w"] = 0
+                    r["map_l"] = 0
+                    r["frags"] = 0
+                    r["deaths"] = 0
+            # Whether any player has data for each stat — used to hide empty
+            # columns entirely (e.g. no per-map data => no Maps/Frags columns).
+            ctx["has_matches"] = any(r.get("m_w") or r.get("m_l") for r in ctx["rankings"])
+            ctx["has_maps"] = any(r.get("map_w") or r.get("map_l") for r in ctx["rankings"])
+            ctx["has_frags"] = any(r.get("frags") or r.get("deaths") for r in ctx["rankings"])
+        else:
+            ctx["has_matches"] = False
+            ctx["has_maps"] = False
+            ctx["has_frags"] = False
         ml = det.get("maplist") or []
         seen = set()
         ctx["maplist"] = [m for m in ml if not (m in seen or seen.add(m))]

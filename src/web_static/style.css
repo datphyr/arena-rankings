@@ -660,6 +660,8 @@ th.col-date, td.col-date { width: 148px; }     /* date / first & last match (YYY
 th.col-date, td.col-date { padding-left: 8px; padding-right: 8px; } /* minimal — just fits 17-char datetime */
 th.col-stage, td.col-stage { width: 100px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* match stage */
 th.col-score, td.col-score { width: 70px; }    /* match score */
+th.col-stat, td.col-stat { width: 72px; text-align: center; white-space: nowrap; }  /* tournament standings: matches/maps/frags W:L */
+td.num.col-stat, th.num.col-stat { text-align: center; }
 th.col-game, td.col-game { width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }     /* game name */
 th.col-tier, td.col-tier { width: 80px; text-align: center; }      /* tier tag */
 th.col-main-game, td.col-main-game { width: 150px; } /* main game */

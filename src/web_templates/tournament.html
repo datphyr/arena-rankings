@@ -89,6 +89,9 @@
         <tr>
           <th class="num col-num"><span class="rank-head-box">#</span></th>
           <th class="col-flex">Player</th>
+          {% if has_matches %}<th class="num col-stat">Matches</th>{% endif %}
+          {% if has_maps %}<th class="num col-stat">Maps</th>{% endif %}
+          {% if has_frags %}<th class="num col-stat">Frags</th>{% endif %}
           <th class="num col-delta">Rating</th>
           <th class="num col-wr">Prize</th>
         </tr>
@@ -101,11 +104,14 @@
             <span class="rank-badge {{ 'rank-1' if pos == 1 else 'rank-2' if pos == 2 else 'rank-3' if pos == 3 else 'rank-4' if pos == 4 else 'rank-5' if pos == 5 }}">{{ pos }}</span>
           </td>
           <td class="col-flex"><span class="player-name">{% if r.player_name %}{% if r.country %}<span class="flag" title="{{ r.country|upper }}">{{ r.country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ r.player_id }}/{{ slug(r.player_name) }}">{{ r.player_name }}</a>{% endif %}</span></td>
+          {% if has_matches %}<td class="num col-stat"><span class="win">{{ r.m_w }}</span> : <span class="loss">{{ r.m_l }}</span></td>{% endif %}
+          {% if has_maps %}<td class="num col-stat"><span class="win">{{ r.map_w }}</span> : <span class="loss">{{ r.map_l }}</span></td>{% endif %}
+          {% if has_frags %}<td class="num col-stat"><span class="win">{{ r.frags }}</span> : <span class="loss">{{ r.deaths }}</span></td>{% endif %}
           <td class="num col-delta">{% if r.elo_delta is not none and r.elo_delta != 0 %}<span class="{{ 'win' if r.elo_delta > 0 else 'loss' if r.elo_delta < 0 }}">{{ '%+.1f'|format(r.elo_delta) }}</span>{% else %}{% endif %}</td>
           <td class="num col-wr">{{ r.prize if r.prize else '' }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="4" class="empty">No final standings recorded.</td></tr>
+        <tr><td colspan="7" class="empty">No final standings recorded.</td></tr>
         {% endfor %}
       </tbody>
     </table>
