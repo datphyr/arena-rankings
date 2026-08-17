@@ -405,7 +405,10 @@ class TournamentResolver:
             if not m:
                 return ""
             val = re.sub(r'<[^>]+>', '', m.group(1)).strip()
-            return val
+            # The source page HTML-escapes entities (e.g. "final &amp; Grand").
+            # Unescape so we store the raw text; Jinja re-escapes once on output.
+            # Without this, values like "&amp;" get double-escaped ("&amp;amp;").
+            return _html.unescape(val)
 
         details["prize_money"] = info_value("Prizemoney")
         details["tourney_format"] = info_value("Tourney format")

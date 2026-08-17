@@ -62,7 +62,7 @@
   {% endif %}
 </div>
 
-{% if maplist %}
+{% if maps %}
 <div class="highlight-row" style="margin-top:12px;">
   <div class="highlight-box" style="padding:16px;padding-bottom:24px;overflow:visible;grid-column:1 / -1;">
     <div class="card-title"><span class="dot"></span>Maps</div>
@@ -238,6 +238,23 @@
   plaques.forEach(function (plaque) {
     var prev = plaque.querySelector('.map-plaque-preview');
     if (!prev) return;
+    var cardImg = plaque.querySelector('.map-plaque-img');
+    // Only show the tooltip when the card image is being downscaled below its
+    // natural size (i.e. the tooltip can actually show it bigger). If the card
+    // already shows it at full size, the tooltip would be no larger — hide it.
+    function decide() {
+      if (cardImg && cardImg.naturalWidth &&
+          cardImg.clientWidth >= cardImg.naturalWidth &&
+          cardImg.clientHeight >= cardImg.naturalHeight) {
+        prev.style.display = 'none';
+      } else {
+        prev.style.display = '';
+      }
+    }
+    if (cardImg) {
+      if (cardImg.complete) decide();
+      else cardImg.addEventListener('load', decide);
+    }
     function place() {
       var r = plaque.getBoundingClientRect();
       prev.style.left = (r.left + r.width / 2 - 150) + 'px';

@@ -831,6 +831,15 @@ def _tournament_page(request: Request, tournament_id: int):
         ctx["maplist"] = [m for m in ml if not (m in seen or seen.add(m))]
         # Map plaques keyed by map_id (canonical); images resolved by ID.
         ctx["maps"] = dx.get_tournament_maps(tournament_id)
+        # A tournament may have a maplist (map rotation names) but no resolvable
+        # map images / match_maps. Append name-only plaques so the Maps card
+        # isn't left empty — names render with the unknown-image placeholder.
+        if ctx["maplist"]:
+            known = {m.get("name") for m in ctx["maps"]}
+            for mname in ctx["maplist"]:
+                if mname not in known:
+                    ctx["maps"].append({"map_id": 0, "name": mname, "image": ""})
+                    known.add(mname)
         ctx["map_images"] = dx.get_tournament_map_images(tournament_id)
         ctx["name_slug"] = _slug(det["name"])
         ctx["schedule_start_str"] = _fmt_dt(det.get("schedule_start"))

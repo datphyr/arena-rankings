@@ -1258,9 +1258,10 @@ a.page-link:hover {
   color: var(--text);
 }
 .map-thumb-wrap .map-plaque-img {
-  width: 100%;
+  max-width: 100%;
   height: auto;
   display: block;
+  margin: 0 auto;
   border-radius: var(--radius-xs);
 }
 .map-plaque-preview {
