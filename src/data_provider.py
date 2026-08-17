@@ -821,8 +821,8 @@ class DataProvider:
 
     # --- Tournaments ---
 
-    def get_tournaments(self, tier: str = "", game: str = "", limit: int = 50, offset: int = 0, sort_col: str = "", sort_dir: str = "desc") -> list[dict]:
-        """List tournaments, optionally filtered by tier and/or game.
+    def get_tournaments(self, tier: str = "", game: str = "", tournament: str = "", limit: int = 50, offset: int = 0, sort_col: str = "", sort_dir: str = "desc") -> list[dict]:
+        """List tournaments, optionally filtered by tier, game, and/or tournament name.
 
         When sort_col is set, ALL matching rows are fetched and sorted in
         Python so the sort applies to the full dataset, not just the page.
@@ -836,6 +836,9 @@ class DataProvider:
         if gid:
             params["gid"] = gid
             conds.append("m.game_id = %(gid)s")
+        if tournament:
+            params["tournament"] = f"%{tournament}%"
+            conds.append("t.name ILIKE %(tournament)s")
         where = " AND ".join(conds)
         fetch_limit = 100000 if sort_col else "%(lim)s"
         rows = self.db.client.execute(
@@ -917,7 +920,7 @@ class DataProvider:
             tournaments = tournaments[offset:offset + limit]
         return tournaments
 
-    def count_tournaments(self, tier: str = "", game: str = "") -> int:
+    def count_tournaments(self, tier: str = "", game: str = "", tournament: str = "") -> int:
         """Total number of tournaments matching the given filters (for pagination)."""
         params = {}
         conds = ["t.name != ''"]
@@ -928,6 +931,9 @@ class DataProvider:
         if gid:
             params["gid"] = gid
             conds.append("m.game_id = %(gid)s")
+        if tournament:
+            params["tournament"] = f"%{tournament}%"
+            conds.append("t.name ILIKE %(tournament)s")
         where = " AND ".join(conds)
         rows = self.db.client.execute(
             f"""

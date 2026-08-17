@@ -9,6 +9,7 @@
     <option value="{{ g }}" {{ 'selected' if game == g }}>{{ g }}</option>
     {% endfor %}
   </select>
+  <input type="text" name="tournament" value="{{ tournament }}" placeholder="Tournament" style="width:160px" data-autocomplete="tournament">
   <select name="tier">
     <option value="">All tiers</option>
     <option value="premier" {{ 'selected' if tier == 'premier' }}>Premier</option>

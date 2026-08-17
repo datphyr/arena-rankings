@@ -748,6 +748,7 @@ def tournaments(
     request: Request,
     tier: str = Query("", pattern="^(|premier|major|minor)$"),
     game: str = Query("", description="Game name or alias (empty = all)"),
+    tournament: str = Query("", description="Filter by tournament name"),
     limit: str = Query("100", pattern="^(100|1000|all)$", description="Rows to show"),
     clear: int = Query(0, ge=0, le=1),
     page: int = Query(1, ge=1, description="Page number"),
@@ -757,7 +758,7 @@ def tournaments(
 ):
     # "Clear filters" button resets all filters
     if clear:
-        tier = game = ""
+        tier = game = tournament = ""
     game = _resolve_game(game)
     # Default sort: last match descending (matches the SQL ORDER BY default).
     if not sort_col:
@@ -772,11 +773,12 @@ def tournaments(
         ctx["active"] = "tournaments"
         ctx["tier"] = tier
         ctx["game"] = game
+        ctx["tournament"] = tournament
         ctx["limit"] = limit
         ctx["sort_col"] = sort_col
         ctx["sort_dir"] = sort_dir
-        ctx["tournaments"] = dx.get_tournaments(tier=tier, game=game, limit=per_page, offset=offset, sort_col=sort_col, sort_dir=sort_dir)
-        total = dx.count_tournaments(tier=tier, game=game)
+        ctx["tournaments"] = dx.get_tournaments(tier=tier, game=game, tournament=tournament, limit=per_page, offset=offset, sort_col=sort_col, sort_dir=sort_dir)
+        total = dx.count_tournaments(tier=tier, game=game, tournament=tournament)
         # Stable column widths computed from the FULL (unfiltered) dataset so
         # fixed-layout columns don't shift when sorting/filtering/paginating.
         _cw = dx.tournaments_col_widths()
@@ -797,7 +799,7 @@ def tournaments(
         ctx["total_pages"] = max(1, (total + per_page - 1) // per_page) if limit != "all" else 1
         ctx["pagination_qs"] = {"tier": tier, "game": game, "limit": limit,
                               "system": "", "sort": "", "date": "", "sort_col": sort_col,
-                              "sort_dir": sort_dir, "player": "", "tournament": ""}
+                              "sort_dir": sort_dir, "player": "", "tournament": tournament}
         ctx["tier_stats"] = dx.get_tournament_stats()
     if partial:
         return templates.TemplateResponse(request, "_tournaments_results.html", ctx)
