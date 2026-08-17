@@ -46,14 +46,26 @@ DDL_STATEMENTS = [
     # raw_posts — Central store of downloaded PlusForward post HTML.
     # post_id is the permanent PlusForward post ID (stable, never shifts).
     # raw_html is the full downloaded page (sidebars stripped via the anon
-    # settings cookie). status: downloaded → parsed | skipped. reason records
-    # why a post was skipped (e.g. 'not a match', 'team format', 'invalid').
+    # settings cookie). status: discovered → downloaded → parsed | skipped.
+    #   - 'discovered': a match ID found via matchlist discovery, HTML not yet
+    #     fetched (raw_html empty). Only used in discovery download mode.
+    #   - 'downloaded': HTML fetched, ready to parse.
+    #   - 'parsed' / 'skipped': processed by the parser (reason records why
+    #     skipped, e.g. 'not a match', 'team format', 'invalid').
+    # sort_time: chronological ordering key for the pipeline. post_id is NOT
+    # chronological (a match post can be created long after it was played), so
+    # this is the reliable time signal. In discovery mode it's filled from the
+    # matchlist at discovery time; in sequential mode it's parsed from the page
+    # at download time. The parser overwrites it with the page-derived value
+    # once parsed. Generic name because raw_posts holds matches, tournaments,
+    # news, etc. — not just matches with a 'played_at'.
     """
     CREATE TABLE IF NOT EXISTS arena_rankings.raw_posts (
         post_id UInt64,
         raw_html String DEFAULT '',
         status LowCardinality(String) DEFAULT 'downloaded',
-        reason String DEFAULT ''
+        reason String DEFAULT '',
+        sort_time DateTime DEFAULT toDateTime(0)
     )
     ENGINE = ReplacingMergeTree()
     ORDER BY post_id
@@ -111,7 +123,7 @@ DDL_STATEMENTS = [
     """,
 
     # matches — Parsed match details (fully normalized: IDs only)
-    # match_id is the PlusForward post ID (same as match_registry)
+    # match_id is the PlusForward post ID (same as raw_posts.post_id)
     # player1_id/player2_id reference players; winner_id is the winner's player_id
     # game_id references games (was game_category_id, the pfcat category ID)
     # tournament_id references tournaments
@@ -120,7 +132,7 @@ DDL_STATEMENTS = [
     # Denormalized name/country/tournament_name/game_name columns were removed:
     # they duplicated players/games/tournaments. Resolve via JOIN on IDs.
     # Note: status column was removed — it was dead (0 rows ever differed from
-    # 'Match finished'). Parsing state lives in match_registry.status instead.
+    # 'Match finished'). Parsing state lives in raw_posts.status instead.
     """
     CREATE TABLE IF NOT EXISTS arena_rankings.matches (
         match_id UInt64,

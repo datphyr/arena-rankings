@@ -76,6 +76,26 @@ def download_complete() -> bool:
         return False
 
 
+def discovery_complete() -> bool:
+    """True once matchlist discovery has scanned back to the oldest match.
+
+    Opens its own connection and checks the discovery_state latch. Used by the
+    download/parse pipeline components in discovery mode to gate their first
+    run: they hold off until discovery has catalogued the full match history
+    (oldest match found) so processing runs oldest→newest and nothing is missed.
+    """
+    try:
+        db = Database()
+        try:
+            return db.is_backward_complete()
+        finally:
+            db.close()
+    except Exception:
+        # If we can't check the gate, fail closed (don't start the pipeline
+        # on a half-scanned history).
+        return False
+
+
 class Database:
     """ClickHouse database client."""
 
@@ -165,23 +185,34 @@ class Database:
 
     # --- Raw Posts ---
 
-    def store_raw_post(self, post_id: int, raw_html: str, status: str = "downloaded", reason: str = ""):
+    def store_raw_post(self, post_id: int, raw_html: str, status: str = "downloaded",
+                       reason: str = "", sort_time=None):
         """Insert or update a raw post (downloaded HTML + processing status).
 
         ReplacingMergeTree dedups by post_id, so re-downloading a post
         overwrites its previous row.
+
+        sort_time is the chronological ordering key (see schema). Pass None to
+        keep the existing value (e.g. when only flipping status via raw_post_mark).
         """
+        if sort_time is None:
+            # Preserve the existing sort_time if the row already exists.
+            rows = self.client.execute(
+                "SELECT sort_time FROM raw_posts FINAL WHERE post_id = %(pid)s LIMIT 1",
+                {"pid": post_id},
+            )
+            sort_time = rows[0][0] if rows else datetime(1970, 1, 1)
         self.client.execute(
-            "INSERT INTO raw_posts (post_id, raw_html, status, reason) VALUES",
-            [(post_id, raw_html, status, reason)],
+            "INSERT INTO raw_posts (post_id, raw_html, status, reason, sort_time) VALUES",
+            [(post_id, raw_html, status, reason, sort_time)],
         )
 
     def store_raw_posts(self, posts: list[tuple]):
-        """Batch-insert raw posts. Each tuple: (post_id, raw_html, status, reason)."""
+        """Batch-insert raw posts. Each tuple: (post_id, raw_html, status, reason, sort_time)."""
         if not posts:
             return
         self.client.execute(
-            "INSERT INTO raw_posts (post_id, raw_html, status, reason) VALUES",
+            "INSERT INTO raw_posts (post_id, raw_html, status, reason, sort_time) VALUES",
             posts,
         )
 
@@ -194,9 +225,9 @@ class Database:
         return len(rows) > 0
 
     def raw_post_get(self, post_id: int) -> Optional[tuple]:
-        """Return (post_id, raw_html, status, reason) for a post, or None."""
+        """Return (post_id, raw_html, status, reason, sort_time) for a post, or None."""
         rows = self.client.execute(
-            "SELECT post_id, raw_html, status, reason FROM raw_posts FINAL WHERE post_id = %(pid)s",
+            "SELECT post_id, raw_html, status, reason, sort_time FROM raw_posts FINAL WHERE post_id = %(pid)s",
             {"pid": post_id},
         )
         return rows[0] if rows else None
@@ -225,13 +256,14 @@ class Database:
         return {r[0] for r in rows}
 
     def raw_post_get_downloaded(self, limit: int = 0) -> list[tuple]:
-        """Get posts with status 'downloaded' (ready to parse), oldest first.
+        """Get posts with status 'downloaded' (ready to parse), chronological first.
 
-        Returns list of (post_id, raw_html) tuples.
+        Returns list of (post_id, raw_html) tuples, ordered by sort_time (the
+        reliable chronological key — post_id is NOT chronological).
         """
         query = (
             "SELECT post_id, raw_html FROM raw_posts FINAL "
-            "WHERE status = 'downloaded' ORDER BY post_id ASC"
+            "WHERE status = 'downloaded' ORDER BY sort_time ASC, post_id ASC"
         )
         if limit > 0:
             query += f" LIMIT {limit}"
@@ -239,9 +271,65 @@ class Database:
         return [(r[0], r[1]) for r in rows]
 
     def raw_post_mark(self, post_id: int, status: str, reason: str = ""):
-        """Update a post's status (and optional reason), preserving its HTML."""
+        """Update a post's status (and optional reason), preserving its HTML + sort_time."""
         html = self.raw_post_get_html(post_id)
         self.store_raw_post(post_id, html, status, reason)
+
+    # --- Discovery catalog (discovery download mode) ---
+    #
+    # In discovery mode, matchlist discovery registers match IDs in raw_posts
+    # with status 'discovered' (raw_html empty, sort_time from the matchlist).
+    # The downloader then fetches each and flips it to 'downloaded'. This keeps
+    # raw_posts as the single source of truth — no separate match_registry table.
+
+    def register_discovered(self, match_ids: list[int], sort_times: Optional[list] = None) -> int:
+        """Insert newly discovered match IDs into raw_posts as status 'discovered'.
+
+        Skips IDs already present (any status). Returns the number newly added.
+        sort_times: optional list of datetime values (same length as match_ids),
+        from the matchlist results page — when the match was played.
+        """
+        if not match_ids:
+            return 0
+        rows = self.client.execute(
+            "SELECT post_id FROM raw_posts FINAL WHERE post_id IN %(ids)s",
+            {"ids": tuple(match_ids)},
+        )
+        existing = {r[0] for r in rows}
+        new_indices = [i for i, mid in enumerate(match_ids) if mid not in existing]
+        if not new_indices:
+            return 0
+        zero_ts = datetime(1970, 1, 1)
+        data = []
+        for i in new_indices:
+            mid = match_ids[i]
+            ts = sort_times[i] if sort_times and i < len(sort_times) else zero_ts
+            data.append((mid, "", "discovered", "", ts))
+        self.client.execute(
+            "INSERT INTO raw_posts (post_id, raw_html, status, reason, sort_time) VALUES",
+            data,
+        )
+        return len(new_indices)
+
+    def raw_post_get_discovered(self, limit: int = 0) -> list[tuple]:
+        """Get posts with status 'discovered' (match IDs awaiting download), chronological first.
+
+        Returns list of (post_id, sort_time) tuples.
+        """
+        query = (
+            "SELECT post_id, sort_time FROM raw_posts FINAL "
+            "WHERE status = 'discovered' ORDER BY sort_time ASC, post_id ASC"
+        )
+        if limit > 0:
+            query += f" LIMIT {limit}"
+        return self.client.execute(query)
+
+    def raw_post_count_discovered(self) -> int:
+        """Count posts with status 'discovered' (awaiting download)."""
+        rows = self.client.execute(
+            "SELECT count() FROM raw_posts FINAL WHERE status = 'discovered'"
+        )
+        return rows[0][0] if rows else 0
 
     # --- Discovery State ---
 
@@ -266,8 +354,27 @@ class Database:
         """
         return self.get_discovery_state("download_complete", "0") == "1"
 
+    def is_backward_complete(self) -> bool:
+        """True once matchlist discovery has scanned back to the oldest match.
+
+        Used as the gate for the download/parse pipeline in discovery mode: they
+        wait until discovery has catalogued the full match history (oldest match
+        found) before starting to process, so ratings are computed chronologically
+        and nothing is missed. Latches to True forever once reached.
+        """
+        return self.get_discovery_state("backward_complete", "0") == "1"
+
+    def get_last_known_page(self) -> int:
+        """Get the last known matchlist page from discovery state (0 if not set)."""
+        val = self.get_discovery_state("last_known_page", "0")
+        return int(val)
+
+    def set_last_known_page(self, page: int):
+        """Update the last known matchlist page in discovery state."""
+        self.set_discovery_state("last_known_page", str(page))
+
     def get_last_scanned_post(self) -> int:
-        """Get the last post_id scanned by the download stage (0 if not set)."""
+        """Get the last post_id scanned by the sequential download stage (0 if not set)."""
         val = self.get_discovery_state("last_scanned_post", "0")
         return int(val)
 

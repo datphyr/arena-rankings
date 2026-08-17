@@ -57,12 +57,22 @@ PF_COOKIE_HEADER = os.environ.get(
 # of throughput vs. rate-limit risk on PlusForward.
 DOWNLOADER_WORKERS = int(os.environ.get("DOWNLOADER_WORKERS", "1"))
 
+# Download mode — how the download stage decides which post IDs to fetch.
+#   'discovery'  (default): matchlist discovery registers match IDs in raw_posts
+#     (status 'discovered'), then the downloader fetches only those match pages.
+#     Efficient (only match pages, not every post) and gives a reliable
+#     chronological key (sort_time from the matchlist).
+#   'sequential': scan /post/1..N sequentially and store every page. Robust
+#     fallback that catches everything, but downloads far more (news, VODs,
+#     forum threads, deleted posts) and post_id order is NOT chronological.
+DOWNLOAD_MODE = os.environ.get("DOWNLOAD_MODE", "discovery").strip().lower()
+
 # Wall detection — consecutive invalid posts (generic "Post | Plus Forward"
 # title) that must appear before we treat it as the end of the sequence (the
 # wall) rather than a run of deleted posts. The largest deleted block observed
 # is ~85 posts, so 250 is a safe margin: it bypasses any deleted block without
 # false positives. Set lower to detect the wall sooner, higher to tolerate
-# larger deleted blocks.
+# larger deleted blocks. Only used in 'sequential' download mode.
 WALL_CONSECUTIVE = int(os.environ.get("WALL_CONSECUTIVE", "100"))
 
 # Parser workers — default: use all CPU cores

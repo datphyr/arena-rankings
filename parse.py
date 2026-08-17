@@ -16,12 +16,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import DAEMON_RESTART_DELAY, PARSER_WORKERS
+from config import DAEMON_RESTART_DELAY, DOWNLOAD_MODE, PARSER_WORKERS
 from src.daemon import run_daemon
 from src.match_parser import parse_all_matches
 
 
 def cycle(args):
+    if DOWNLOAD_MODE == "discovery":
+        from src.db_client import discovery_complete
+        if not discovery_complete():
+            # Hold off until discovery has scanned back to the oldest match, so
+            # we process the full history oldest→newest (ratings stay chronological).
+            return "waiting for discovery (backward scan not complete)"
     # Parse incrementally — process whatever posts are downloaded so far.
     success, failure = parse_all_matches(limit=args.limit, workers=args.workers)
     return f"{success} success, {failure} skipped"

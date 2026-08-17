@@ -142,29 +142,31 @@ def reset_parsed(client: Client, db_name: str, dry: bool) -> None:
             print(f"    → truncated")
 
     # Reset status in raw_posts from 'parsed'/'skipped' → 'downloaded'
-    # so the parser reprocesses them from stored raw_html.
+    # so the parser reprocesses them from stored raw_html. 'discovered' rows
+    # (discovery catalog, no HTML yet) are left untouched.
     reg_count = table_count(client, "raw_posts", db_name)
     parsed_count = client.execute(
-        "SELECT count() FROM raw_posts FINAL WHERE status != 'downloaded'"
+        "SELECT count() FROM raw_posts FINAL WHERE status IN ('parsed', 'skipped')"
     )[0][0]
     print(f"\n  raw_posts: {reg_count} rows ({parsed_count} to reset to downloaded)")
 
     if not dry and parsed_count > 0:
         # ReplacingMergeTree: insert new rows with status='downloaded'
-        # for all posts that aren't already downloaded.
+        # for all posts that are parsed/skipped (not 'discovered' — those have
+        # no HTML yet and stay as discovery catalog entries). Preserve sort_time.
         rows = client.execute(
-            "SELECT post_id, raw_html FROM raw_posts FINAL "
-            "WHERE status != 'downloaded'"
+            "SELECT post_id, raw_html, sort_time FROM raw_posts FINAL "
+            "WHERE status IN ('parsed', 'skipped')"
         )
         if rows:
             BATCH = 2000
             total = 0
             for i in range(0, len(rows), BATCH):
                 batch = rows[i:i + BATCH]
-                data = [(r[0], r[1], "downloaded", "") for r in batch]
+                data = [(r[0], r[1], "downloaded", "", r[2]) for r in batch]
                 client.execute(
                     "INSERT INTO raw_posts "
-                    "(post_id, raw_html, status, reason) VALUES",
+                    "(post_id, raw_html, status, reason, sort_time) VALUES",
                     data,
                 )
                 total += len(data)

@@ -206,7 +206,11 @@ def download_posts(limit: int = 0, workers: int = 1) -> tuple[int, int, bool]:
                 else:
                     # Valid post — reset counter and store it.
                     consec_bad = 0
-                    db.store_raw_post(i, html, "downloaded")
+                    # sort_time: chronological key parsed from the page (the
+                    # Date block). post_id is NOT chronological, so this is what
+                    # the parser uses to order processing truly chronologically.
+                    sort_time = parse_scheduled_time(html)
+                    db.store_raw_post(i, html, "downloaded", sort_time=sort_time)
                     db.set_last_scanned_post(i)
                     downloaded += 1
                     if downloaded % 100 == 0:
@@ -259,6 +263,6 @@ def refresh_upcoming(db: Database, fetcher: "PostDownloader" = None, now: dateti
             continue
         # Store the fresh page; if it now has scores the parse stage will
         # process it, otherwise it stays 'not played' (re-fetched next cycle).
-        db.store_raw_post(post_id, new_html, "downloaded")
+        db.store_raw_post(post_id, new_html, "downloaded", sort_time=parse_scheduled_time(new_html))
         refreshed += 1
     return refreshed

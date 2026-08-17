@@ -1,26 +1,36 @@
 # Arena Rankings
 
-Automated esports player rankings for competitive arena shooters. The project downloads **all** posts from [PlusForward](https://www.plusforward.net) into a central raw store, parses the match/tournament pages, and computes **Elo** and **Glicko-2** ratings that are served through a web site, a JSON API, and Discord/Twitch chat bots. It is game-agnostic and tracks multiple titles side by side (e.g. Quake Champions, Quake Live, Quake 3 Arena, Quake 3 CPMA, Quake 4, Quake World), each with its own leaderboards and ratings.
+Automated esports player rankings for competitive arena shooters. The project downloads match/tournament pages from [PlusForward](https://www.plusforward.net) into a central raw store, parses them, and computes **Elo** and **Glicko-2** ratings that are served through a web site, a JSON API, and Discord/Twitch chat bots. It is game-agnostic and tracks multiple titles side by side (e.g. Quake Champions, Quake Live, Quake 3 Arena, Quake 3 CPMA, Quake 4, Quake World), each with its own leaderboards and ratings.
 
 ## Overview
 
 Arena Rankings is a full data pipeline + front-end for competitive player ratings:
 
-1. **Download** — scans `/post/1` → `/post/N` sequentially and stores every page's HTML in the `raw_posts` table (status `downloaded`). Sidebar cookies shrink each page ~50%.
-2. **Parse** — reads `raw_posts`, extracts structured data (players, scores, maps, tournaments) into the normalized tables, marking each post `parsed` or `skipped` (with a reason).
-3. **Rank** — computes **Elo** and **Glicko-2** ratings from the parsed matches.
-4. **Serve** — exposes the results via a web app, a JSON API, and Discord/Twitch bots.
+1. **Discover** (discovery mode) — scans the PlusForward matchlist to find match IDs, registering them in `raw_posts` with status `discovered` (and a `sort_time` chronological key from the matchlist).
+2. **Download** — fetches match/post HTML into the `raw_posts` table (status `downloaded`). Sidebar cookies shrink each page ~50%.
+3. **Parse** — reads `raw_posts`, extracts structured data (players, scores, maps, tournaments) into the normalized tables, marking each post `parsed` or `skipped` (with a reason).
+4. **Rank** — computes **Elo** and **Glicko-2** ratings from the parsed matches.
+5. **Serve** — exposes the results via a web app, a JSON API, and Discord/Twitch bots.
 
 All components are supervised by a daemon (`daemon.py`) that starts them in dependency order and restarts any that crash.
 
 Data is stored in **ClickHouse**.
 
+### Download modes
+
+The download stage has two modes, selected by `DOWNLOAD_MODE` (default `discovery`):
+
+- **`discovery`** (default) — a separate discovery stage scans the matchlist and registers match IDs in `raw_posts` (status `discovered`). The downloader then fetches only those match pages. This is efficient (only match pages, not every post) and gives a reliable chronological key (`sort_time` from the matchlist) — important because `post_id` is **not** chronological (a match post can be created long after it was played).
+- **`sequential`** — scans `/post/1` → `/post/N` and stores every page. A robust fallback that catches everything (including matches the matchlist misses), but downloads far more (news, VODs, forum threads, deleted posts) and can only approximate chronology.
+
+Both modes write into the same central `raw_posts` table; the parser orders processing by `sort_time` so ratings are computed chronologically in either mode.
+
 ## Architecture
 
 ```
- PlusForward (all posts /post/1..N)
-        │
-        ▼
+ PlusForward matchlist ──> discovery (match IDs) ─┐
+ PlusForward posts /post/1..N ───────────────────┤ (sequential mode)
+                                                  ▼
  ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
  │  download   │──>│    parse    │──>│    rank     │
  └─────────────┘   └─────────────┘   └─────────────┘
@@ -39,7 +49,7 @@ Data is stored in **ClickHouse**.
      └─────────┘           └─────────┘           └─────────┘
 ```
 
-- **Pipeline wrappers** (top-level scripts): `download.py`, `parse.py`, `rank.py`, `reset.py`, `backup.py`.
+- **Pipeline wrappers** (top-level scripts): `discovery.py` (discovery mode only), `download.py`, `parse.py`, `rank.py`, `reset.py`, `backup.py`.
 - **Shared logic** lives in `src/`: post download, parsing, rankings computation, the database client/schema, the data provider (single query layer used by every consumer), and the bots/web app.
 - **`cli.py`** provides a command-line interface into the same data.
 - **`daemon.py`** supervises every component as a subprocess and forwards signals for graceful shutdown.
@@ -88,7 +98,9 @@ All settings come from environment variables (loaded from `.env` via `python-dot
 | `TWITCH_BOT_TOKEN` / `TWITCH_CHANNEL` / `TWITCH_NICKNAME` | — / — / `arenabot` | Twitch bot token, channels (comma-separated), nickname |
 | `RATE_LIMIT_DELAY` | `0.0` | Delay (s) between HTTP requests |
 | `HTTP_TIMEOUT` | `3` | Request timeout (s) |
+| `DOWNLOAD_MODE` | `discovery` | `discovery` (matchlist → match pages) or `sequential` (scan all posts) |
 | `DOWNLOADER_WORKERS` | `1` | Concurrent download workers |
+| `WALL_CONSECUTIVE` | `100` | Consecutive invalid posts before treating as the end (sequential mode) |
 | `PARSER_WORKERS` | CPU count | Concurrent parser threads |
 | `MIN_MATCHES_ELO` / `MIN_MATCHES_GLICKO2` | `0` / `30` | Minimum matches before a player appears |
 | `GLICKO2_PERIOD` | `month` | Rating period: `year` / `month` / `week` / `day` |
@@ -111,7 +123,7 @@ python daemon.py -v              # verbose logging
 ### Run components individually
 
 ```bash
-python discovery.py --daemon          # scan PlusForward matchlist
+python discovery.py --daemon          # scan PlusForward matchlist (discovery mode)
 python download.py --workers 3        # download match pages
 python parse.py --workers 4           # parse HTML -> ClickHouse
 python rank.py                        # compute ratings (self-healing, auto-recomputes)
@@ -119,6 +131,8 @@ python api_web.py --port 8080         # web site + JSON API
 python bot_discord.py                 # Discord bot
 python bot_twitch.py --channel chan1  # Twitch bot
 ```
+
+In `sequential` mode (`DOWNLOAD_MODE=sequential`) there is no discovery stage — `download.py` scans `/post/1..N` directly and `discovery.py` is not run.
 
 Every wrapper supports `--daemon` (loop forever with restart delay), `--delay N`, `--log-file PATH`, and `-v`.
 
@@ -215,7 +229,8 @@ arena-rankings/
 │   ├── db_schema.py        # DDL schema
 │   ├── data_provider.py    # shared query layer (CLI/bots/web)
 │   ├── match_discovery.py  # PlusForward matchlist scanning
-│   ├── match_downloader.py # batch HTML downloader
+│   ├── match_downloader.py # batch HTML downloader (discovery mode)
+│   ├── post_downloader.py  # sequential /post/1..N downloader (sequential mode)
 │   ├── match_parser.py     # HTML -> structured data
 │   ├── tournament_resolver.py
 │   ├── rankings_compute.py # Elo + Glicko-2 computation

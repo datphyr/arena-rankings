@@ -50,14 +50,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import DAEMON_RESTART_DELAY, DOWNLOADER_WORKERS
+from config import DAEMON_RESTART_DELAY, DOWNLOADER_WORKERS, DOWNLOAD_MODE
 
 logger = logging.getLogger("arena")
 
 # Components in dependency order: (name, script, default args)
 # Note: "discord" is the Discord bot — Twitch bot will be added later.
-# There is no separate discovery stage: download scans /post/N sequentially.
+# In discovery mode there's a separate discovery stage (matchlist → raw_posts
+# status 'discovered'); in sequential mode download scans /post/N directly.
 COMPONENTS = [
+    ("discovery", "discovery.py", ["--daemon"]),
     ("download",  "download.py",  ["--daemon"]),
     ("parse",     "parse.py",     ["--daemon"]),
     ("rank",      "rank.py",      ["--daemon"]),
@@ -192,6 +194,9 @@ def main():
         if name == "twitch" and args.no_twitch:
             continue
         if name == "web" and args.no_web:
+            continue
+        if name == "discovery" and DOWNLOAD_MODE != "discovery":
+            # No separate discovery stage in sequential mode.
             continue
         if name == "download":
             default_args = [f"--workers={args.workers}"] + default_args
