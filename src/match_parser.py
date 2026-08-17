@@ -366,8 +366,8 @@ class MatchDetailParser:
             r'<tr>\s*'
             + map_cell + r'\s*'
             r'<td class="mp_left[^"]*">([^<]*)</td>\s*'
-            r'<td class="score_value[^"]*">(\d+)</td>\s*'
-            r'<td class="score_value[^"]*">(\d+)</td>\s*'
+            r'<td class="score_value[^"]*">(-?\d+)</td>\s*'
+            r'<td class="score_value[^"]*">(-?\d+)</td>\s*'
             r'<td class="mp_right[^"]*">([^<]*)</td>\s*'
             r'</tr>',
             re.IGNORECASE | re.DOTALL,
