@@ -39,6 +39,7 @@ DROP_TABLES = [
     "DROP TABLE IF EXISTS arena_rankings.player_ratings",
     "DROP TABLE IF EXISTS arena_rankings.raw_posts",
     "DROP TABLE IF EXISTS arena_rankings.tournament_brackets",
+    "DROP TABLE IF EXISTS arena_rankings.match_vods",
 ]
 
 # DDL statements in dependency order
@@ -256,6 +257,32 @@ DDL_STATEMENTS = [
     )
     ENGINE = ReplacingMergeTree()
     ORDER BY (player_id, game_id, rating_system)
+    """,
+
+    # match_vods — VODs (video-on-demand) linked to a match.
+    # Each row is one VOD for a match. The linkage (vod_post_id, label, caster)
+    # is parsed from the match page's VODS section; the actual video embed
+    # (platform + video_id) is parsed from the VOD post page itself (stored in
+    # raw_posts under post_id = vod_post_id).
+    #   match_id: the PlusForward match post ID (references matches.match_id)
+    #   vod_index: 0-based order within the match's VODS section
+    #   vod_post_id: the PlusForward VOD post ID (references raw_posts.post_id)
+    #   label: e.g. 'VOD #1' (from the match page)
+    #   caster: the stream/caster name, e.g. 'ShaftasticTV' (from the match page)
+    #   platform: 'youtube' | 'twitch' | '' (from the VOD post page embed)
+    #   video_id: the platform video ID (e.g. YouTube 'aquLc8_pab4'), '' if unknown
+    """
+    CREATE TABLE IF NOT EXISTS arena_rankings.match_vods (
+        match_id UInt64,
+        vod_index UInt8,
+        vod_post_id UInt64 DEFAULT 0,
+        label String DEFAULT '',
+        caster String DEFAULT '',
+        platform LowCardinality(String) DEFAULT '',
+        video_id String DEFAULT ''
+    )
+    ENGINE = ReplacingMergeTree()
+    ORDER BY (match_id, vod_index)
     """,
 
     # tournament_brackets — Cached bracket data for a tournament, fetched from

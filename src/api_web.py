@@ -286,6 +286,37 @@ def _game_icon(game: str) -> Markup:
 
 templates.env.filters["game_icon"] = _game_icon
 
+# VOD platform → inline SVG icon (no external dependency, works offline).
+# Each icon is a small monochrome glyph that follows the theme via CSS
+# (currentColor). YouTube and Twitch are the platforms PlusForward embeds.
+_VOD_ICON_SVG = {
+    "youtube": (
+        '<svg class="vod-icon" viewBox="0 0 24 24" width="14" height="14" '
+        'aria-hidden="true"><path fill="currentColor" d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.4.6A3 3 0 0 0 .5 6.2 31 31 0 0 0 0 12a31 31 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.6 9.4.6 9.4.6s7.5 0 9.4-.6a3 3 0 0 0 2.1-2.1A31 31 0 0 0 24 12a31 31 0 0 0-.5-5.8zM9.6 15.6V8.4L15.8 12l-6.2 3.6z"/></svg>'
+    ),
+    "twitch": (
+        '<svg class="vod-icon" viewBox="0 0 24 24" width="14" height="14" '
+        'aria-hidden="true"><path fill="currentColor" d="M4.3 1 1 4.3v15.4h5V23h2.7l2.6-2.6h4L21 14.9V1H4.3zm15.4 12.6-3.3 3.3h-5.4l-2.6 2.6v-2.6H5.3V2.3h14.4v11.3zM16.5 6.3h-1.7v5h1.7v-5zm-4.6 0h-1.7v5h1.7v-5z"/></svg>'
+    ),
+    "vimeo": (
+        '<svg class="vod-icon" viewBox="0 0 24 24" width="14" height="14" '
+        'aria-hidden="true"><path fill="currentColor" d="M23.5 6.2c-.1 2.1-1.6 5-4.4 8.6-2.9 3.8-5.4 5.7-7.4 5.7-1.2 0-2.3-1.1-3.1-3.4l-1.7-6.2c-.6-2.3-1.3-3.4-2-3.4-.2 0-.7.3-1.6 1L2 7.4c1-.9 2-1.8 3-2.7 1.3-1.2 2.3-1.8 3-1.9 1.6-.2 2.5.9 2.9 3.2.4 2.5.7 4 .8 4.6.5 2.1 1 3.2 1.5 3.2.4 0 1.1-.7 2-2.1.9-1.4 1.4-2.5 1.5-3.2.1-1.2-.3-1.8-1.4-1.8-.5 0-1 .1-1.5.3 1-3.3 2.9-4.9 5.7-4.8 2.1.1 3.1 1.4 3 4z"/></svg>'
+    ),
+}
+
+
+def _vod_icon(platform: str) -> Markup:
+    """Return an inline SVG icon for a VOD platform, or empty if unknown."""
+    if not platform:
+        return Markup("")
+    svg = _VOD_ICON_SVG.get(platform.strip().lower())
+    if not svg:
+        return Markup("")
+    return Markup(svg)
+
+
+templates.env.filters["vod_icon"] = _vod_icon
+
 # Defaults
 DEFAULT_LIMIT = 20
 

@@ -84,6 +84,23 @@
 </div>
 {% endif %}
 
+{% if match.vods %}
+<div class="card vods-card">
+  <div class="card-title"><span class="dot"></span>VODs</div>
+  <div class="vods-list">
+    {% for v in match.vods %}
+    <div class="vod-row">
+      {% if v.url %}
+      <a class="vod-link" href="{{ v.url }}" target="_blank" rel="noopener">{{ v.platform|vod_icon }}<span class="vod-label">{{ v.caster or v.label or 'VOD' }}</span></a>
+      {% else %}
+      <span class="vod-label">{{ v.caster or v.label or 'VOD' }}</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
 <p style="margin-top:16px;"><a href="/matches" class="game-link">← Back to matches</a></p>
 {% endif %}
 

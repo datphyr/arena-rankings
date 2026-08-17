@@ -257,6 +257,50 @@
   margin-right: 3px;
 }
 
+/* ─── VOD icons + links ─────────────────────────────────────────────── */
+.vod-icon {
+  display: block;
+  color: var(--text-faint);
+  transition: color 0.15s ease;
+}
+
+a.vod-link {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;  /* center the whole link box against adjacent text */
+  gap: 4px;
+  margin-left: 6px;
+  text-decoration: none;
+  color: var(--text-faint);
+  transition: color 0.15s ease;
+}
+
+a.vod-link:hover .vod-icon,
+a.vod-link:hover {
+  color: var(--accent, #ef4444);
+}
+
+.vod-link .vod-label {
+  font-size: 0.85rem;
+}
+
+.vods-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.vod-row {
+  display: flex;
+  align-items: center;
+}
+
+.vod-row .vod-label {
+  color: var(--text-faint);
+  font-size: 0.9rem;
+}
+
 html { scroll-behavior: smooth; font-size: 14px; scrollbar-gutter: stable; }
 
 body {

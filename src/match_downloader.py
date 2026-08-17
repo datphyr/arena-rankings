@@ -148,3 +148,104 @@ def _download_one(db: Database, fetcher: PageFetcher, match_id: int, sort_time: 
         return False
     db.store_raw_post(match_id, html, "downloaded", sort_time=sort_time)
     return True
+
+
+def download_vods(workers: int = 1, limit: int = 0) -> tuple[int, int]:
+    """Download VOD post pages (discovered from match_vods) into raw_posts.
+
+    VOD post IDs are registered in match_vods when a match is parsed (the match
+    page's VODS section links to them). This fetches each VOD post page so the
+    parser can extract the video embed (platform + video_id).
+
+    Args:
+        workers: Number of concurrent download workers.
+        limit: Maximum VOD posts to download (0 = unlimited).
+
+    Returns:
+        (success_count, failure_count)
+    """
+    db = Database()
+    # VOD post IDs known in match_vods but not yet downloaded (or already
+    # downloaded — we skip those to avoid re-fetching).
+    vod_ids = db.get_vod_post_ids()
+    if not vod_ids:
+        db.close()
+        return 0, 0
+
+    # Only fetch VOD posts we don't already have in raw_posts.
+    existing = db.raw_post_get_all_ids()
+    pending = sorted(vod_ids - existing)
+    db.close()
+
+    if limit > 0:
+        pending = pending[:limit]
+
+    total = len(pending)
+    if total == 0:
+        logger.debug("no pending VOD posts")
+        return 0, 0
+
+    logger.info(f"{total} VOD posts to download | {workers}w")
+
+    success = 0
+    failure = 0
+    start_time = time.time()
+
+    def _download_vod_one(vod_post_id: int) -> bool:
+        worker_db = Database()
+        worker_fetcher = PageFetcher()
+        try:
+            url = f"https://www.plusforward.net/post/{vod_post_id}/"
+            html = worker_fetcher.fetch(url)
+            if html is None:
+                return False
+            # sort_time: VOD posts have no match date; use epoch (parser doesn't
+            # need chronological order for VODs — they're keyed by post_id).
+            worker_db.store_raw_post(vod_post_id, html, "downloaded", sort_time=datetime(1970, 1, 1))
+            return True
+        finally:
+            worker_db.close()
+
+    if workers <= 1:
+        fetcher = PageFetcher()
+        db = Database()
+        try:
+            for i, vid in enumerate(pending, 1):
+                try:
+                    if _download_vod_one(vid):
+                        success += 1
+                    else:
+                        failure += 1
+                        logger.warning(f"VOD download failed: {vid}")
+                except Exception as e:
+                    logger.error(f"VOD download failed: {vid}: {e}")
+                    failure += 1
+                if i % 100 == 0 or i == total:
+                    elapsed = time.time() - start_time
+                    rate = i / elapsed if elapsed > 0 else 0
+                    logger.debug(f"{i}/{total} VODs — {success} ok, {failure} fail, {rate:.1f}/s")
+        finally:
+            db.close()
+    else:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(_download_vod_one, vid): vid for vid in pending}
+            for i, future in enumerate(as_completed(futures), 1):
+                vid = futures[future]
+                try:
+                    if future.result():
+                        success += 1
+                    else:
+                        failure += 1
+                        logger.warning(f"VOD download failed: {vid}")
+                except Exception as e:
+                    logger.error(f"VOD download failed: {vid}: {e}")
+                    failure += 1
+                if i % 100 == 0 or i == total:
+                    elapsed = time.time() - start_time
+                    rate = i / elapsed if elapsed > 0 else 0
+                    logger.debug(f"{i}/{total} VODs — {success} ok, {failure} fail, {rate:.1f}/s")
+
+    elapsed = time.time() - start_time
+    logger.info(f"VODs done: {success} ok, {failure} fail, {total} total, {elapsed:.0f}s")
+    return success, failure

@@ -96,6 +96,46 @@ def _winner_from_ids(p1_id, p2_id, winner_id, p1_name, p2_name):
     return None
 
 
+def _vod_url(platform: str, video_id: str) -> str:
+    """Resolve a VOD embed (platform + video_id) to an external watch URL.
+
+    Returns '' when the platform or video_id is unknown. Supports the platforms
+    PlusForward embeds: youtube, twitch (and a few common aliases).
+    """
+    if not platform or not video_id:
+        return ""
+    p = platform.strip().lower()
+    vid = video_id.strip()
+    if p == "youtube":
+        return f"https://www.youtube.com/watch?v={vid}"
+    if p == "twitch":
+        return f"https://www.twitch.tv/videos/{vid}"
+    if p == "vimeo":
+        return f"https://vimeo.com/{vid}"
+    # Unknown platform — return empty rather than a broken link.
+    return ""
+
+
+def _dedup_vods(vods: list[dict]) -> list[dict]:
+    """Collapse VODs that point at the same video within a match.
+
+    PlusForward occasionally has two VOD posts for one match that embed the
+    same video (e.g. the same caster uploaded the same file twice). Keep the
+    first occurrence (VODs arrive ordered by vod_index) and drop later ones
+    that share the same (platform, video_id). VODs with no embed are kept.
+    """
+    seen: set[tuple[str, str]] = set()
+    out: list[dict] = []
+    for v in vods:
+        key = (v.get("platform") or "", v.get("video_id") or "")
+        if key[1] and key in seen:
+            continue  # duplicate embed — skip
+        if key[1]:
+            seen.add(key)
+        out.append(v)
+    return out
+
+
 def _sort_players(rows: list, sort_col: str, sort_dir: str = "desc") -> list:
     """Sort leaderboard rows in Python by an arbitrary column.
 
@@ -1329,7 +1369,7 @@ class DataProvider:
         # Batch-fetch most-common country flag for all involved players.
         pids = {r[5] for r in rows} | {r[6] for r in rows}
         countries = self._player_most_common_flag(list(pids))
-        return [
+        matches = [
             {
                 "match_id": r[0],
                 "player1": r[1],
@@ -1348,6 +1388,11 @@ class DataProvider:
             }
             for r in rows
         ]
+        # Attach VODs (for the date-column VOD icon) in one batch query.
+        vods_by_match = self.get_matches_vods([m["match_id"] for m in matches])
+        for m in matches:
+            m["vods"] = vods_by_match.get(m["match_id"], [])
+        return matches
 
     def get_tournament_player_stats(self, tournament_id: int) -> dict:
         """Per-player match/map/frag stats for a tournament's final standings.
@@ -2634,6 +2679,10 @@ class DataProvider:
                 "played_at": pa,
                 "tier": tier,
             })
+        # Attach VODs (for the date-column VOD icon) in one batch query.
+        vods_by_match = self.get_matches_vods([m["match_id"] for m in matches])
+        for m in matches:
+            m["vods"] = vods_by_match.get(m["match_id"], [])
         return {
             "player1": player1,
             "player2": player2,
@@ -2767,6 +2816,10 @@ class DataProvider:
         if sort_col:
             matches = _sort_matches(matches, sort_col, sort_dir)
             matches = matches[offset:offset + limit]
+        # Attach VODs (for the date-column VOD icon) in one batch query.
+        vods_by_match = self.get_matches_vods([m["match_id"] for m in matches])
+        for m in matches:
+            m["vods"] = vods_by_match.get(m["match_id"], [])
         return matches
 
     def count_recent_matches(
@@ -3002,7 +3055,7 @@ class DataProvider:
         ids = {r[5] for r in rows} | {r[6] for r in rows}
         canon = self._canonical_names(list(ids))
         countries = self._player_most_common_flag(list(ids))
-        return [
+        matches = [
             {
                 "match_id": r[0],
                 "player1": canon.get(r[5], r[1]),
@@ -3024,6 +3077,11 @@ class DataProvider:
             }
             for r in rows
         ]
+        # Attach VODs (for the date-column VOD icon) in one batch query.
+        vods_by_match = self.get_matches_vods([m["match_id"] for m in matches])
+        for m in matches:
+            m["vods"] = vods_by_match.get(m["match_id"], [])
+        return matches
 
     def get_match_details(self, match_id: int) -> Optional[dict]:
         """Full details for a single match: header info + per-map breakdown.
@@ -3126,7 +3184,52 @@ class DataProvider:
             "tier": r[13],
             "tournament_id": r[14],
             "maps": maps,
+            "vods": self.get_match_vods(match_id),
         }
+
+    def get_match_vods(self, match_id: int) -> list[dict]:
+        """Return VODs for a match (linkage + video embed), ordered by index.
+
+        Each dict: {vod_post_id, label, caster, platform, video_id, url}.
+        `url` is the resolved external video URL (YouTube/Twitch) when the
+        embed is known, else ''.
+
+        Duplicate embeds are collapsed: if two VOD posts for the same match
+        point at the same video (a PlusForward quirk), only the first is kept.
+        """
+        vods = self.db.get_match_vods(match_id)
+        for v in vods:
+            v["url"] = _vod_url(v.get("platform"), v.get("video_id"))
+        return _dedup_vods(vods)
+
+    def get_matches_vods(self, match_ids: list[int]) -> dict[int, list[dict]]:
+        """Batch-fetch VODs for many matches, keyed by match_id.
+
+        Used by the matches list to show a VOD icon next to the date without
+        N+1 queries. Returns {match_id: [vod dicts]} (only matches with VODs).
+        Duplicate embeds within a match are collapsed (see get_match_vods).
+        """
+        if not match_ids:
+            return {}
+        rows = self.db.client.execute(
+            "SELECT match_id, vod_post_id, label, caster, platform, video_id "
+            "FROM match_vods FINAL WHERE match_id IN %(ids)s ORDER BY match_id, vod_index",
+            {"ids": tuple(match_ids)},
+        )
+        out: dict[int, list[dict]] = {}
+        for r in rows:
+            mid = r[0]
+            v = {
+                "vod_post_id": r[1],
+                "label": r[2],
+                "caster": r[3],
+                "platform": r[4],
+                "video_id": r[5],
+                "url": _vod_url(r[4], r[5]),
+            }
+            out.setdefault(mid, []).append(v)
+        # Collapse duplicate embeds within each match (keep first by vod_index).
+        return {mid: _dedup_vods(vods) for mid, vods in out.items()}
 
     def get_ratings_before_match(self, match_id: int) -> dict:
         """Ratings each player had just before a match (per game + system).

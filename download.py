@@ -44,13 +44,18 @@ def cycle(args):
 
     # Discovery mode
     from src.db_client import discovery_complete
-    from src.match_downloader import download_batch
+    from src.match_downloader import download_batch, download_vods
 
     if not discovery_complete():
         # Hold off until discovery has scanned back to the oldest match, so we
         # process the full history oldest→newest (ratings stay chronological).
         return "waiting for discovery (backward scan not complete)"
     success, failure = download_batch(workers=args.workers, limit=args.limit)
+    # Also fetch VOD post pages (discovered from parsed matches) so the parser
+    # can extract their video embeds.
+    v_ok, v_fail = download_vods(workers=args.workers, limit=args.limit)
+    if v_ok or v_fail:
+        return f"{success} success, {failure} failure; VODs {v_ok} ok, {v_fail} fail"
     return f"{success} success, {failure} failure"
 
 

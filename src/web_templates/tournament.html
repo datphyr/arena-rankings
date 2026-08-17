@@ -217,7 +217,7 @@
       <tbody>
         {% for m in matches %}
         <tr>
-          <td class="col-date"><a class="match-link" href="/match/{{ m.match_id }}/{{ match_slug(m.player1, m.player2) }}/{{ slug(m.tournament) }}/{{ slug(m.stage) }}" title="Match details">{{ m.played_at_str }}</a></td>
+          <td class="col-date"><a class="match-link" href="/match/{{ m.match_id }}/{{ match_slug(m.player1, m.player2) }}/{{ slug(m.tournament) }}/{{ slug(m.stage) }}" title="Match details">{{ m.played_at_str }}</a>{% if m.vods %}{% for v in m.vods %}{% if v.url %}<a class="vod-link" href="{{ v.url }}" target="_blank" rel="noopener" title="{{ v.caster or v.label or 'VOD' }}">{{ v.platform|vod_icon }}</a>{% endif %}{% endfor %}{% endif %}</td>
           <td class="num col-delta">{% if m.p1_elo_delta is not none %}<span class="{{ 'win' if m.p1_elo_delta > 0 else 'loss' if m.p1_elo_delta < 0 }}">{{ '%+.1f'|format(m.p1_elo_delta) }}</span>{% else %}{% endif %}</td>
           <td class="right col-flex"><span class="player-name"><a class="player-link" href="/player/{{ m.player1_id }}/{{ slug(m.player1) }}">{{ m.player1 }}</a>{% if m.player1_country %}<span class="flag" title="{{ m.player1_country|upper }}">{{ m.player1_country|flag }}</span>{% endif %}</span></td>
           <td class="center col-score"><a class="score-link" href="/h2h/{{ match_slug(m.player1, m.player2) }}?p1_id={{ m.player1_id }}&p2_id={{ m.player2_id }}" title="Head-to-head"><span class="{{ 'win' if m.winner == m.player1 else 'loss' if m.winner else 'draw' }}">{{ m.score1 }}</span>:<span class="{{ 'win' if m.winner == m.player2 else 'loss' if m.winner else 'draw' }}">{{ m.score2 }}</span></a></td>

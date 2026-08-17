@@ -602,6 +602,98 @@ class Database:
             data,
         )
 
+    # --- Match VODs ---
+
+    def insert_match_vods(self, match_id: int, vods: list):
+        """Insert VOD links for a match (linkage only — no video embed yet).
+
+        Args:
+            match_id: PlusForward match ID.
+            vods: List of VodResult dataclass instances (vod_post_id, label, caster).
+
+        Preserves any already-parsed video embed (platform/video_id) for a VOD
+        post that was parsed before its match (possible because VOD posts are
+        downloaded with epoch sort_time and can be parsed first).
+        """
+        if not vods:
+            return
+        # Existing embeds keyed by vod_post_id, so re-parsing a match doesn't
+        # clobber a VOD embed that was already extracted.
+        existing = {}
+        vod_ids = [v.vod_post_id for v in vods if v.vod_post_id > 0]
+        if vod_ids:
+            rows = self.client.execute(
+                "SELECT vod_post_id, platform, video_id FROM match_vods FINAL "
+                "WHERE vod_post_id IN %(ids)s",
+                {"ids": tuple(vod_ids)},
+            )
+            existing = {r[0]: (r[1], r[2]) for r in rows}
+        data = [
+            (
+                match_id, i, v.vod_post_id, v.label, v.caster,
+                existing.get(v.vod_post_id, ("", ""))[0],
+                existing.get(v.vod_post_id, ("", ""))[1],
+            )
+            for i, v in enumerate(vods)
+        ]
+        self.client.execute(
+            "INSERT INTO match_vods "
+            "(match_id, vod_index, vod_post_id, label, caster, platform, video_id) VALUES",
+            data,
+        )
+
+    def update_vod_embed(self, vod_post_id: int, platform: str, video_id: str) -> bool:
+        """Update a VOD's video embed (platform + video_id) after parsing its post page.
+
+        Matches by vod_post_id (the VOD post's own ID). ReplacingMergeTree dedups
+        by (match_id, vod_index), so we re-insert the full row with the embed
+        filled in. To do that we need the match_id + vod_index, which we look up
+        from the existing row.
+
+        Returns True if a matching match_vods row was found and updated, False
+        if the match hasn't been parsed yet (no row to attach to).
+        """
+        rows = self.client.execute(
+            "SELECT match_id, vod_index, label, caster FROM match_vods FINAL "
+            "WHERE vod_post_id = %(v)s LIMIT 1",
+            {"v": vod_post_id},
+        )
+        if not rows:
+            return False
+        match_id, vod_index, label, caster = rows[0]
+        self.client.execute(
+            "INSERT INTO match_vods "
+            "(match_id, vod_index, vod_post_id, label, caster, platform, video_id) VALUES",
+            [(match_id, vod_index, vod_post_id, label, caster, platform, video_id)],
+        )
+        return True
+
+    def get_match_vods(self, match_id: int) -> list[dict]:
+        """Return VODs for a match, ordered by vod_index.
+
+        Each dict: {vod_post_id, label, caster, platform, video_id}.
+        """
+        rows = self.client.execute(
+            "SELECT vod_post_id, label, caster, platform, video_id "
+            "FROM match_vods FINAL WHERE match_id = %(m)s ORDER BY vod_index",
+            {"m": match_id},
+        )
+        return [
+            {
+                "vod_post_id": r[0],
+                "label": r[1],
+                "caster": r[2],
+                "platform": r[3],
+                "video_id": r[4],
+            }
+            for r in rows
+        ]
+
+    def get_vod_post_ids(self) -> set[int]:
+        """Return all VOD post IDs known in match_vods (for download discovery)."""
+        rows = self.client.execute("SELECT DISTINCT vod_post_id FROM match_vods FINAL WHERE vod_post_id > 0")
+        return {r[0] for r in rows}
+
     # --- Player Ratings ---
 
     def upsert_rating(

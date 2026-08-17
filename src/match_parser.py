@@ -36,6 +36,18 @@ class MapResult:
 
 
 @dataclass
+class VodResult:
+    """A VOD linked to a match (from the match page's VODS section).
+
+    The video embed (platform + video_id) is NOT here — it lives on the VOD
+    post page itself and is parsed separately (see _parse_vod_embed).
+    """
+    vod_post_id: int
+    label: str = ""
+    caster: str = ""
+
+
+@dataclass
 class MatchDetail:
     """Complete match detail data."""
     match_id: int
@@ -56,6 +68,7 @@ class MatchDetail:
     stage_name: str
     played_at: datetime
     maps: list[MapResult] = field(default_factory=list)
+    vods: list[VodResult] = field(default_factory=list)
 
 
 class MatchDetailParser:
@@ -160,6 +173,9 @@ class MatchDetailParser:
         # Parse maps (m_detailed is outside the <div class="match"> area)
         maps = self._parse_maps(html)
 
+        # Parse VODs (the VODS section is inside the match area's m_info block)
+        vods = self._parse_vods(html)
+
         # Determine winner. Prefer plusforward's explicit win marker (class='win'
         # on the winner's score div — present even at 0:0 for forfeits/walkovers).
         # Fall back to score comparison; if scores are equal and no marker, it's
@@ -205,6 +221,7 @@ class MatchDetailParser:
             stage_name=info.get("stage", ""),
             played_at=info.get("date", datetime.now()),
             maps=maps,
+            vods=vods,
         )
 
     def _parse_players(self, content: str) -> list[dict]:
@@ -406,6 +423,37 @@ class MatchDetailParser:
 
         return maps
 
+    def _parse_vods(self, content: str) -> list[VodResult]:
+        """Parse VOD links from the match page's VODS section.
+
+        Each VOD entry looks like:
+          <div class="match_vod"><i class="fa fa-film"></i>
+            <a href="/post/93706/agent-vs-prox1mo/">VOD #1</a> - ShaftasticTV</div>
+
+        We extract the VOD post ID, the label ('VOD #1'), and the caster name
+        ('ShaftasticTV'). The actual video embed lives on the VOD post page and
+        is parsed separately.
+        """
+        vods: list[VodResult] = []
+        # The VODS section is inside the m_info block, but the match_vod divs
+        # are unique enough to match directly across the whole page.
+        vod_pattern = re.compile(
+            r'<div class="match_vod">.*?'
+            r'<a href="/post/(\d+)/[^"]*/">([^<]+)</a>\s*-\s*([^<]*)'
+            r'</div>',
+            re.DOTALL | re.IGNORECASE,
+        )
+        for m in vod_pattern.finditer(content):
+            vod_post_id = int(m.group(1))
+            label = html_module.unescape(m.group(2).strip())
+            caster = html_module.unescape(m.group(3).strip())
+            vods.append(VodResult(
+                vod_post_id=vod_post_id,
+                label=label,
+                caster=caster,
+            ))
+        return vods
+
     def _parse_category_from_links(self, content: str) -> int:
         """Extract game category_id from player link URLs as fallback."""
         for m in re.finditer(r'/player/\d+/[^/]+/(\d+)/[^/]+/', content):
@@ -516,6 +564,10 @@ def store_parsed_match(db: Database, detail: MatchDetail, resolver: TournamentRe
     # Insert maps (if any)
     db.insert_match_maps(detail.match_id, detail.maps, detail.played_at)
 
+    # Insert VOD links (if any). The video embed is filled in later when the
+    # VOD post page is downloaded + parsed.
+    db.insert_match_vods(detail.match_id, detail.vods)
+
     # Populate the canonical maps table (map_id -> name/image/game) from the
     # parsed map data, so the player map chart and tournament map plaques have
     # names/images. ReplacingMergeTree dedups by map_id.
@@ -541,6 +593,42 @@ def _parse_worker_init():
 def _is_tournament_post(html: str) -> bool:
     """True if the page is a tournament page (has tournament structure)."""
     return bool(html) and "postinnercontent" in html and "tour_info" in html
+
+
+# VOD post page embed: <div class="videoplaceholder" data-type="youtube" data-time="" data-seconds="0" data-id="aquLc8_pab4">
+# data-type is the platform ('youtube', 'twitch', ...); data-id is the video ID.
+# Attributes may appear in any order, so match them independently.
+_VOD_EMBED_RE = re.compile(
+    r'<div class="videoplaceholder[^"]*"[^>]*>',
+    re.IGNORECASE,
+)
+_VOD_TYPE_RE = re.compile(r'data-type="([^"]+)"', re.IGNORECASE)
+_VOD_ID_RE = re.compile(r'data-id="([^"]+)"', re.IGNORECASE)
+
+
+def parse_vod_embed(html: str) -> tuple[str, str]:
+    """Extract (platform, video_id) from a VOD post page, or ('', '') if none.
+
+    The VOD post page carries a .videoplaceholder div with data-type (platform)
+    and data-id (video ID). Returns empty strings when the page has no embed
+    (e.g. a VOD with no video yet, or a non-VOD post).
+    """
+    if not html:
+        return "", ""
+    m = _VOD_EMBED_RE.search(html)
+    if not m:
+        return "", ""
+    tag = m.group(0)
+    t = _VOD_TYPE_RE.search(tag)
+    i = _VOD_ID_RE.search(tag)
+    if not t or not i:
+        return "", ""
+    return t.group(1).strip().lower(), i.group(1).strip()
+
+
+def _is_vod_post(html: str) -> bool:
+    """True if the page is a VOD post (has a .postvods / videoplaceholder area)."""
+    return bool(html) and ("postvods" in html or "videoplaceholder" in html)
 
 
 # A parent aggregation page is a PlusForward event/landing page that hosts 2+
@@ -587,6 +675,24 @@ def _parse_post(db, parser, resolver, bracket_fetcher, post_id: int, raw_html: s
             return True, ""
         except Exception as e:
             logger.error(f"tournament resolve failed {post_id}: {e}")
+            db.raw_post_mark(post_id, "skipped", "parse error")
+            return False, "parse error"
+
+    # VOD post → extract the video embed and attach it to the match's VOD row.
+    if _is_vod_post(raw_html):
+        try:
+            platform, video_id = parse_vod_embed(raw_html)
+            if platform and video_id:
+                updated = db.update_vod_embed(post_id, platform, video_id)
+                if not updated:
+                    # The match hasn't been parsed yet (no match_vods row to
+                    # attach to). Leave the post 'downloaded' so it's re-parsed
+                    # after the match is parsed and the row exists.
+                    return False, "vod pending"
+            db.raw_post_mark(post_id, "parsed")
+            return True, ""
+        except Exception as e:
+            logger.error(f"vod parse failed {post_id}: {e}")
             db.raw_post_mark(post_id, "skipped", "parse error")
             return False, "parse error"
 
@@ -723,7 +829,7 @@ def parse_all_matches(limit: int = 0, workers: int = 0) -> tuple[int, int]:
                             failure += 1
                             # Expected skips (not a match / team format / invalid)
                             # are common — don't log them as warnings.
-                            if err and err not in ("not a match", "team format", "invalid", "not played", "parse error"):
+                            if err and err not in ("not a match", "team format", "invalid", "not played", "parse error", "vod pending"):
                                 logger.warning(f"parse failed {match_id}: {err}")
                     except Exception as e:
                         logger.error(f"parse error: {mid}: {e}")
