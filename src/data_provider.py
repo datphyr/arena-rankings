@@ -880,7 +880,11 @@ class DataProvider:
             params["tournament"] = f"%{tournament}%"
             conds.append("t.name ILIKE %(tournament)s")
         where = " AND ".join(conds)
+        # When sort_col is set, fetch the FULL matching set (no SQL offset) and
+        # let the Python sort + slice handle pagination. Applying the SQL
+        # OFFSET here would double-skip rows (SQL offset + Python slice).
         fetch_limit = 100000 if sort_col else "%(lim)s"
+        fetch_offset = "%(off)s" if not sort_col else 0
         rows = self.db.client.execute(
             f"""
             SELECT t.tournament_id, t.name, t.tier,
@@ -892,7 +896,7 @@ class DataProvider:
             WHERE {where}
             GROUP BY t.tournament_id, t.name, t.tier
             ORDER BY last_match DESC
-            LIMIT {fetch_limit} OFFSET %(off)s
+            LIMIT {fetch_limit} OFFSET {fetch_offset}
             """,
             params,
         )

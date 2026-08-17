@@ -68,7 +68,7 @@
     }
   }
 
-  function fetchAndSwap(url) {
+  function fetchAndSwap(url, scrollToTop) {
     fetch(url, { headers: { "X-Requested-With": "XMLHttpRequest" } })
       .then(function (r) {
         if (!r.ok) throw new Error("HTTP " + r.status);
@@ -78,6 +78,9 @@
         swap(html);
         replaceState(url);
         if (url.indexOf("clear=1") !== -1) resetForms();
+        // Jump to the top only after the new content is in place, so the
+        // user doesn't see the old table while the fetch is in flight.
+        if (scrollToTop) window.scrollTo(0, 0);
       })
       .catch(function (err) {
         console.error("AJAX swap failed:", err);
@@ -112,15 +115,11 @@
     clearBtn.style.display = "";
   }
 
-  function handle(url, e) {
+  function handle(url, e, scrollToTop) {
     e.preventDefault();
     // Preserve current scroll (default anchors would jump; fetch keeps it).
     var y = window.scrollY;
-    fetchAndSwap(addPartial(url));
-    // Restore scroll after swap (in case layout shifts).
-    window.requestAnimationFrame(function () {
-      window.scrollTo(0, y);
-    });
+    fetchAndSwap(addPartial(url), scrollToTop);
   }
 
   function bind() {
@@ -178,7 +177,7 @@
       if (a.__ajaxBound) return;
       a.__ajaxBound = true;
       a.addEventListener("click", function (e) {
-        handle(a.href, e);
+        handle(a.href, e, true);
       });
     });
 
