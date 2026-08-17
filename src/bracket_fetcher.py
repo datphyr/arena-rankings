@@ -1,4 +1,4 @@
-"""Bracket fetching + normalization for Toornament and shambler.
+"""Bracket fetching + normalization for Toornament, shambler and EGB.
 
 PlusForward does not host bracket data — its tournament pages link out to an
 external provider. This module detects which provider a tournament uses (from
@@ -7,7 +7,7 @@ public (no-auth) API, and normalizes it into a single source-agnostic JSON shape
 suitable for rendering:
 
     {
-      "source": "toornament" | "shambler",
+      "source": "toornament" | "shambler" | "egb",
       "title": "...",
       "stages": [{
         "name": "Playoffs",
@@ -28,6 +28,7 @@ suitable for rendering:
 Providers:
   - Toornament: play.toornament.com/api/*  (GET, no auth)
   - shambler:   shambler.site/brackets/data-brackets.php (POST, no auth)
+  - EGB:        cup.egb.net/tournaments/* (GET, no auth) — slug -> uuid -> bracket
 
 Usage:
     from src.bracket_fetcher import BracketFetcher
@@ -62,6 +63,19 @@ _TOORNAMENT_RE = re.compile(
     r"play\.toornament\.com/[a-z_]+/tournaments/(\d+)", re.IGNORECASE)
 _SHAMBLER_RE = re.compile(
     r"shambler\.site/(?:(?:250fps|brackets)/)?brackets\.php\?cup=(\d+)", re.IGNORECASE)
+# EGB cup links: egb.com / egb.net / egabetz.com with a hash route /cup#/t/<slug>
+# (optionally followed by /bracket). Slug is the part after /t/.
+_EGB_RE = re.compile(
+    r"(?:egb\.com|egb\.net|egabetz\.com)/cup#/t/([a-z0-9_-]+)", re.IGNORECASE)
+
+# EGB side ordering for the bracket (winners -> losers -> grand final).
+_EGB_SIDE_ORDER = {"WINNERS": 0, "LOSERS": 1, "GRAND_FINAL": 2, "GRAND_FINAL_RESET": 3}
+_EGB_SIDE_NAME = {
+    "WINNERS": "Winners Bracket",
+    "LOSERS": "Losers Bracket",
+    "GRAND_FINAL": "Grand Final",
+    "GRAND_FINAL_RESET": "Grand Final (Reset)",
+}
 
 # Toornament API caps page size at 50 (64+ returns an out-of-range error).
 _API_LIMIT = 50
@@ -156,12 +170,14 @@ class BracketFetcher:
             BracketFetcher.no_source += 1
             return False
 
-        kind, ref = source  # ('toornament', tid) or ('shambler', cup)
+        kind, ref = source  # ('toornament', tid), ('shambler', cup) or ('egb', slug)
         try:
             if kind == "toornament":
                 normalized = self._fetch_toornament(ref)
-            else:
+            elif kind == "shambler":
                 normalized = self._fetch_shambler(ref)
+            else:
+                normalized = self._fetch_egb(ref)
         except Exception as e:
             BracketFetcher.failed += 1
             logger.warning(f"bracket fetch failed for tournament {tournament_id} ({kind}): {e}")
@@ -195,7 +211,9 @@ class BracketFetcher:
         """Detect the bracket provider from PlusForward raw_html.
 
         Returns (kind, ref):
-          ('toornament', <int tournament id>) or ('shambler', <int cup id>)
+          ('toornament', <int tournament id>),
+          ('shambler', <int cup id>) or
+          ('egb', <slug>)
         or None if no bracket source is present.
         """
         m = _TOORNAMENT_RE.search(raw_html)
@@ -204,6 +222,9 @@ class BracketFetcher:
         m = _SHAMBLER_RE.search(raw_html)
         if m:
             return ("shambler", int(m.group(1)))
+        m = _EGB_RE.search(raw_html)
+        if m:
+            return ("egb", m.group(1))
         return None
 
     # ------------------------------------------------------------------
@@ -493,6 +514,96 @@ class BracketFetcher:
                 "matches": norm,
             })
         return {"name": name, "rounds": rounds}
+
+    # ------------------------------------------------------------------
+    # EGB (cup.egb.net)
+    # ------------------------------------------------------------------
+
+    API_EGB = "https://cup.egb.net"
+
+    def _fetch_egb(self, slug: str) -> dict:
+        """Fetch + normalize an EGB bracket by cup slug.
+
+        Flow: /tournaments/by-slug/<slug> -> tournament uuid, then
+        /tournaments/<uuid>/bracket for the bracket graph.
+        """
+        meta = self._json_get(f"{self.API_EGB}/tournaments/by-slug/{slug}")
+        if not meta or not meta.get("id"):
+            return {"source": "egb", "title": "", "stages": []}
+        tid = meta["id"]
+        bracket = self._json_get(f"{self.API_EGB}/tournaments/{tid}/bracket")
+        if not bracket or not bracket.get("matches"):
+            return {"source": "egb", "title": meta.get("name", ""), "stages": []}
+        return self._egb_normalize(meta, bracket)
+
+    @classmethod
+    def _egb_normalize(cls, meta: dict, bracket: dict) -> dict:
+        """Normalize EGB's flat match list into the shared stages/groups schema.
+
+        EGB matches carry: side (WINNERS/LOSERS/GRAND_FINAL[_RESET]), round
+        (1-based), indexInRound, home/away ({type, participant}), status,
+        winner (participant id) and score ({home, away}). We group by side
+        (a "group") then by round, resolving participant ids to names.
+        """
+        pmap = {p["id"]: p.get("displayName", "") for p in bracket.get("participants", [])}
+
+        # Split matches into side groups.
+        by_side = {}
+        for m in bracket.get("matches", []):
+            by_side.setdefault(m.get("side", ""), []).append(m)
+
+        groups = []
+        for side in sorted(by_side, key=lambda s: _EGB_SIDE_ORDER.get(s, 9)):
+            sm = by_side[side]
+            # Group by round, order by round number then indexInRound.
+            by_round = {}
+            for m in sm:
+                by_round.setdefault(m.get("round", 1), []).append(m)
+            rounds = []
+            for rn in sorted(by_round):
+                rms = sorted(by_round[rn], key=lambda m: m.get("indexInRound", 0))
+                norm = []
+                for m in rms:
+                    norm.append(cls._egb_match(m, pmap))
+                rounds.append({"name": f"Round {rn}", "round": rn, "matches": norm})
+            groups.append({"name": _EGB_SIDE_NAME.get(side, side), "rounds": rounds})
+
+        # Finished when every match is terminal (no pending/live matches).
+        statuses = {m.get("status") for m in bracket.get("matches", [])}
+        complete = bool(statuses) and statuses.issubset(
+            {"COMPLETED", "WALKOVER", "CANCELLED"})
+        return {
+            "source": "egb",
+            "title": meta.get("name", ""),
+            "format": bracket.get("format", ""),
+            "complete": complete,
+            "stages": [{"name": meta.get("name", ""), "groups": groups}],
+        }
+
+    @staticmethod
+    def _egb_match(m: dict, pmap: dict) -> dict:
+        """Normalize a single EGB match to {p1, p2, score1, score2, winner}."""
+        home = m.get("home", {}) or {}
+        away = m.get("away", {}) or {}
+
+        def _name(slot):
+            if slot.get("type") != "player" or not slot.get("participant"):
+                return ""
+            return pmap.get(slot.get("participant"), "")
+
+        p1 = _name(home)
+        p2 = _name(away)
+        score = m.get("score") or {}
+        s1 = score.get("home")
+        s2 = score.get("away")
+        winner = None
+        wid = m.get("winner")
+        if wid:
+            if home.get("participant") == wid:
+                winner = "p1"
+            elif away.get("participant") == wid:
+                winner = "p2"
+        return {"p1": p1, "p2": p2, "score1": s1, "score2": s2, "winner": winner}
 
     @classmethod
     def log_stats(cls):
