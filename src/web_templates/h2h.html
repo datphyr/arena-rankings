@@ -3,17 +3,17 @@
 {% block content %}
 <div class="section-head"><h2>Head-to-Head</h2>
 <form class="filters section-filters" method="get" action="/h2h" id="h2hForm">
+  <input type="text" name="p1" value="{{ p1 }}" placeholder="Player 1" data-autocomplete="player">
+  <input type="hidden" name="p1_id" value="{{ p1_id or '' }}">
+  <button type="button" class="btn swap-btn" id="swapBtn" title="Swap players" aria-label="Swap players">⇄</button>
+  <input type="text" name="p2" value="{{ p2 }}" placeholder="Player 2" data-autocomplete="player">
+  <input type="hidden" name="p2_id" value="{{ p2_id or '' }}">
   <select name="game">
     <option value="">All games</option>
     {% for g in games %}
     <option value="{{ g }}" {{ 'selected' if game == g }}>{{ g }}</option>
     {% endfor %}
   </select>
-  <input type="text" name="p1" value="{{ p1 }}" placeholder="Player 1" data-autocomplete="player">
-  <input type="hidden" name="p1_id" value="{{ p1_id or '' }}">
-  <button type="button" class="btn swap-btn" id="swapBtn" title="Swap players" aria-label="Swap players">⇄</button>
-  <input type="text" name="p2" value="{{ p2 }}" placeholder="Player 2" data-autocomplete="player">
-  <input type="hidden" name="p2_id" value="{{ p2_id or '' }}">
   <button type="submit" name="clear" value="1" class="btn">Clear filters</button>
 </form>
 </div>

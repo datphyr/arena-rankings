@@ -3,14 +3,14 @@
 {% block content %}
 <div class="section-head"><h2>Rivals</h2>
 <form class="filters section-filters" method="get" action="/rivals">
+  <input type="text" name="player" value="{{ player }}" placeholder="Player" data-autocomplete="player">
+  <input type="hidden" name="player_id" value="{{ player_id or '' }}">
   <select name="game">
     <option value="">All games</option>
     {% for g in games %}
     <option value="{{ g }}" {{ 'selected' if game == g }}>{{ g }}</option>
     {% endfor %}
   </select>
-  <input type="text" name="player" value="{{ player }}" placeholder="Player" style="width:180px" data-autocomplete="player">
-  <input type="hidden" name="player_id" value="{{ player_id or '' }}">
   <button type="submit" name="clear" value="1" class="btn">Clear filters</button>
 </form>
 </div>

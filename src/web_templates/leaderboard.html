@@ -4,12 +4,6 @@
 <div class="section-head">
   <h2>Leaderboard</h2>
 <form class="filters section-filters" method="get" action="/leaderboard">
-  <select name="game">
-    <option value="">All games</option>
-    {% for g in games %}
-    <option value="{{ g }}" {{ 'selected' if game == g }}>{{ g }}</option>
-    {% endfor %}
-  </select>
   <select name="system">
     <option value="elo" {{ 'selected' if system == 'elo' }}>Elo</option>
     <option value="glicko2" {{ 'selected' if system == 'glicko2' }}>Glicko-2</option>
@@ -23,6 +17,12 @@
     <option value="100" {{ 'selected' if limit == '100' }}>100</option>
     <option value="1000" {{ 'selected' if limit == '1000' }}>1000</option>
     <option value="all" {{ 'selected' if limit == 'all' }}>All</option>
+  </select>
+  <select name="game">
+    <option value="">All games</option>
+    {% for g in games %}
+    <option value="{{ g }}" {{ 'selected' if game == g }}>{{ g }}</option>
+    {% endfor %}
   </select>
   <button type="submit" name="clear" value="1" class="btn">Clear filters</button>
 </form>

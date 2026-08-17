@@ -3,12 +3,6 @@
 {% block content %}
 <div class="section-head"><h2>Tournaments</h2>
 <form class="filters section-filters" method="get" action="/tournaments">
-  <select name="game">
-    <option value="">All games</option>
-    {% for g in games %}
-    <option value="{{ g }}" {{ 'selected' if game == g }}>{{ g }}</option>
-    {% endfor %}
-  </select>
   <input type="text" name="tournament" value="{{ tournament }}" placeholder="Tournament" style="width:160px" data-autocomplete="tournament">
   <select name="tier">
     <option value="">All tiers</option>
@@ -20,6 +14,12 @@
     <option value="100" {{ 'selected' if limit == '100' }}>100</option>
     <option value="1000" {{ 'selected' if limit == '1000' }}>1000</option>
     <option value="all" {{ 'selected' if limit == 'all' }}>All</option>
+  </select>
+  <select name="game">
+    <option value="">All games</option>
+    {% for g in games %}
+    <option value="{{ g }}" {{ 'selected' if game == g }}>{{ g }}</option>
+    {% endfor %}
   </select>
   <button type="submit" name="clear" value="1" class="btn">Clear filters</button>
 </form>
