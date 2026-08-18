@@ -1,0 +1,9 @@
+{# PlusForward origin link — links to the source page on plusforward.net.
+   Rendered as a button sized like the theme toggle (38x38), the logo filling
+   the whole button. Uses PlusForward's actual logo. Renders only when
+   `plusforward_url` is set in the context. #}
+{% if plusforward_url %}
+<a class="pf-origin" href="{{ plusforward_url }}" target="_blank" rel="noopener" title="View on PlusForward" aria-label="View origin data on PlusForward">
+  <img class="pf-origin-logo" src="/static/plusforward.png" alt="PlusForward">
+</a>
+{% endif %}

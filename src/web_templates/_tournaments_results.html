@@ -13,7 +13,7 @@
       <tbody>
         {% for t in tournaments %}
         <tr>
-          <td class="col-flex"><span class="tier-prefix">{{ t.game|game_icon }}{% if t.tier %}<a class="tier-link" href="?{{ qs(tier=t.tier, game=game, tournament=tournament, limit=limit) }}" title="Filter by {{ t.tier }}"><span class="tag tag-{{ t.tier }}">{{ t.tier }}</span></a>{% endif %}<a class="tournament-link" href="/tournament/{{ t.tournament_id }}/{{ slug(t.name) }}">{{ t.name }}</a></span></td>
+          <td class="col-flex"><span class="tier-prefix">{{ t.game|game_icon }}{% if t.tier %}<a class="tier-link" href="?{{ qs(tier=t.tier, game=game, tournament=tournament, limit=limit) }}" title="Filter by {{ t.tier }}"><span class="tag tag-{{ t.tier }}">{{ t.tier }}</span></a>{% endif %}{% if t.has_bracket %}<span class="bracket-indicator" title="Has bracket data">{{ ''|bracket_icon }}</span>{% endif %}<a class="tournament-link" href="/tournament/{{ t.tournament_id }}/{{ slug(t.name) }}">{{ t.name }}</a></span></td>
           <td class="num col-m">{% if t.maps %}{{ t.maps }}{% endif %}</td>
           <td class="num col-m">{{ t.players }}</td>
           <td class="num col-m">{{ t.matches }}</td>

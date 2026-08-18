@@ -68,6 +68,13 @@ _SHAMBLER_RE = re.compile(
 _EGB_RE = re.compile(
     r"(?:egb\.com|egb\.net|egabetz\.com)/cup#/t/([a-z0-9_-]+)", re.IGNORECASE)
 
+# Some PlusForward tournament pages load their bracket link dynamically (the
+# "Groups / Brackets" tab is populated client-side). The bracket content —
+# including the link to the external provider — is served by this AJAX
+# endpoint keyed by tournament post id. We query it as a fallback when the
+# static raw_html has no detectable bracket source.
+_AJAX_BRACKETS_URL = "https://plusforward.net/ajax_misc.php"
+
 # EGB side ordering for the bracket (winners -> losers -> grand final).
 _EGB_SIDE_ORDER = {"WINNERS": 0, "LOSERS": 1, "GRAND_FINAL": 2, "GRAND_FINAL_RESET": 3}
 _EGB_SIDE_NAME = {
@@ -123,7 +130,10 @@ class BracketFetcher:
         """
         raw_html = self._db.get_tournament_html(tournament_id)
         if not raw_html or not self.detect_source(raw_html):
-            return False
+            # No bracket link in the static HTML — but it may be loaded
+            # dynamically ("Groups / Brackets" tab). Let fetch_for_tournament
+            # decide via the AJAX fallback rather than returning False here.
+            return self.fetch_for_tournament(tournament_id) if raw_html else False
         if not force:
             existing = self._db.get_tournament_bracket(tournament_id)
             if existing and existing.get("data"):
@@ -166,6 +176,11 @@ class BracketFetcher:
             return False
 
         source = self.detect_source(raw_html)
+        if not source:
+            # The static HTML may lack the bracket link (loaded dynamically
+            # into the "Groups / Brackets" tab). Fall back to the AJAX
+            # endpoint the page JS uses before declaring no source.
+            source = self._detect_source_ajax(tournament_id)
         if not source:
             BracketFetcher.no_source += 1
             return False
@@ -226,6 +241,27 @@ class BracketFetcher:
         if m:
             return ("egb", m.group(1))
         return None
+
+    def _detect_source_ajax(self, tournament_id: int):
+        """Detect the bracket provider via the dynamic PlusForward AJAX endpoint.
+
+        Some tournament pages load their bracket link client-side (the "Groups
+        / Brackets" tab), so the link is absent from the static raw_html. Query
+        the same AJAX endpoint the page JS uses and run source detection on its
+        response. Returns a (kind, ref) tuple like detect_source, or None if the
+        endpoint yields no bracket link.
+        """
+        try:
+            body = self._curl(
+                "GET",
+                f"{_AJAX_BRACKETS_URL}?tourneybrackets=1&pid={tournament_id}",
+            )
+        except Exception as e:
+            logger.debug(f"ajax bracket detection failed for {tournament_id}: {e}")
+            return None
+        if not body:
+            return None
+        return self.detect_source(body)
 
     # ------------------------------------------------------------------
     # HTTP (JSON) helpers — external APIs, curl-based like PageFetcher

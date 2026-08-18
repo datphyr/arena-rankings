@@ -17,7 +17,7 @@
       if (theme) document.documentElement.setAttribute('data-theme', theme);
     })();
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=20260817d">
+  <link rel="stylesheet" href="/static/style.css?v=20260818e">
   <script src="/static/chart.umd.min.js"></script>
   <script>
     // Use the same monospace font for Chart.js as the rest of the site.
@@ -49,6 +49,7 @@
         </nav>
       </div>
       <div class="header-actions">
+        {% include "_pf_origin.html" %}
         <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle color theme" title="Toggle light/dark theme">
           <span class="theme-toggle-icon">🌙</span>
         </button>

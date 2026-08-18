@@ -284,6 +284,59 @@ a.vod-link:hover {
   font-size: 0.85rem;
 }
 
+/* ─── Map-data indicator (next to match date, before VODs) ────────── */
+.map-data-indicator {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  margin-left: 6px;
+  color: var(--text-faint);
+}
+
+.map-data-indicator .map-data-icon {
+  display: block;
+}
+
+/* ─── Bracket-data indicator (next to tournament name, after tier) ─── */
+.bracket-indicator {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  /* No left margin: the tier tag already provides its own margin-right,
+     so the gap before the bracket comes from the tag. Add a matching
+     right margin so the gap to the tournament name is identical. */
+  margin-right: 7px;
+  color: var(--text-faint);
+}
+
+.bracket-indicator .bracket-icon {
+  display: block;
+}
+
+/* ─── PlusForward origin link (header, right of the theme toggle) ──── */
+.pf-origin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+.pf-origin:hover {
+  box-shadow: 0 0 0 2px var(--copper), 0 0 14px var(--glow-copper);
+  transform: translateY(-1px);
+}
+
+.pf-origin .pf-origin-logo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .vods-list {
   display: flex;
   flex-direction: column;

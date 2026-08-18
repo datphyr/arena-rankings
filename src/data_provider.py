@@ -1009,6 +1009,10 @@ class DataProvider:
         if sort_col:
             tournaments = _sort_tournaments(tournaments, sort_col, sort_dir)
             tournaments = tournaments[offset:offset + limit]
+        # Attach bracket-data flags (for the tournament-name column) in one batch.
+        brackets = self.get_tournaments_bracket_flags([t["tournament_id"] for t in tournaments])
+        for t in tournaments:
+            t["has_bracket"] = brackets.get(t["tournament_id"], False)
         return tournaments
 
     def count_tournaments(self, tier: str = "", game: str = "", tournament: str = "") -> int:
@@ -1441,8 +1445,10 @@ class DataProvider:
         ]
         # Attach VODs (for the date-column VOD icon) in one batch query.
         vods_by_match = self.get_matches_vods([m["match_id"] for m in matches])
+        maps_by_match = self.get_matches_map_flags([m["match_id"] for m in matches])
         for m in matches:
             m["vods"] = vods_by_match.get(m["match_id"], [])
+            m["map_data"] = maps_by_match.get(m["match_id"], False)
         return matches
 
     def get_tournament_player_stats(self, tournament_id: int) -> dict:
@@ -2741,8 +2747,12 @@ class DataProvider:
             })
         # Attach VODs (for the date-column VOD icon) in one batch query.
         vods_by_match = self.get_matches_vods([m["match_id"] for m in matches])
+        maps_by_match = self.get_matches_map_flags([m["match_id"] for m in matches])
+        brackets_by_tourn = self.get_tournaments_bracket_flags([m["tournament_id"] for m in matches])
         for m in matches:
             m["vods"] = vods_by_match.get(m["match_id"], [])
+            m["map_data"] = maps_by_match.get(m["match_id"], False)
+            m["has_bracket"] = brackets_by_tourn.get(m["tournament_id"], False)
         return {
             "player1": player1,
             "player2": player2,
@@ -2878,8 +2888,12 @@ class DataProvider:
             matches = matches[offset:offset + limit]
         # Attach VODs (for the date-column VOD icon) in one batch query.
         vods_by_match = self.get_matches_vods([m["match_id"] for m in matches])
+        maps_by_match = self.get_matches_map_flags([m["match_id"] for m in matches])
+        brackets_by_tourn = self.get_tournaments_bracket_flags([m["tournament_id"] for m in matches])
         for m in matches:
             m["vods"] = vods_by_match.get(m["match_id"], [])
+            m["map_data"] = maps_by_match.get(m["match_id"], False)
+            m["has_bracket"] = brackets_by_tourn.get(m["tournament_id"], False)
         return matches
 
     def count_recent_matches(
@@ -3139,8 +3153,12 @@ class DataProvider:
         ]
         # Attach VODs (for the date-column VOD icon) in one batch query.
         vods_by_match = self.get_matches_vods([m["match_id"] for m in matches])
+        maps_by_match = self.get_matches_map_flags([m["match_id"] for m in matches])
+        brackets_by_tourn = self.get_tournaments_bracket_flags([m["tournament_id"] for m in matches])
         for m in matches:
             m["vods"] = vods_by_match.get(m["match_id"], [])
+            m["map_data"] = maps_by_match.get(m["match_id"], False)
+            m["has_bracket"] = brackets_by_tourn.get(m["tournament_id"], False)
         return matches
 
     def get_match_details(self, match_id: int) -> Optional[dict]:
@@ -3290,6 +3308,47 @@ class DataProvider:
             out.setdefault(mid, []).append(v)
         # Collapse duplicate embeds within each match (keep first by vod_index).
         return {mid: _dedup_vods(vods) for mid, vods in out.items()}
+
+    def get_matches_map_flags(self, match_ids: list[int]) -> dict[int, bool]:
+        """Batch-fetch which matches have per-map data, keyed by match_id.
+
+        Used by the matches lists to show a map-data indicator next to the
+        date without N+1 queries. Returns {match_id: True} only for matches
+        that have at least one row in match_maps (i.e. per-map results exist).
+        """
+        if not match_ids:
+            return {}
+        rows = self.db.client.execute(
+            "SELECT DISTINCT match_id FROM match_maps FINAL WHERE match_id IN %(ids)s",
+            {"ids": tuple(match_ids)},
+        )
+        return {r[0]: True for r in rows}
+
+    def get_tournaments_bracket_flags(self, tournament_ids: list[int]) -> dict[int, bool]:
+        """Batch-fetch which tournaments have bracket data, keyed by id.
+
+        Mirrors the tournament page's "show bracket card" logic: a tournament
+        is considered to have bracket data only when a stored bracket exists
+        AND its parsed data has non-empty stages. Returns {tournament_id: True}
+        for those tournaments (0/None ids are ignored).
+        """
+        ids = [t for t in tournament_ids if t]
+        if not ids:
+            return {}
+        rows = self.db.client.execute(
+            "SELECT tournament_id, data FROM tournament_brackets FINAL "
+            "WHERE tournament_id IN %(ids)s",
+            {"ids": tuple(ids)},
+        )
+        out: dict[int, bool] = {}
+        for tid, data in rows:
+            try:
+                parsed = json.loads(data or "{}")
+            except Exception:
+                parsed = {}
+            if parsed.get("stages"):
+                out[tid] = True
+        return out
 
     def get_ratings_before_match(self, match_id: int) -> dict:
         """Ratings each player had just before a match (per game + system).

@@ -317,6 +317,48 @@ def _vod_icon(platform: str) -> Markup:
 
 templates.env.filters["vod_icon"] = _vod_icon
 
+
+# Inline SVG icon for the map-data indicator shown next to a match date
+# (a small grid/map glyph). Colored via currentColor so CSS can theme it.
+_MAP_DATA_ICON_SVG = (
+    '<svg class="map-data-icon" viewBox="0 0 24 24" width="14" height="14" '
+    'aria-hidden="true"><path fill="currentColor" d="M20.5 3.2a1 1 0 0 0-.9-.1l-4.6 '
+    '1.6-5-1.7a1 1 0 0 0-.6 0L4.4 5a1 1 0 0 0-.7 1v13a1 1 0 0 0 1.4.9l4.4-1.5 5 '
+    '1.5a1 1 0 0 0 .7 0l4.9-1.8a1 1 0 0 0 .6-.9V4a1 1 0 0 0-.2-.9zM14 '
+    '16.3l-4-1.1V7.7l4 1.1z"/></svg>'
+)
+
+
+def _map_data_icon(_ignored=None) -> Markup:
+    """Return an inline SVG icon shown when a match has per-map data.
+
+    Accepts (and ignores) the piped value so it can be used as
+    `{{ ''|map_data_icon }}` like the other icon filters.
+    """
+    return Markup(_MAP_DATA_ICON_SVG)
+
+
+templates.env.filters["map_data_icon"] = _map_data_icon
+
+
+# Inline SVG icon for the bracket-data indicator shown next to a tournament
+# name. A clean elimination-tree glyph (two match arms converging to a
+# single winner line), stroke-based so it reads lightly at small sizes.
+_BRACKET_ICON_SVG = (
+    '<svg class="bracket-icon" viewBox="0 0 24 24" width="14" height="14" '
+    'aria-hidden="true"><path fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+    'd="M3 6.5h7M3 17.5h7M10 6.5V12M10 17.5V12M10 12h11"/></svg>'
+)
+
+
+def _bracket_icon(_ignored=None) -> Markup:
+    """Return an inline SVG icon shown when a tournament has bracket data."""
+    return Markup(_BRACKET_ICON_SVG)
+
+
+templates.env.filters["bracket_icon"] = _bracket_icon
+
 # Defaults
 DEFAULT_LIMIT = 20
 
@@ -565,6 +607,9 @@ def _player_page(request: Request, name: str, game: str = "", limit: int = 50, p
         # between two players (e.g. two "serious") doesn't resolve to the wrong
         # player. Falls back to name resolution for name-based URLs.
         ctx["player_id"] = player_id if player_id is not None else dx._player_id(name)
+        # Link to the source player profile on PlusForward (origin data).
+        if ctx["player_id"]:
+            ctx["plusforward_url"] = f"https://www.plusforward.net/player/{ctx['player_id']}/"
         # All of the player's flags ordered by how common they are (most common
         # first). Derived from per-match data; drives the header + multi-flag row.
         flag_counts = dx._player_flag_counts([ctx["player_id"]]) if ctx["player_id"] else {}
@@ -649,6 +694,9 @@ def _match_page(request: Request, match_id: int):
             return templates.TemplateResponse(request, "match.html", ctx, status_code=404)
         ctx["match"] = m
         ctx["played_at_str"] = _fmt_dt(m.get("played_at"))
+        # Link to the source tournament post on PlusForward (origin data).
+        if m.get("tournament_id"):
+            ctx["plusforward_url"] = f"https://www.plusforward.net/post/{m['tournament_id']}/"
         # Ratings each player had just before the match (per game + system).
         ctx["pre_ratings"] = dx.get_ratings_before_match(match_id)
         # Elo K-factor each player had going into the match (per game), for the
@@ -884,6 +932,8 @@ def _tournament_page(request: Request, tournament_id: int):
         if det is None:
             return templates.TemplateResponse(request, "tournament.html", ctx, status_code=404)
         ctx["t"] = det
+        # Link to the source tournament post on PlusForward (origin data).
+        ctx["plusforward_url"] = f"https://www.plusforward.net/post/{tournament_id}/"
         # Parse rankings JSON for the template.
         try:
             ctx["rankings"] = _json.loads(det.get("rankings") or "[]")
