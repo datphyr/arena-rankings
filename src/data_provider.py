@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import Optional
 
 from src.db_client import Database
+from src.rankings_compute import _base_k_factor, _tier_multiplier
 from src.table import Col, fmt_date, fmt_rating, fmt_wr, fmt_rd, fmt_vol, fmt_tier
 
 
@@ -3321,6 +3322,62 @@ class DataProvider:
         out: dict[int, dict[str, dict[str, float]]] = {}
         for pid, game, sys, rating in rows:
             out.setdefault(pid, {}).setdefault(game or "", {})[sys] = rating
+        return out
+
+    def get_k_factors_before_match(self, match_id: int) -> dict:
+        """Elo K-factor breakdown each player had going into a match (per game).
+
+        K = base_K(matches_played_at_match_date) × tier_multiplier.
+
+        The match count is taken from the rating_history snapshot strictly
+        before the match's played_at (the same snapshot get_ratings_before_match
+        uses), so it reflects how many matches the player had played in that
+        game at that point in time — not their current total. The tier
+        multiplier comes from the match's tournament tier.
+
+        Returns dict keyed by player_id: {player_id: {game_name: {
+        'k': final K, 'base': base K, 'tier': tier name, 'mult': tier
+        multiplier, 'matches': matches played at match date}}}. Empty dict if
+        the match doesn't exist or no prior snapshots exist.
+        """
+        m = self.db.client.execute(
+            "SELECT player1_id, player2_id, played_at, tournament_id FROM matches WHERE match_id = %(mid)s",
+            {"mid": match_id},
+        )
+        if not m:
+            return {}
+        p1, p2, played_at, tid = m[0][0], m[0][1], m[0][2], m[0][3]
+        # Tier multiplier for this match's tournament ('' if unknown → ×1.0).
+        tier = ""
+        if tid:
+            trow = self.db.client.execute(
+                "SELECT tier FROM tournaments FINAL WHERE tournament_id = %(t)s", {"t": tid}
+            )
+            if trow:
+                tier = trow[0][0] or ""
+        rows = self.db.client.execute(
+            """
+            SELECT h.player_id, g.name AS game_name, h.matches_played
+            FROM rating_history h
+            LEFT JOIN games g FINAL ON g.game_id = h.game_id
+            WHERE h.player_id IN %(ids)s
+              AND h.played_at < %(ts)s
+            ORDER BY h.player_id, h.played_at DESC, h.match_id DESC
+            LIMIT 1 BY h.player_id, g.name
+            """,
+            {"ids": (p1, p2), "ts": played_at},
+        )
+        out: dict[int, dict[str, dict]] = {}
+        for pid, game, matches_played in rows:
+            base = _base_k_factor(matches_played)
+            mult = _tier_multiplier(tier)
+            out.setdefault(pid, {})[game or ""] = {
+                "k": base * mult,
+                "base": base,
+                "tier": tier,
+                "mult": mult,
+                "matches": matches_played,
+            }
         return out
 
     # --- Stats ---

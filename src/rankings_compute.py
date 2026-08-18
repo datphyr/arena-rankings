@@ -58,6 +58,17 @@ def _match_result(p1_id: int, p2_id: int, p1_score: int, p2_score: int,
     return 0.5, 0.5, 'draw'
 
 
+def _tier_multiplier(tier: str) -> float:
+    """Elo tier multiplier for a tournament tier.
+
+    premier: ×2.0, major: ×1.5, minor: ×1.0. Unknown tier defaults to ×1.0
+    (same as minor).
+    """
+    if tier and tier.lower() in ELO_TIER_MULTIPLIER:
+        return float(ELO_TIER_MULTIPLIER[tier.lower()])
+    return DEFAULT_TIER_MULTIPLIER
+
+
 def _k_factor_for_tier(tier: str, games_played: int) -> float:
     """Get Elo K-factor: base (experience) × tier multiplier.
 
@@ -68,11 +79,7 @@ def _k_factor_for_tier(tier: str, games_played: int) -> float:
     Unknown tier defaults to ×1.0 (same as minor).
     """
     base = _base_k_factor(games_played)
-    if tier and tier.lower() in ELO_TIER_MULTIPLIER:
-        multiplier = float(ELO_TIER_MULTIPLIER[tier.lower()])
-    else:
-        multiplier = DEFAULT_TIER_MULTIPLIER
-    return base * multiplier
+    return base * _tier_multiplier(tier)
 
 
 def _game_label(game_name: str) -> str:

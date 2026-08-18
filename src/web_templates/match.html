@@ -14,6 +14,8 @@
 {% set p2_game = p2r.get(match.game, p2r.get('', {})) %}
 {% set p1d = match_deltas.get(match.player1_id, {}) %}
 {% set p2d = match_deltas.get(match.player2_id, {}) %}
+{% set p1k = k_factors.get(match.player1_id, {}).get(match.game, k_factors.get(match.player1_id, {}).get('', None)) %}
+{% set p2k = k_factors.get(match.player2_id, {}).get(match.game, k_factors.get(match.player2_id, {}).get('', None)) %}
 
 <div class="section-head"><h2>Match</h2><div class="rank-pills" style="margin-top:0;">
   <span class="rank-pill">Game: <strong>{{ match.game|game_icon }}{{ match.game or '' }}</strong></span>
@@ -25,6 +27,7 @@
     <div class="h2h-player">
       <div class="name"><span class="player-name">{% if match.player1_country %}<span class="flag" title="{{ match.player1_country|upper }}">{{ match.player1_country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ match.player1_id }}/{{ slug(match.player1) }}">{{ match.player1 }}</a></span></div>
       {% if p1_game.get('elo') %}<div class="rating">Rating {{ "%.0f"|format(p1_game['elo']) }}{% if p1d.get('elo') is not none %} <span class="{{ 'rating-pos' if p1d['elo'] > 0 else 'rating-neg' if p1d['elo'] < 0 }}">({{ '%+.1f'|format(p1d['elo']) }})</span>{% endif %}</div>{% endif %}
+      {% if p1k is not none %}<div style="color:var(--text-faint);font-size:0.8rem;" title="{{ p1k.matches }} matches in {{ match.game }} at match date">K-factor {{ '%.0f'|format(p1k.k) }}</div>{% endif %}
       <div class="wins {{ 'win' if match.winner == match.player1 else 'loss' if match.winner is not none else 'draw' }}">{{ match.score1 }}</div>
       <div style="color:var(--text-faint);font-size:0.8rem;">{{ 'winner' if match.winner == match.player1 else 'loser' if match.winner is not none else 'draw' }}</div>
     </div>
@@ -32,6 +35,7 @@
     <div class="h2h-player">
       <div class="name"><span class="player-name">{% if match.player2_country %}<span class="flag" title="{{ match.player2_country|upper }}">{{ match.player2_country|flag }}</span>{% endif %}<a class="player-link" href="/player/{{ match.player2_id }}/{{ slug(match.player2) }}">{{ match.player2 }}</a></span></div>
       {% if p2_game.get('elo') %}<div class="rating">Rating {{ "%.0f"|format(p2_game['elo']) }}{% if p2d.get('elo') is not none %} <span class="{{ 'rating-pos' if p2d['elo'] > 0 else 'rating-neg' if p2d['elo'] < 0 }}">({{ '%+.1f'|format(p2d['elo']) }})</span>{% endif %}</div>{% endif %}
+      {% if p2k is not none %}<div style="color:var(--text-faint);font-size:0.8rem;" title="{{ p2k.matches }} matches in {{ match.game }} at match date">K-factor {{ '%.0f'|format(p2k.k) }}</div>{% endif %}
       <div class="wins {{ 'win' if match.winner == match.player2 else 'loss' if match.winner is not none else 'draw' }}">{{ match.score2 }}</div>
       <div style="color:var(--text-faint);font-size:0.8rem;">{{ 'winner' if match.winner == match.player2 else 'loser' if match.winner is not none else 'draw' }}</div>
     </div>

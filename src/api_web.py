@@ -651,6 +651,9 @@ def _match_page(request: Request, match_id: int):
         ctx["played_at_str"] = _fmt_dt(m.get("played_at"))
         # Ratings each player had just before the match (per game + system).
         ctx["pre_ratings"] = dx.get_ratings_before_match(match_id)
+        # Elo K-factor each player had going into the match (per game), for the
+        # scoreboard display under each player's name.
+        ctx["k_factors"] = dx.get_k_factors_before_match(match_id)
         # Per-match Elo + Glicko-2 deltas for both players (same game as the
         # match), for the delta display on the scoreboard.
         md = dx.get_matches_rating_deltas([match_id], game=m.get("game") or "")
