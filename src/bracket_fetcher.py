@@ -70,6 +70,11 @@ _SHAMBLER_RE = re.compile(
 _EGB_RE = re.compile(
     r"(?:egb\.com|egb\.net|egabetz\.com|egabe\.online)/cup#/t/([a-z0-9_-]+)", re.IGNORECASE)
 
+# kuachi.gg cups: /cups/<uuid>/stage/<stage_no> (kuachi cups — AU/NZ/Oceania
+# AFPS tournaments). The bracket is served by the kuachi REST API.
+_KUACHI_RE = re.compile(
+    r"kuachi\.gg/cups/([0-9a-fA-F-]{36})/stage/(\d+)", re.IGNORECASE)
+
 # Some PlusForward tournament pages load their bracket link dynamically (the
 # "Groups / Brackets" tab is populated client-side). The bracket content —
 # including the link to the external provider — is served by this AJAX
@@ -187,14 +192,17 @@ class BracketFetcher:
             BracketFetcher.no_source += 1
             return False
 
-        kind, ref = source  # ('toornament', tid), ('shambler', cup) or ('egb', slug)
+        kind, ref = source  # ('toornament', tid), ('shambler', cup), ('egb', slug), ('kuachi', (cup_id, stage_no))
         try:
             if kind == "toornament":
                 normalized = self._fetch_toornament(ref)
             elif kind == "shambler":
                 normalized = self._fetch_shambler(ref)
-            else:
+            elif kind == "egb":
                 normalized = self._fetch_egb(ref)
+            else:  # kuachi
+                cup_id, stage_no = ref
+                normalized = self._fetch_kuachi(cup_id, stage_no)
         except Exception as e:
             BracketFetcher.failed += 1
             logger.warning(f"bracket fetch failed for tournament {tournament_id} ({kind}): {e}")
@@ -242,6 +250,9 @@ class BracketFetcher:
         m = _EGB_RE.search(raw_html)
         if m:
             return ("egb", m.group(1))
+        m = _KUACHI_RE.search(raw_html)
+        if m:
+            return ("kuachi", (m.group(1), int(m.group(2))))
         return None
 
     def _detect_source_ajax(self, tournament_id: int):
@@ -640,6 +651,141 @@ class BracketFetcher:
             if home.get("participant") == wid:
                 winner = "p1"
             elif away.get("participant") == wid:
+                winner = "p2"
+        return {"p1": p1, "p2": p2, "score1": s1, "score2": s2, "winner": winner}
+
+    # ------------------------------------------------------------------
+    # kuachi.gg (kuachi cups)
+    # ------------------------------------------------------------------
+    API_KUACHI = "https://kuachi.gg/api"
+
+    def _fetch_kuachi(self, cup_id: str, stage_no: int) -> dict:
+        """Fetch + normalize a kuachi.gg cup stage bracket.
+
+        Flow: list stages for the cup, pick the requested stage (by stage_no),
+        fetch all matches for the cup, filter to that stage, then resolve
+        signup ids -> player names. Returns the shared stages/groups schema.
+        """
+        stages = self._json_get(f"{self.API_KUACHI}/cup/{cup_id}/stages")
+        if not stages:
+            return {"source": "kuachi", "title": "", "stages": []}
+        stage = next((s for s in stages if s.get("stage_no") == stage_no), stages[0])
+        stage_id = stage.get("id")
+        stage_title = stage.get("title") or f"Stage {stage_no + 1}"
+
+        matches = self._json_get(f"{self.API_KUACHI}/cup/{cup_id}/matches")
+        if not matches:
+            return {"source": "kuachi", "title": stage_title, "stages": []}
+        sm = [m for m in matches if m.get("cup_stage_id") == stage_id]
+        if not sm:
+            return {"source": "kuachi", "title": stage_title, "stages": []}
+
+        signup_names = self._kuachi_signup_names(sm)
+        groups = self._kuachi_groups(sm, signup_names)
+        complete = all(m.get("is_scored") for m in sm)
+        return {
+            "source": "kuachi",
+            "title": stage_title,
+            "complete": complete,
+            "stages": [{"name": stage_title, "groups": groups}],
+        }
+
+    def _kuachi_signup_names(self, stage_matches: list) -> dict:
+        """Resolve signup id -> display name for the matches in a stage.
+
+        Two batched API calls: cup_signups (signup -> player_id) then
+        profile (player_id -> discord_username).
+        """
+        sig_ids = []
+        seen = set()
+        for m in stage_matches:
+            for k in ("low_id", "high_id"):
+                v = m.get(k)
+                if v and v not in seen:
+                    seen.add(v)
+                    sig_ids.append(v)
+        if not sig_ids:
+            return {}
+        signups = self._json_get(
+            f"{self.API_KUACHI}/cup_signups/{','.join(sig_ids)}") or []
+        pid_to_sig = {s.get("player_id"): s.get("id") for s in signups if s.get("player_id")}
+        pids = [p for p in pid_to_sig if p]
+        names = {}
+        if pids:
+            profiles = self._json_get(
+                f"{self.API_KUACHI}/profile/{','.join(pids)}") or []
+            names = {p.get("id"): (p.get("discord_username") or "") for p in profiles}
+        return {sig: names.get(pid, "") for pid, sig in pid_to_sig.items()}
+
+    @classmethod
+    def _kuachi_groups(cls, stage_matches: list, names: dict) -> list:
+        """Group kuachi stage matches into the shared stages/groups schema.
+
+        Elimination matches carry elim_type (WB/LB/GF/GF2) + elim_round;
+        group-stage matches carry group_no + group_round. We split by elim
+        type (a "group") then by round, ordering winners -> losers -> final.
+        """
+        _KUACHI_SIDE_ORDER = {"WB": 0, "LB": 1, "GF": 2, "GF1": 2, "GF2": 3}
+        _KUACHI_SIDE_NAME = {"WB": "Winners Bracket", "LB": "Losers Bracket", "GF": "Grand Final", "GF1": "Grand Final", "GF2": "Grand Final Reset"}
+        by_side = {}
+        by_group = {}
+        for m in stage_matches:
+            if m.get("elim_type"):
+                by_side.setdefault(m.get("elim_type"), []).append(m)
+            else:
+                by_group.setdefault(m.get("group_no") or 0, []).append(m)
+
+        groups = []
+        # Elimination groups (winners -> losers -> grand final).
+        for side in sorted(by_side, key=lambda s: _KUACHI_SIDE_ORDER.get(s, 9)):
+            side_matches = by_side[side]
+            by_round = {}
+            for m in side_matches:
+                by_round.setdefault(m.get("elim_round") or 0, []).append(m)
+            rounds = []
+            for rn in sorted(by_round, reverse=True):  # higher elim_round = closer to final
+                rms = sorted(by_round[rn], key=lambda m: m.get("elim_index") or 0)
+                rounds.append({
+                    "name": f"Round {rn + 1}",
+                    "round": rn,
+                    "matches": [cls._kuachi_match(m, names) for m in rms],
+                })
+            groups.append({"name": _KUACHI_SIDE_NAME.get(side, side), "rounds": rounds})
+
+        # Group stage matches: one group per group_no.
+        for gno in sorted(by_group):
+            gm = by_group[gno]
+            by_round = {}
+            for m in gm:
+                by_round.setdefault(m.get("group_round") or 0, []).append(m)
+            rounds = []
+            for rn in sorted(by_round):
+                rms = sorted(by_round[rn], key=lambda m: m.get("id") or 0)
+                rounds.append({
+                    "name": f"Round {rn + 1}",
+                    "round": rn,
+                    "matches": [cls._kuachi_match(m, names) for m in rms],
+                })
+            groups.append({"name": f"Group {gno + 1}", "rounds": rounds})
+        return groups
+
+    @staticmethod
+    def _kuachi_match(m: dict, names: dict) -> dict:
+        """Normalize a single kuachi match to {p1, p2, score1, score2, winner}."""
+        p1 = names.get(m.get("low_id") or "", "")
+        p2 = names.get(m.get("high_id") or "", "")
+        # Score = maps won per side from the per-map reports.
+        s1 = s2 = None
+        rep = m.get("low_report") or m.get("high_report")
+        if rep and m.get("low_id") and m.get("high_id"):
+            s1 = sum(1 for r in rep if r.get("low", 0) > r.get("high", 0))
+            s2 = sum(1 for r in rep if r.get("high", 0) > r.get("low", 0))
+        winner = None
+        wid = m.get("winner_id")
+        if wid:
+            if m.get("low_id") == wid:
+                winner = "p1"
+            elif m.get("high_id") == wid:
                 winner = "p2"
         return {"p1": p1, "p2": p2, "score1": s1, "score2": s2, "winner": winner}
 

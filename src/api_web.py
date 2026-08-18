@@ -694,9 +694,9 @@ def _match_page(request: Request, match_id: int):
             return templates.TemplateResponse(request, "match.html", ctx, status_code=404)
         ctx["match"] = m
         ctx["played_at_str"] = _fmt_dt(m.get("played_at"))
-        # Link to the source tournament post on PlusForward (origin data).
-        if m.get("tournament_id"):
-            ctx["plusforward_url"] = f"https://www.plusforward.net/post/{m['tournament_id']}/"
+        # Link to the source match post on PlusForward (origin data).
+        # Match posts are at /post/{match_id}/ — the same id as the match.
+        ctx["plusforward_url"] = f"https://www.plusforward.net/post/{match_id}/"
         # Ratings each player had just before the match (per game + system).
         ctx["pre_ratings"] = dx.get_ratings_before_match(match_id)
         # Elo K-factor each player had going into the match (per game), for the
