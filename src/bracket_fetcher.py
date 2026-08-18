@@ -730,6 +730,11 @@ class BracketFetcher:
         by_side = {}
         by_group = {}
         for m in stage_matches:
+            # A real bracket match needs both sides. Matches with a missing
+            # side (e.g. an un-played double-elimination reset placeholder
+            # with only one player and no score) are skipped.
+            if not m.get("low_id") or not m.get("high_id"):
+                continue
             if m.get("elim_type"):
                 by_side.setdefault(m.get("elim_type"), []).append(m)
             else:
