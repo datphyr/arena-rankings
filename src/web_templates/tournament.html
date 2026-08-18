@@ -121,7 +121,7 @@
 
 {% if bracket and bracket.data.stages %}
 <div class="card">
-  <div class="card-title"><span class="dot"></span>Brackets{% if bracket.source %}<span class="bracket-source">{{ {'toornament': 'Toornament', 'shambler': 'Shambler', 'egb': 'EGB', 'kuachi': 'Kuachi'}.get(bracket.source, bracket.source) }}</span>{% endif %}{% if bracket.data.complete is defined %}<span class="tag {{ 'tag-finished' if bracket.data.complete else 'tag-live' }}" style="margin-left:auto;margin-right:0;">{{ 'Finished' if bracket.data.complete else 'Live' }}</span>{% endif %}</div>
+  <div class="card-title"><span class="dot"></span>Brackets{% if bracket.source %}<span class="bracket-source">{{ {'toornament': 'Toornament', 'shambler': 'Shambler', 'egb': 'EGB', 'kuachi': 'Kuachi', 'plusforward': 'PlusForward'}.get(bracket.source, bracket.source) }}</span>{% endif %}{% if bracket.data.complete is defined %}<span class="tag {{ 'tag-finished' if bracket.data.complete else 'tag-live' }}" style="margin-left:auto;margin-right:0;">{{ 'Finished' if bracket.data.complete else 'Live' }}</span>{% endif %}</div>
   {% for stage in bracket.data.stages %}
     {% if stage.groups %}
     <div class="bracket-stage">

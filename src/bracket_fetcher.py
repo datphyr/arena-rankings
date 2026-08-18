@@ -45,6 +45,8 @@ import time
 from datetime import datetime
 from typing import Optional
 
+from bs4 import BeautifulSoup
+
 from config import USER_AGENTS
 from src.fetcher import PageFetcher
 
@@ -192,7 +194,7 @@ class BracketFetcher:
             BracketFetcher.no_source += 1
             return False
 
-        kind, ref = source  # ('toornament', tid), ('shambler', cup), ('egb', slug), ('kuachi', (cup_id, stage_no))
+        kind, ref = source  # ('toornament', tid), ('shambler', cup), ('egb', slug), ('kuachi', (cup_id, stage_no)), ('plusforward', tournament_id)
         try:
             if kind == "toornament":
                 normalized = self._fetch_toornament(ref)
@@ -200,9 +202,11 @@ class BracketFetcher:
                 normalized = self._fetch_shambler(ref)
             elif kind == "egb":
                 normalized = self._fetch_egb(ref)
-            else:  # kuachi
+            elif kind == "kuachi":
                 cup_id, stage_no = ref
                 normalized = self._fetch_kuachi(cup_id, stage_no)
+            else:  # plusforward native
+                normalized = self._fetch_plusforward_native(ref)
         except Exception as e:
             BracketFetcher.failed += 1
             logger.warning(f"bracket fetch failed for tournament {tournament_id} ({kind}): {e}")
@@ -274,7 +278,14 @@ class BracketFetcher:
             return None
         if not body:
             return None
-        return self.detect_source(body)
+        src = self.detect_source(body)
+        if src:
+            return src
+        # No external provider link — but PlusForward itself may render the
+        # bracket natively (the AJAX response is bracket HTML, not a link).
+        if '<div class="bracket"' in body:
+            return ("plusforward", tournament_id)
+        return None
 
     # ------------------------------------------------------------------
     # HTTP (JSON) helpers — external APIs, curl-based like PageFetcher
@@ -793,6 +804,91 @@ class BracketFetcher:
             elif m.get("high_id") == wid:
                 winner = "p2"
         return {"p1": p1, "p2": p2, "score1": s1, "score2": s2, "winner": winner}
+
+    # ------------------------------------------------------------------
+    # PlusForward-native brackets (rendered by plusforward.net itself)
+    # ------------------------------------------------------------------
+    def _fetch_plusforward_native(self, tournament_id: int) -> dict:
+        """Parse a bracket that PlusForward renders natively (no external provider).
+
+        The AJAX bracket endpoint returns bracket HTML (round columns with
+        matches) rather than an external provider link. Parse it into the
+        shared stages/groups/rounds/matches schema: each round column becomes
+        a group, each bracket-match a match.
+        """
+        body = self._curl(
+            "GET",
+            f"{_AJAX_BRACKETS_URL}?tourneybrackets=1&pid={tournament_id}",
+        )
+        if not body:
+            return {"source": "plusforward", "title": "", "stages": []}
+        rounds = self._parse_pf_native_rounds(body)
+        if not rounds:
+            return {"source": "plusforward", "title": "", "stages": []}
+        # A round becomes a group; matches keep their own per-round grouping
+        # only when a round has several. To keep each round as its own column
+        # in the renderer, emit one group per round title.
+        groups = []
+        for r in rounds:
+            rounds_by_name = {}
+            for m in r["matches"]:
+                rounds_by_name.setdefault(r["title"], []).append(m)
+            groups.append({
+                "name": r["title"],
+                "rounds": [{"name": r["title"], "round": 0, "matches": rounds_by_name[r["title"]]}],
+            })
+        return {
+            "source": "plusforward",
+            "title": "",
+            "complete": True,
+            "stages": [{"name": "", "groups": groups}],
+        }
+
+    @staticmethod
+    def _parse_pf_native_rounds(body: str) -> list:
+        """Parse PlusForward-native bracket HTML into a list of round dicts.
+
+        Returns [{title, matches: [{p1, p2, score1, score2, winner}]}].
+        Columns that only contain spacing/connectors (no bracket-match) are
+        skipped.
+        """
+        try:
+            soup = BeautifulSoup(body, "html.parser")
+        except Exception:
+            return []
+        bracket = soup.find("div", class_="bracket")
+        if not bracket:
+            return []
+        rounds = []
+        for col in bracket.find_all("div", class_="bracket-column"):
+            title_el = col.find("div", class_="bracket-round-title")
+            title = title_el.get_text(strip=True) if title_el else ""
+            matches = []
+            for m in col.find_all("div", class_="bracket-match"):
+                cells = [
+                    c for c in m.find_all(recursive=False)
+                    if any("bracket-cell-r" in (cc or "") for cc in (c.get("class") or []))
+                ]
+                players = []
+                for c in cells:
+                    name_el = c.find("div", class_="bracket-name")
+                    score_el = c.find("div", class_="bracket-score")
+                    name = name_el.get_text(strip=True) if name_el else ""
+                    score = score_el.get_text(strip=True) if score_el else ""
+                    is_win = bool(name_el and "font-weight:700" in (name_el.get("style") or ""))
+                    players.append({"name": name, "score": score, "winner": is_win})
+                if len(players) >= 2:
+                    p1, p2 = players[0], players[1]
+                    matches.append({
+                        "p1": p1["name"],
+                        "p2": p2["name"],
+                        "score1": int(p1["score"]) if p1["score"].isdigit() else None,
+                        "score2": int(p2["score"]) if p2["score"].isdigit() else None,
+                        "winner": "p1" if p1["winner"] else ("p2" if p2["winner"] else None),
+                    })
+            if matches:
+                rounds.append({"title": title, "matches": matches})
+        return rounds
 
     @classmethod
     def log_stats(cls):
