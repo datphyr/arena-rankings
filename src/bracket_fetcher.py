@@ -64,7 +64,7 @@ _JSON_RETRY_DELAY = float(__import__("os").environ.get("BRACKET_JSON_RETRY_DELAY
 _TOORNAMENT_RE = re.compile(
     r"play\.toornament\.com/[a-z_]+/tournaments/(\d+)", re.IGNORECASE)
 _SHAMBLER_RE = re.compile(
-    r"shambler\.site/(?:(?:250fps|brackets)/)?brackets\.php\?cup=(\d+)", re.IGNORECASE)
+    r"shambler\.site/(?:[a-z0-9_-]+/)*brackets\.php\?cup=(\d+)", re.IGNORECASE)
 # EGB cup links: egb.com / egb.net / egabetz.com / egabe.online with a hash
 # route /cup#/t/<slug> (optionally followed by /bracket). Slug is the part
 # after /t/. egabe.online is an alias that no longer resolves in a browser but
