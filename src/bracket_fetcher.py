@@ -63,10 +63,12 @@ _TOORNAMENT_RE = re.compile(
     r"play\.toornament\.com/[a-z_]+/tournaments/(\d+)", re.IGNORECASE)
 _SHAMBLER_RE = re.compile(
     r"shambler\.site/(?:(?:250fps|brackets)/)?brackets\.php\?cup=(\d+)", re.IGNORECASE)
-# EGB cup links: egb.com / egb.net / egabetz.com with a hash route /cup#/t/<slug>
-# (optionally followed by /bracket). Slug is the part after /t/.
+# EGB cup links: egb.com / egb.net / egabetz.com / egabe.online with a hash
+# route /cup#/t/<slug> (optionally followed by /bracket). Slug is the part
+# after /t/. egabe.online is an alias that no longer resolves in a browser but
+# the API still serves the bracket (cup.egb.net), so we accept it for detection.
 _EGB_RE = re.compile(
-    r"(?:egb\.com|egb\.net|egabetz\.com)/cup#/t/([a-z0-9_-]+)", re.IGNORECASE)
+    r"(?:egb\.com|egb\.net|egabetz\.com|egabe\.online)/cup#/t/([a-z0-9_-]+)", re.IGNORECASE)
 
 # Some PlusForward tournament pages load their bracket link dynamically (the
 # "Groups / Brackets" tab is populated client-side). The bracket content —
