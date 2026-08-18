@@ -77,6 +77,13 @@ _EGB_RE = re.compile(
 _KUACHI_RE = re.compile(
     r"kuachi\.gg/cups/([0-9a-fA-F-]{36})/stage/(\d+)", re.IGNORECASE)
 
+# Round-title patterns for PlusForward-native brackets (double elimination).
+# Winners-bracket rounds are any non-loser, non-grand-final round (e.g.
+# Quarterfinals / Semifinals / Winner's Final); loser rounds start with
+# "Loser"; the grand final is matched explicitly.
+_PF_WINNERS_RE = re.compile(r"^(?!loser|grand)[a-z'\s-]+$", re.IGNORECASE)
+_PF_LOSERS_RE = re.compile(r"^loser", re.IGNORECASE)
+
 # Some PlusForward tournament pages load their bracket link dynamically (the
 # "Groups / Brackets" tab is populated client-side). The bracket content —
 # including the link to the external provider — is served by this AJAX
@@ -812,9 +819,9 @@ class BracketFetcher:
         """Parse a bracket that PlusForward renders natively (no external provider).
 
         The AJAX bracket endpoint returns bracket HTML (round columns with
-        matches) rather than an external provider link. Parse it into the
-        shared stages/groups/rounds/matches schema: each round column becomes
-        a group, each bracket-match a match.
+        matches) rather than an external provider link. Parse it and group the
+        rounds into winners / losers / grand-final groups so the bracket
+        renders as a connected elimination tree.
         """
         body = self._curl(
             "GET",
@@ -825,17 +832,32 @@ class BracketFetcher:
         rounds = self._parse_pf_native_rounds(body)
         if not rounds:
             return {"source": "plusforward", "title": "", "stages": []}
-        # A round becomes a group; matches keep their own per-round grouping
-        # only when a round has several. To keep each round as its own column
-        # in the renderer, emit one group per round title.
+
+        # Group round titles into winners / losers / grand-final groups.
+        # Winner's Final + Grand Final are treated as their own single-match
+        # groups; loser rounds form the losers group.
         groups = []
-        for r in rounds:
-            rounds_by_name = {}
-            for m in r["matches"]:
-                rounds_by_name.setdefault(r["title"], []).append(m)
+        winners = [r for r in rounds if _PF_WINNERS_RE.match(r["title"])]
+        losers = [r for r in rounds if _PF_LOSERS_RE.match(r["title"])]
+        grand = [r for r in rounds if "grand final" in r["title"].lower()]
+
+        def _mk_group(name, round_list):
+            return {
+                "name": name,
+                "rounds": [
+                    {"name": r["title"], "round": i, "matches": r["matches"]}
+                    for i, r in enumerate(round_list)
+                ],
+            }
+
+        if winners:
+            groups.append(_mk_group("Winners Bracket", winners))
+        if losers:
+            groups.append(_mk_group("Losers Bracket", losers))
+        for g in grand:
             groups.append({
-                "name": r["title"],
-                "rounds": [{"name": r["title"], "round": 0, "matches": rounds_by_name[r["title"]]}],
+                "name": "Grand Final",
+                "rounds": [{"name": g["title"], "round": 0, "matches": g["matches"]}],
             })
         return {
             "source": "plusforward",
