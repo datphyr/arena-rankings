@@ -743,7 +743,7 @@ class BracketFetcher:
             for m in side_matches:
                 by_round.setdefault(m.get("elim_round") or 0, []).append(m)
             rounds = []
-            for rn in sorted(by_round, reverse=True):  # higher elim_round = closer to final
+            for rn in sorted(by_round):  # earlier rounds first; final (highest round) rightmost
                 rms = sorted(by_round[rn], key=lambda m: m.get("elim_index") or 0)
                 rounds.append({
                     "name": f"Round {rn + 1}",
