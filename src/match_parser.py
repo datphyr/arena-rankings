@@ -482,9 +482,6 @@ def _is_tournament_in_progress(db, tournament_id: int) -> bool:
         det = db.get_tournament_details(tournament_id)
         if not det:
             return True
-        end = det.get("schedule_end")
-        if end and end < datetime.utcnow():
-            return False
         rankings = det.get("rankings") or ""
         if isinstance(rankings, str):
             try:
@@ -493,7 +490,19 @@ def _is_tournament_in_progress(db, tournament_id: int) -> bool:
                 rankings = []
         # Still in progress until EVERY ranked position has a real player
         # (complete standings). Partial rankings = event still running.
+        # This check takes priority over schedule_end: the scheduled end time
+        # is only an estimate, and a tournament whose standings are incomplete
+        # (e.g. 1st/2nd still empty) must keep being refreshed even after the
+        # scheduled end passes, so final standings get picked up when they're
+        # published later.
         if rankings and all(r.get("player_name") for r in rankings):
+            return False
+        if rankings:
+            # Partial standings (some positions empty) -> still running.
+            return True
+        # No rankings at all: fall back to the schedule_end heuristic.
+        end = det.get("schedule_end")
+        if end and end < datetime.utcnow():
             return False
         return True
     except Exception:
