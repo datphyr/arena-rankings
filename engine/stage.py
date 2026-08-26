@@ -55,7 +55,7 @@ def _has_rank_work() -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a single pipeline stage process")
-    parser.add_argument("stage", choices=["download", "parse", "rank", "discovery"])
+    parser.add_argument("stage", choices=["download", "parse", "rank", "discovery", "reconcile"])
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--max-pages", type=int, default=0)
@@ -105,6 +105,17 @@ def main() -> int:
             "discovery",
             lambda: run_cycle(max_pages=args.max_pages),
             idle_delay=args.idle if args.idle is not None else 60.0,
+            max_backoff=args.max_backoff,
+        )
+    if args.stage == "reconcile":
+        from engine.stages.reconcile import run_cycle
+        # Reconciliation is a periodic sweep (interval-gated inside run_cycle).
+        # No has_work predicate: it always runs its own cheap cycle. Short idle
+        # so the interval is reached promptly; the gate keeps it cheap.
+        return runner.run_stage(
+            "reconcile",
+            lambda: run_cycle(),
+            idle_delay=args.idle if args.idle is not None else 30.0,
             max_backoff=args.max_backoff,
         )
     return 2

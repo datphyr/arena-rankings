@@ -18,7 +18,7 @@ import random
 import re
 import time
 import html as _html
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from config import BASE_URL, RETRY_BACKOFF
@@ -425,7 +425,18 @@ class TournamentResolver:
                 start = datetime.strptime(sched_m.group(1), "%d %b %Y")
                 day = start.strftime("%Y-%m-%d ")
                 details["schedule_start"] = day + sched_m.group(2) + ":00"
-                details["schedule_end"] = day + (sched_m.group(3) or sched_m.group(2)) + ":00"
+                end_time = sched_m.group(3) or sched_m.group(2)
+                # End time can cross midnight (e.g. "22:00 UTC -> 03:00 UTC"
+                # next day). The schedule only lists hours on the start day, so
+                # if the end time is earlier than the start time it belongs to
+                # the following day — bump the date by one. Without this the end
+                # is stored before the start, making the event look like it
+                # ended before it began.
+                if int(end_time.split(":")[0]) < int(sched_m.group(2).split(":")[0]):
+                    end_day = (start + timedelta(days=1)).strftime("%Y-%m-%d ")
+                else:
+                    end_day = day
+                details["schedule_end"] = end_day + end_time + ":00"
             except ValueError:
                 pass
 

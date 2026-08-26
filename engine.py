@@ -44,6 +44,7 @@ STAGES = [
     ("download", ["download"]),
     ("parse", ["parse"]),
     ("rank", ["rank"]),
+    ("reconcile", ["reconcile"]),
     ("discord", ["--", "bot_discord.py", "--daemon"]),   # kept as-is
     ("twitch", ["--", "bot_twitch.py", "--daemon"]),      # kept as-is
     ("web", ["--", "api_web.py", "--daemon"]),            # kept as-is

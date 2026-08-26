@@ -29,6 +29,24 @@ RATE_LIMIT_DELAY = float(os.environ.get("RATE_LIMIT_DELAY", "0.0"))
 HTTP_TIMEOUT = int(os.environ.get("HTTP_TIMEOUT", "3"))
 RETRY_BACKOFF = 2.0
 
+# Reconciliation sweep (reconcile stage): tournaments whose final standings
+# are incomplete (some ranked slot has an empty player name) are force-refreshed
+# on a schedule-driven, graduated cadence. The normal refresh is event-driven
+# (per new match); this sweep catches the gap where a tournament's last match
+# was parsed while PlusForward still showed placeholder standings and never
+# got re-checked afterwards.
+#
+#   RECONCILE_INTERVAL: how often the sweep scans the DB (seconds). Keep this
+#     <= the in-schedule cadence so the 1-minute bucket is actually reached.
+#   RECONCILE_IN_SCHEDULE: cadence (s) while now < schedule_end (live event).
+#   RECONCILE_POST_END: cadence (s) after schedule_end, for a while.
+#   RECONCILE_POST_END_WEEKS: how many weeks past schedule_end to keep
+#     refreshing before stopping scraping the tournament entirely.
+RECONCILE_INTERVAL = int(os.environ.get("RECONCILE_INTERVAL", "60"))
+RECONCILE_IN_SCHEDULE = int(os.environ.get("RECONCILE_IN_SCHEDULE", "60"))
+RECONCILE_POST_END = int(os.environ.get("RECONCILE_POST_END", "3600"))
+RECONCILE_POST_END_WEEKS = int(os.environ.get("RECONCILE_POST_END_WEEKS", "1"))
+
 USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/119.0",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",

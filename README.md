@@ -59,7 +59,8 @@ Key properties:
 ### Components
 
 - **Orchestrator** (`engine.py`) — supervises stage processes, restarts crashed ones, forwards signals.
-- **Stage processes** (`python -m engine.stage <download|parse|rank|discovery>`) — the event consumers.
+- **Stage processes** (`python -m engine.stage <download|parse|rank|discovery|reconcile>`) — the event consumers.
+- **Reconcile** (`engine/stages/reconcile.py`) — periodic sweep that force-refreshes tournaments whose final standings are stuck incomplete (last match parsed while PlusForward still showed placeholders), catching late-published final standings/brackets. Bounded to the small set of incomplete-standings tournaments and interval-gated.
 - **Engine internals** — `engine/queue.py` (queue claiming + backoff), `engine/runner.py` (stage event loop), `src/backoff.py` (exponential backoff + circuit breaker).
 - **External services** (`bot_discord.py`, `bot_twitch.py`, `api_web.py`) — long-lived socket processes, run as-is under the orchestrator.
 - **Shared logic** lives in `src/`: post download, parsing, rankings computation, the database client/schema, the data provider, and the bots/web app.
@@ -117,6 +118,10 @@ All settings come from environment variables (loaded from `.env` via `python-dot
 | `GLICKO2_PERIOD` | `month` | Rating period: `year` / `month` / `week` / `day` |
 | `GLICKO2_TAU` | `1.2` | Glicko-2 system constant (0.2 stable – 1.2 volatile) |
 | `WEB_HOST` / `WEB_PORT` | `0.0.0.0` / `8080` | Web server bind address/port |
+| `RECONCILE_INTERVAL` | `30` | How often the reconcile stage scans for due tournaments (s) |
+| `RECONCILE_IN_SCHEDULE` | `60` | Cadence (s) for incomplete tournaments before `schedule_end` (live event) |
+| `RECONCILE_POST_END` | `3600` | Cadence (s) after `schedule_end`, for a week |
+| `RECONCILE_POST_END_WEEKS` | `1` | Stop scraping a tournament this many weeks past `schedule_end` |
 
 See `config.py` for the full list, including the Elo K-factor table and tournament tier multipliers.
 
@@ -235,7 +240,8 @@ arena-rankings/
 │       ├── discovery.py    # PlusForward matchlist scanner (polling, paced)
 │       ├── download.py     # download event consumer
 │       ├── parse.py        # parse event consumer
-│       └── rank.py         # rank event consumer (watermark-gated)
+│       ├── rank.py         # rank event consumer (watermark-gated)
+│       └── reconcile.py    # stuck-standings sweep (periodic, interval-gated)
 ├── src/
 │   ├── backoff.py          # exponential backoff + circuit breaker
 │   ├── db_client.py        # ClickHouse client
@@ -259,6 +265,9 @@ arena-rankings/
 ├── bot_twitch.py           # Twitch bot wrapper (--daemon)
 ├── reset.py                # database reset tool
 ├── backup.py               # backup/restore (Parquet+zstd single archive)
+├── tools/                  # one-off ops scripts
+│   ├── fix_tournament.py   # force-refresh a single tournament's page+bracket
+│   └── restore_tournaments.py  # restore tournament metadata from cached HTML
 ```
 
 ## License
