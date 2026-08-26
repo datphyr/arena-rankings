@@ -46,6 +46,7 @@
           <a href="/matches" class="nav-link {{ 'active' if active == 'matches' }}">Matches</a>
           <a href="/rivals" class="nav-link {{ 'active' if active == 'rivals' }}">Rivals</a>
           <a href="/h2h" class="nav-link {{ 'active' if active == 'h2h' }}">Head-to-Head</a>
+          <a href="/about" class="nav-link {{ 'active' if active == 'about' }}">About</a>
         </nav>
       </div>
       <div class="header-actions">
@@ -69,6 +70,11 @@
         <span class="noise-val" id="noise-val">50%</span>
       </div>
       <p>Arena Rankings — Elo &amp; Glicko-2 ratings from plusforward.net match data.</p>
+      <p style="margin:0;">
+        <a class="game-link" href="https://github.com/datphyr/arena-rankings" target="_blank" rel="noopener">GitHub</a>
+        &nbsp;·&nbsp; <a class="game-link" href="https://www.twitch.tv/datphyr" target="_blank" rel="noopener">Twitch</a>
+        &nbsp;·&nbsp; <a class="game-link" href="https://discord.com/users/datphyr" target="_blank" rel="noopener">Discord</a>
+      </p>
     </div>
   </footer>
   {% block scripts %}{% endblock %}

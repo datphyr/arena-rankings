@@ -465,6 +465,14 @@ def home(request: Request, sort: str = Query("elo", pattern="^(elo|glicko2)$")):
     return templates.TemplateResponse(request, "home.html", ctx)
 
 
+@app.get("/about", response_class=HTMLResponse)
+def about(request: Request):
+    with DataProvider() as dx:
+        ctx = _base_context(request, dx)
+    ctx["active"] = "about"
+    return templates.TemplateResponse(request, "about.html", ctx)
+
+
 @app.get("/top-players", response_class=HTMLResponse)
 def top_players_partial(request: Request, sort: str = Query("elo", pattern="^(elo|glicko2)$")):
     """Return just the Top Players table HTML for in-place (AJAX) sorting."""

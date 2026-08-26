@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}Arena Rankings — About{% endblock %}
+{% block content %}
+<section class="hero">
+  <h1>About Arena Rankings</h1>
+  <p>Automated esports player ratings for the arena FPS scene — Elo &amp; Glicko-2 computed from plusforward.net match data.</p>
+</section>
+
+<div class="card">
+  <div class="card-title"><span class="dot"></span>What is this?</div>
+  <p style="margin:0;color:var(--text-dim);line-height:1.6;">
+    Arena Rankings is a full data pipeline for competitive player ratings. It discovers and downloads
+    match/tournament pages from
+    <a class="game-link" href="https://www.plusforward.net" target="_blank" rel="noopener">PlusForward</a>,
+    parses the results into structured data, and computes <strong>Elo</strong> and <strong>Glicko-2</strong>
+    ratings that are served through this web site, a JSON API, and Discord/Twitch chat bots. The pipeline is
+    game-agnostic and tracks multiple arena shooters side by side — each with its own leaderboards and ratings.
+  </p>
+</div>
+
+<div class="card">
+  <div class="card-title"><span class="dot"></span>How ratings are calculated</div>
+
+  <div class="section-head"><h2>Elo</h2></div>
+  <p style="margin:0 0 10px;color:var(--text-dim);line-height:1.6;">
+    Standard Elo with a <strong>variable K-factor</strong>: how much your rating moves per match depends on
+    your experience and on the tier of the tournament you played.
+  </p>
+
+  <p style="margin:0 0 6px;color:var(--text-dim);font-size:0.9rem;">Base K by experience (games played):</p>
+  <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));">
+    <div class="stat-card"><div class="stat-value">40</div><div class="stat-label">&lt; 30 games · provisional</div></div>
+    <div class="stat-card"><div class="stat-value">24</div><div class="stat-label">30–100 games · established</div></div>
+    <div class="stat-card"><div class="stat-value">16</div><div class="stat-label">&gt; 100 games · veteran</div></div>
+  </div>
+
+  <p style="margin:12px 0 6px;color:var(--text-dim);font-size:0.9rem;">Tournament tier multiplier (on top of base K):</p>
+  <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));">
+    <div class="stat-card"><div class="stat-value">×2.0</div><div class="stat-label"><span class="tag tag-premier">Premier</span></div></div>
+    <div class="stat-card"><div class="stat-value">×1.5</div><div class="stat-label"><span class="tag tag-major">Major</span></div></div>
+    <div class="stat-card"><div class="stat-value">×1.0</div><div class="stat-label"><span class="tag tag-minor">Minor</span> / unknown</div></div>
+  </div>
+
+  <p style="margin:12px 0 6px;color:var(--text-dim);line-height:1.6;font-size:0.9rem;">
+    Final <code>K = base K(games) × tier multiplier</code>. Expected score follows the standard logistic curve
+    <code>E = 1 / (1 + 10<sup>(R_opp − R)/400</sup>)</code>, and each match updates
+    <code>R′ = R + K·(score − E)</code>. Everyone starts at <strong>1500</strong>.
+  </p>
+
+  <div class="card" style="border:1px dashed var(--border-soft);background:var(--bg-card);">
+    <div class="card-title"><span class="dot"></span>Worked example</div>
+    <p style="margin:0 0 8px;color:var(--text-dim);line-height:1.6;font-size:0.9rem;">
+      Say <strong>Alice</strong> (1700 Elo, 150 games played) beats <strong>Bob</strong> (1500 Elo, 40 games)
+      in a <span class="tag tag-premier">premier</span> tournament:
+    </p>
+    <ul style="margin:0;padding-left:20px;color:var(--text-dim);line-height:1.8;font-family:var(--mono);font-size:0.85rem;">
+      <li>Alice: K = 16 × 2.0 = 32 &nbsp;·&nbsp; E = 1/(1+10^(−200/400)) ≈ 0.76 &nbsp;→&nbsp; +32 × (1 − 0.76) ≈ <span style="color:var(--green);font-weight:700;">+7.7</span></li>
+      <li>Bob:&nbsp;&nbsp; K = 24 × 2.0 = 48 &nbsp;·&nbsp; E = 1/(1+10^(+200/400)) ≈ 0.24 &nbsp;→&nbsp; −48 × (0.24 − 0) ≈ <span style="color:var(--accent);font-weight:700;">−11.5</span></li>
+      <li>Alice → <strong>1707.7</strong> &nbsp;·&nbsp; Bob → <strong>1488.5</strong></li>
+    </ul>
+  </div>
+
+  <div class="section-head"><h2>Glicko-2</h2></div>
+  <p style="margin:0 0 10px;color:var(--text-dim);line-height:1.6;">
+    Glicko-2 is a more careful system. Instead of a single number, every player has three:
+    a <strong>rating</strong>, a <strong>rating deviation (RD)</strong> — how sure we are — and a
+    <strong>volatility</strong> — how consistent they are. It updates once per
+    <strong>monthly rating period</strong> using all the games in that month at once
+    (based on the
+    <a class="game-link" href="http://www.glicko.net/glicko/glicko2.pdf" target="_blank" rel="noopener">Glicko-2 paper</a>).
+  </p>
+
+  <p style="margin:0 0 6px;color:var(--text-dim);font-size:0.9rem;">The three numbers that describe a player:</p>
+  <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));">
+    <div class="stat-card">
+      <div class="stat-value">1500</div>
+      <div class="stat-label">Starting rating</div>
+      <div style="color:var(--text-faint);font-size:0.8rem;margin-top:4px;">all new players begin here</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">350</div>
+      <div class="stat-label">Initial RD</div>
+      <div style="color:var(--text-faint);font-size:0.8rem;margin-top:4px;">maximum uncertainty</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">0.06</div>
+      <div class="stat-label">Initial volatility</div>
+      <div style="color:var(--text-faint);font-size:0.8rem;margin-top:4px;">how jumpy results are</div>
+    </div>
+  </div>
+
+  <p style="margin:12px 0 6px;color:var(--text-dim);font-size:0.9rem;">What the RD really means:</p>
+  <div class="card" style="border:1px dashed var(--border-soft);background:var(--bg-card);padding:16px;">
+    <p style="margin:0 0 10px;color:var(--text-dim);line-height:1.6;font-size:0.9rem;">
+      The lower the RD, the more confident we are in a rating. The leaderboard shows the
+      <strong>cautious lower end</strong> (<code>rating − RD</code>), so an uncertain player can't sit artificially high:
+    </p>
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:0.82rem;color:var(--text-dim);margin-bottom:4px;">
+          <span>Confident — <strong style="color:var(--text)">1800 ± 25</strong></span><span>tight range → stable</span>
+        </div>
+        <div style="height:10px;border-radius:6px;background:var(--bg-hover);position:relative;">
+          <div style="position:absolute;left:46%;width:8%;height:100%;background:linear-gradient(90deg,var(--green),var(--gold));border-radius:6px;"></div>
+        </div>
+      </div>
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:0.82rem;color:var(--text-dim);margin-bottom:4px;">
+          <span>Fresh — <strong style="color:var(--text)">1500 ± 350</strong></span><span>huge range → unknown</span>
+        </div>
+        <div style="height:10px;border-radius:6px;background:var(--bg-hover);position:relative;">
+          <div style="position:absolute;left:18%;width:64%;height:100%;background:linear-gradient(90deg,var(--orange),var(--accent));border-radius:6px;"></div>
+        </div>
+      </div>
+    </div>
+    <p style="margin:12px 0 0;color:var(--text-dim);line-height:1.6;font-size:0.9rem;">
+      Every game played shrinks the range. Sitting out a month grows it again (back toward 350).
+      Only players with <strong>≥ 30 matches</strong> appear on the Glicko-2 leaderboard, so you never
+      see a rating we don't really trust yet.
+    </p>
+  </div>
+
+  <div class="card" style="border:1px dashed var(--border-soft);background:var(--bg-card);">
+    <div class="card-title"><span class="dot"></span>Worked example</div>
+    <p style="margin:0 0 8px;color:var(--text-dim);line-height:1.6;font-size:0.9rem;">
+      <strong>Alice</strong> (1700 ± 40) plays 5 matches this month: wins 3, loses 2, against a field
+      averaging ~1550 with their own RDs. Because Glicko-2 weighs each opponent by their uncertainty,
+      beating a high-RD player moves your rating less than beating a proven one.
+    </p>
+    <p style="margin:0 0 4px;color:var(--text-dim);line-height:1.7;font-family:var(--mono);font-size:0.85rem;">
+      Result: rating 1700 → <strong style="color:var(--green);">~1731</strong>, &nbsp;RD 40 → <strong style="color:var(--text);">~28</strong>
+      &nbsp;(more games = more confidence)
+    </p>
+    <p style="margin:0;color:var(--text-faint);font-size:0.8rem;">
+      The RD drop matters as much as the rating gain — after more matches, 1731 is a <em>trusted</em> number,
+      not a hopeful one.
+    </p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title"><span class="dot"></span>Features</div>
+  <ul style="margin:0;padding-left:20px;color:var(--text-dim);line-height:1.7;">
+    <li><a class="game-link" href="/leaderboard">Leaderboards</a> per game with live sorting and filtering.</li>
+    <li><a class="game-link" href="/player">Player pages</a> with rating-history charts, map edges and VOD links.</li>
+    <li><a class="game-link" href="/h2h">Head-to-head</a> and <a class="game-link" href="/rivals">rivals</a> comparisons.</li>
+    <li>A JSON <a class="game-link" href="/api/docs">API</a> (Swagger at <code>/api/docs</code>).</li>
+    <li>Discord slash commands and Twitch chat commands for ratings on the go.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <div class="card-title"><span class="dot"></span>Contact &amp; source</div>
+  <p style="margin:0 0 10px;color:var(--text-dim);line-height:1.6;">
+    Bugs, feature requests and questions are welcome:
+  </p>
+  <ul style="margin:0 0 10px;padding-left:20px;color:var(--text-dim);line-height:2;">
+    <li>
+      <strong>GitHub</strong> — issues &amp; PRs:
+      <a class="game-link" href="https://github.com/datphyr/arena-rankings" target="_blank" rel="noopener">github.com/datphyr/arena-rankings</a>
+    </li>
+    <li>
+      <strong>Discord</strong> — <a class="game-link" href="https://discord.com/users/datphyr" target="_blank" rel="noopener">datphyr</a>
+    </li>
+    <li>
+      <strong>Twitch</strong> — <a class="game-link" href="https://www.twitch.tv/datphyr" target="_blank" rel="noopener">datphyr</a>
+    </li>
+  </ul>
+  <p style="margin:0;color:var(--text-dim);line-height:1.6;">
+    Match data is sourced from <a class="game-link" href="https://www.plusforward.net" target="_blank" rel="noopener">PlusForward</a>.
+  </p>
+</div>
+{% endblock %}
