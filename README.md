@@ -52,18 +52,15 @@ The pipeline is an **event-worker pool** (Option A): each stage runs as an isola
 ```
 
 Key properties:
-- **Event-gated** — `download`/`parse`/`rank` only process when the queue has items; a caught-up stage reports `idle` and sleeps cheaply. `discovery` polls the external site but paces itself (60s idle) and backs off on failure.
-- **Crash-safe claiming** — work is claimed with a self-expiring lease (`raw_posts.locked_until`); a worker that dies mid-batch has its rows re-claimed after the lease expires.
+- **Event-gated** — `download`/`parse`/`rank` only process when the queue has items; a caught-up stage sleeps cheaply. `discovery` polls the external site but paces itself (60s idle) and backs off on failure.
 - **Backoff + circuit breaker** — transient failures back off exponentially; a dead dependency (PlusForward, ClickHouse) trips a breaker instead of being hammered.
-- **Dead-letter** — posts that exhaust their retries move to `failed_posts` (visible + manually retryable) instead of blocking the queue forever.
 - **Real crash semantics** — a fatal stage error exits non-zero, so the supervisor + systemd `Restart=on-failure` actually restart it.
-- **Observability** — every stage writes status (processed, queue depth, lag) to `pipeline_status`, surfaced on the dashboard.
 
 ### Components
 
 - **Orchestrator** (`engine.py`) — supervises stage processes, restarts crashed ones, forwards signals.
 - **Stage processes** (`python -m engine.stage <download|parse|rank|discovery>`) — the event consumers.
-- **Engine internals** — `engine/queue.py` (lease claiming + dead-letter), `engine/runner.py` (stage event loop), `engine/status.py` (dashboard status writer), `src/backoff.py` (exponential backoff + circuit breaker).
+- **Engine internals** — `engine/queue.py` (queue claiming + backoff), `engine/runner.py` (stage event loop), `src/backoff.py` (exponential backoff + circuit breaker).
 - **External services** (`bot_discord.py`, `bot_twitch.py`, `api_web.py`) — long-lived socket processes, run as-is under the orchestrator.
 - **Shared logic** lives in `src/`: post download, parsing, rankings computation, the database client/schema, the data provider, and the bots/web app.
 - **`cli.py`** provides a command-line interface into the same data.
@@ -151,10 +148,6 @@ In `sequential` mode (`DOWNLOAD_MODE=sequential`) there is no discovery stage �
 
 Stage entrypoints accept `--workers N`, `--limit N`, `--idle SECONDS` (idle delay when no work), `--max-backoff N`, and `-v`.
 
-### Pipeline dashboard
-
-Run the web app and open `http://localhost:8080/pipeline` for a live view of every stage (status, processed count, queue depth, lag) plus the dead-letter quarantine with manual retry. Data comes from the `pipeline_status` and `failed_posts` tables.
-
 ### Logging
 
 All components log through a single shared config (`src/logging_setup.py`), producing one uniform line format:
@@ -235,9 +228,8 @@ arena-rankings/
 ├── config.py               # all configuration (env-driven)
 ├── engine.py               # orchestrator: supervises stage processes
 ├── engine/
-│   ├── queue.py            # lease-based claiming + dead-letter
+│   ├── queue.py            # queue claiming + backoff
 │   ├── runner.py           # per-stage event loop
-│   ├── status.py           # pipeline_status / failed_posts writer + reader
 │   ├── stage.py            # per-stage process entrypoint
 │   └── stages/
 │       ├── discovery.py    # PlusForward matchlist scanner (polling, paced)

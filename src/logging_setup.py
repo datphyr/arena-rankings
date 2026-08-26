@@ -72,8 +72,7 @@ NOISY_LOGGERS = (
     "tzlocal",
 )
 
-_FORMAT = "%(asctime)s %(levelname)s [%(component)s] %(message)s"
-_DATEFMT = "%Y-%m-%d %H:%M:%S"
+_FORMAT = "%(levelname)s [%(component)s] %(message)s"
 
 _configured = False
 
@@ -82,7 +81,7 @@ class _ComponentFormatter(logging.Formatter):
     """Formatter that replaces the logger name with a short component tag."""
 
     def __init__(self, fmt=None, datefmt=None):
-        super().__init__(fmt or _FORMAT, datefmt or _DATEFMT)
+        super().__init__(fmt or _FORMAT, datefmt)
 
     def format(self, record):
         name = record.name or ""

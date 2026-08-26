@@ -5,8 +5,8 @@ Claims 'discovered' rows from the queue, fetches each match page via
 then completes them as 'downloaded'.
 
 Unlike the old polling wrapper, this stage only works when the queue has
-pending items (event-driven), claims bounded batches with lease crash-safety,
-and routes failures to backoff/dead-letter.
+pending items (event-driven), claims bounded batches, and routes failures to
+backoff.
 
 Concurrency model: workers each use their own Database + PageFetcher for the
 fetch (mirroring `download_batch`); the status-flip (complete/skip/fail) runs
@@ -44,14 +44,14 @@ def _settle(q: PipelineQueue, item: ClaimedItem, ok: bool, reason: str, stats: d
         q.complete(item, "downloaded")
         stats["ok"] += 1
     else:
-        # Fetch failure is retryable (network blip) → backoff/dead-letter.
+        # Fetch failure is retryable (network blip) → backoff.
         q.fail(item, reason)
         stats["failed"] += 1
 
 
-def run_cycle(workers: int = 1, limit: int = 0, max_attempts: int = 5) -> dict:
+def run_cycle(workers: int = 1, limit: int = 0) -> dict:
     """Process one bounded batch of discovered rows. Returns stats dict."""
-    q = PipelineQueue(pending_status="discovered", max_attempts=max_attempts)
+    q = PipelineQueue(pending_status="discovered")
     try:
         batch = q.claim(limit=limit or 20)
         if not batch:

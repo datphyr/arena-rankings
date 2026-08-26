@@ -5,8 +5,8 @@ Claims 'downloaded' rows from the queue and parses each via the proven
 them (e.g. 'not a match', 'team format', 'parent index').
 
 The parser's own `_parse_post` already handles the internal classification and
-stores parsed results; our consumer adds lease-based claiming, backoff on
-retryable failure, and dead-lettering for permanent errors.
+stores parsed results; our consumer adds claiming and backoff on retryable
+failure.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def _settle(q: PipelineQueue, item: ClaimedItem, ok: bool, reason: str, stats: d
         stats["ok"] += 1
         return
     # Permanent classification → skip. 'vod pending' → retry later (it needs
-    # the match parsed first). Everything else transient → backoff/dead-letter.
+    # the match parsed first). Everything else transient → backoff.
     if reason in PERMANENT_SKIP_REASONS:
         q.skip(item, reason)
         stats["skipped"] += 1
@@ -59,9 +59,9 @@ def _settle(q: PipelineQueue, item: ClaimedItem, ok: bool, reason: str, stats: d
         stats["failed"] += 1
 
 
-def run_cycle(workers: int = 1, limit: int = 0, max_attempts: int = 5) -> dict:
+def run_cycle(workers: int = 1, limit: int = 0) -> dict:
     """Process one bounded batch of downloaded rows. Returns stats dict."""
-    q = PipelineQueue(pending_status="downloaded", max_attempts=max_attempts)
+    q = PipelineQueue(pending_status="downloaded")
     try:
         batch = q.claim(limit=limit or 20)
         if not batch:

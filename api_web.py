@@ -28,6 +28,20 @@ from src.daemon import run_daemon
 
 logger = logging.getLogger("api_web")
 
+# Route uvicorn's loggers (uvicorn / uvicorn.error / uvicorn.access) to the
+# shared root handler instead of uvicorn's default config, so web logs use the
+# same format as the rest of the pipeline (and drop uvicorn's "INFO: " prefix
+# + padding).
+_UVICORN_LOG_CONFIG = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "loggers": {
+        "uvicorn": {"handlers": [], "level": "INFO", "propagate": True},
+        "uvicorn.error": {"handlers": [], "level": "INFO", "propagate": True},
+        "uvicorn.access": {"handlers": [], "level": "INFO", "propagate": True},
+    },
+}
+
 
 def cycle(args):
     """Run the uvicorn server. Blocks until the server stops."""
@@ -37,7 +51,7 @@ def cycle(args):
     host = args.host or os.environ.get("WEB_HOST", "0.0.0.0")
     port = args.port or int(os.environ.get("WEB_PORT", "8080"))
     logger.info(f"web server on http://{host}:{port}")
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    uvicorn.run(app, host=host, port=port, log_config=_UVICORN_LOG_CONFIG)
     return "web server stopped"
 
 

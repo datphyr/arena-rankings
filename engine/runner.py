@@ -11,7 +11,6 @@ runs one of these. Behaviour:
 - **Real crash semantics:** a *recoverable* error is logged + backed off; a
   `fatal` flag from the cycle causes a non-zero exit → the supervisor restarts
   the process (systemd Restart=on-failure now means something).
-- **Status reporting:** after each cycle writes a snapshot to pipeline_status.
 - **Graceful shutdown:** SIGTERM/SIGINT finish the current cycle then exit 0.
 """
 
@@ -21,8 +20,6 @@ import logging
 import signal
 import time
 from typing import Callable, Optional
-
-from engine import status as st
 
 logger = logging.getLogger("pipeline.runner")
 
@@ -61,26 +58,6 @@ class _StageBackoff:
         return min(self._max, 2.0 ** self._attempts)
 
 
-def _report(name: str, stats: dict) -> None:
-    """Write a status snapshot; never crashes the stage on failure."""
-    from src.db_client import Database
-
-    try:
-        db = Database()
-        st.write_status(
-            db,
-            name,
-            status=stats.get("status", "running"),
-            processed=stats.get("ok", stats.get("processed", 0)),
-            queue_depth=stats.get("queue_depth", 0),
-            lag_seconds=stats.get("lag_seconds", 0),
-            detail=stats.get("detail", ""),
-        )
-        db.close()
-    except Exception as e:  # status reporting is best-effort
-        logger.debug(f"[{name}] status write failed (non-fatal): {e}")
-
-
 def run_stage(
     name: str,
     cycle_fn: Callable[[], dict],
@@ -90,11 +67,8 @@ def run_stage(
 ) -> int:
     """Run a stage until SIGTERM/SIGINT. Returns process exit code.
 
-    cycle_fn returns a stats dict used for status reporting. Keys:
+    cycle_fn returns a stats dict. Keys:
       ok/processed   → items processed this cycle
-      queue_depth     → backlog
-      lag_seconds     → how far behind
-      detail          → free-form note
       empty           → True if no work (stage sleeps idle_delay)
       fatal           → True ⇒ return 1 (real crash for supervisor restart)
     """
@@ -104,33 +78,16 @@ def run_stage(
 
     backoff = _StageBackoff(max_delay=max_backoff)
     consecutive_errors = 0
-    last_report = 0.0
 
     while _running:
         try:
             if has_work and not has_work():
-                # Idle: report periodically (so the dashboard's "last seen"
-                # stays fresh and can tell idle from down), then sleep cheaply.
-                now = time.time()
-                if now - last_report >= 30.0:
-                    _report(name, {"status": "idle", "detail": "no work"})
-                    last_report = now
                 _interruptible_sleep(idle_delay)
                 continue
 
             stats = cycle_fn() or {}
             backoff.reset()
             consecutive_errors = 0
-            last_report = time.time()
-            # Map `empty` → idle so an up-to-date stage shows idle (not running)
-            # in the dashboard, matching the has_work-idle path. Default the
-            # detail to "no work" for consistency with download/parse.
-            if stats.get("empty"):
-                if "status" not in stats:
-                    stats["status"] = "idle"
-                if not stats.get("detail"):
-                    stats["detail"] = "no work"
-            _report(name, stats)
 
             if stats.get("fatal"):
                 logger.error(f"[{name}] fatal error, exiting for supervisor restart")
@@ -149,7 +106,6 @@ def run_stage(
             logger.error(
                 f"[{name}] cycle failed (attempt {consecutive_errors}): {e}; backoff {wait:.0f}s"
             )
-            _report(name, {"status": "error", "detail": str(e)[:200]})
             _interruptible_sleep(wait)
 
     logger.info(f"[{name}] stopped")
