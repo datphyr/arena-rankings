@@ -1,17 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Arena Rankings — About{% endblock %}
 {% block content %}
-<section class="hero">
-  <h1>About Arena Rankings</h1>
-  <p>Automated esports player ratings for the arena FPS scene — Elo &amp; Glicko-2 computed from plusforward.net match data.</p>
-</section>
+<div class="section-head"><h2>About</h2></div>
 
 <div class="card">
   <div class="card-title"><span class="dot"></span>What is this?</div>
   <p style="margin:0;color:var(--text-dim);line-height:1.6;">
-    Arena Rankings is a full data pipeline for competitive player ratings. It discovers and downloads
+    Arena Rankings is an automated ratings service for the arena FPS scene. It discovers and downloads
     match/tournament pages from
-    <a class="game-link" href="https://www.plusforward.net" target="_blank" rel="noopener">PlusForward</a>,
+    <a class="game-link" href="https://www.plusforward.net" target="_blank" rel="noopener">plusforward.net</a>,
     parses the results into structured data, and computes <strong>Elo</strong> and <strong>Glicko-2</strong>
     ratings that are served through this web site, a JSON API, and Discord/Twitch chat bots. The pipeline is
     game-agnostic and tracks multiple arena shooters side by side — each with its own leaderboards and ratings.
@@ -44,7 +41,8 @@
   <p style="margin:12px 0 6px;color:var(--text-dim);line-height:1.6;font-size:0.9rem;">
     Final <code>K = base K(games) × tier multiplier</code>. Expected score follows the standard logistic curve
     <code>E = 1 / (1 + 10<sup>(R_opp − R)/400</sup>)</code>, and each match updates
-    <code>R′ = R + K·(score − E)</code>. Everyone starts at <strong>1500</strong>.
+    <code>R′ = R + K·(score − E)</code>. Everyone starts at <strong>1500</strong>. These numbers (the K-factors
+    and tier multipliers above) are all tunable — the exact values shown are what this site runs today.
   </p>
 
   <div class="card" style="border:1px dashed var(--border-soft);background:var(--bg-card);">
@@ -65,12 +63,14 @@
     Glicko-2 is a more careful system. Instead of a single number, every player has three:
     a <strong>rating</strong>, a <strong>rating deviation (RD)</strong> — how sure we are — and a
     <strong>volatility</strong> — how consistent they are. It updates once per
-    <strong>monthly rating period</strong> using all the games in that month at once
+    <strong>rating period</strong> — currently <strong>monthly</strong> — using all the games in that period at once
     (based on the
     <a class="game-link" href="http://www.glicko.net/glicko/glicko2.pdf" target="_blank" rel="noopener">Glicko-2 paper</a>).
+    A system constant, <strong>τ = 1.2</strong>, controls how much a player's volatility is allowed to swing
+    between periods (the range is 0.2 = very stable to 1.2 = very volatile).
   </p>
 
-  <p style="margin:0 0 6px;color:var(--text-dim);font-size:0.9rem;">The three numbers that describe a player:</p>
+  <p style="margin:0 0 6px;color:var(--text-dim);font-size:0.9rem;">The constants that describe a player:</p>
   <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));">
     <div class="stat-card">
       <div class="stat-value">1500</div>
@@ -86,6 +86,11 @@
       <div class="stat-value">0.06</div>
       <div class="stat-label">Initial volatility</div>
       <div style="color:var(--text-faint);font-size:0.8rem;margin-top:4px;">how jumpy results are</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">1.2</div>
+      <div class="stat-label">τ (tau) · volatility limit</div>
+      <div style="color:var(--text-faint);font-size:0.8rem;margin-top:4px;">0.2 stable → 1.2 volatile</div>
     </div>
   </div>
 
@@ -141,9 +146,12 @@
 <div class="card">
   <div class="card-title"><span class="dot"></span>Features</div>
   <ul style="margin:0;padding-left:20px;color:var(--text-dim);line-height:1.7;">
-    <li><a class="game-link" href="/leaderboard">Leaderboards</a> per game with live sorting and filtering.</li>
-    <li><a class="game-link" href="/player">Player pages</a> with rating-history charts, map edges and VOD links.</li>
-    <li><a class="game-link" href="/h2h">Head-to-head</a> and <a class="game-link" href="/rivals">rivals</a> comparisons.</li>
+    <li><a class="game-link" href="/leaderboard">Leaderboards</a> per game, sortable and filterable, with an <strong>as-of date</strong> filter that rebuilds the standings as they were on any past day.</li>
+    <li><strong>All-time peaks</strong> — every player's single highest Elo and Glicko-2 rating, tracked across the site.</li>
+    <li><a class="game-link" href="/player">Player pages</a> — rating-history charts, <strong>map edges</strong> (per-map win-rate vs overall, green = overperform / red = underperform), recent matches and VOD links.</li>
+    <li><a class="game-link" href="/h2h">Head-to-head</a> — direct records between two players, including <strong>net rating gained or lost</strong> across their meetings and per-map results.</li>
+    <li><a class="game-link" href="/rivals">Rivals</a> — a player's most frequent and toughest opponents at a glance.</li>
+    <li><strong>Rating deltas</strong> — see how much a specific match or tournament moved each player's rating.</li>
     <li>A JSON <a class="game-link" href="/api/docs">API</a> (Swagger at <code>/api/docs</code>).</li>
     <li>Discord slash commands and Twitch chat commands for ratings on the go.</li>
   </ul>
@@ -167,7 +175,7 @@
     </li>
   </ul>
   <p style="margin:0;color:var(--text-dim);line-height:1.6;">
-    Match data is sourced from <a class="game-link" href="https://www.plusforward.net" target="_blank" rel="noopener">PlusForward</a>.
+    Match data is sourced from <a class="game-link" href="https://www.plusforward.net" target="_blank" rel="noopener">plusforward.net</a>.
   </p>
 </div>
 {% endblock %}
