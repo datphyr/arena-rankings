@@ -27,7 +27,7 @@ Usage:
 
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from config import MATCHLIST_URL
@@ -47,11 +47,19 @@ TS_FMT = "%d %b %Y %H:%M UTC"
 
 
 def parse_match_timestamp(ts_str: str) -> datetime:
-    """Parse PlusForward matchlist timestamp string to datetime."""
+    """Parse PlusForward matchlist timestamp string to datetime.
+
+    The matchlist title is always rendered in UTC ("02 Aug 2026 17:45 UTC"),
+    so the parsed naive wall time gets UTC tzinfo attached. Timezone-aware
+    datetimes serialize to the correct epoch in clickhouse-driver regardless
+    of the server's timezone setting (naive datetimes are interpreted in the
+    server timezone, which shifted every DateTime by -3h after the
+    2026-08-28 native-ClickHouse migration).
+    """
     try:
-        return datetime.strptime(ts_str, TS_FMT)
+        return datetime.strptime(ts_str, TS_FMT).replace(tzinfo=timezone.utc)
     except ValueError:
-        return datetime(2000, 1, 1)
+        return datetime(2000, 1, 1, tzinfo=timezone.utc)
 
 # Pagination: detect "next page" link
 NEXT_PAGE_RE = re.compile(r'href="[^"]*page=(\d+)[^"]*"[^>]*>next page</a>')

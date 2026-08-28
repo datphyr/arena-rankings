@@ -12,7 +12,15 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
+
+# PlusForward renders every wall time in UTC (match pages, matchlist titles,
+# tournament schedules). We parse them into timezone-aware UTC datetimes so the
+# clickhouse-driver serializes them to the correct epoch regardless of the
+# server's timezone setting. (Naive datetimes get interpreted in the server's
+# timezone — after the 2026-08-28 native-ClickHouse migration that is
+# Europe/Moscow, which silently shifted every stored DateTime by -3h.)
+PF_UTC = timezone.utc
 from typing import Optional
 
 from src.db_client import Database
@@ -219,7 +227,7 @@ class MatchDetailParser:
             tournament_id=info.get("tournament_id", 0),
             tournament_name=info.get("tournament", ""),
             stage_name=info.get("stage", ""),
-            played_at=info.get("date", datetime.now()),
+            played_at=info.get("date", datetime.now(timezone.utc)),
             maps=maps,
             vods=vods,
         )
@@ -468,7 +476,7 @@ class MatchDetailParser:
         date_clean = re.sub(r'(\d+)(?:st|nd|rd|th)', r'\1', date_str)
         time_clean = time_str.replace(" UTC", "").strip()
         combined = f"{date_clean} {time_clean}"
-        return datetime.strptime(combined, "%d %B %Y %H:%M")
+        return datetime.strptime(combined, "%d %B %Y %H:%M").replace(tzinfo=timezone.utc)
 
 
 def _is_tournament_in_progress(db, tournament_id: int) -> bool:

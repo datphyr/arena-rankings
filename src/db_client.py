@@ -3,7 +3,7 @@
 import logging
 import json
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from clickhouse_driver import Client
@@ -40,19 +40,28 @@ def _coerce_datetime(value):
 
     Accepts None (→ epoch), a datetime, or an ISO/"YYYY-MM-DD HH:MM:SS" string.
     Strings like '2026-08-09' (date only) become midnight that day.
+
+    All wall times entering this function come from PlusForward text, which
+    renders in UTC — so naive datetimes/strings get UTC tzinfo attached. Aware
+    datetimes serialize to the correct epoch in clickhouse-driver regardless of
+    the server's timezone setting (naive ones get interpreted in the server
+    timezone, e.g. Europe/Moscow after the 2026-08-28 migration, shifting
+    times by -3h).
     """
     if value is None:
-        return datetime(1970, 1, 1)
+        return datetime(1970, 1, 1, tzinfo=timezone.utc)
     if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
         return value
     if isinstance(value, str):
         s = value.strip()
         for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
             try:
-                return datetime.strptime(s, fmt)
+                return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
             except ValueError:
                 continue
-    return datetime(1970, 1, 1)
+    return datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 def download_complete() -> bool:
@@ -521,7 +530,7 @@ class Database:
         self.client.execute(
             "INSERT INTO tournament_brackets "
             "(tournament_id, source, data, fetched_at) VALUES",
-            [(tournament_id, source, data, datetime.utcnow())],
+            [(tournament_id, source, data, datetime.now(timezone.utc))],
         )
 
     def get_tournament_bracket(self, tournament_id: int) -> dict | None:

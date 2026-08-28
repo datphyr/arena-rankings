@@ -28,7 +28,7 @@ Usage:
 import logging
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from src.db_client import Database
@@ -86,9 +86,12 @@ def is_valid_post(html: str) -> bool:
 def parse_scheduled_time(html: str) -> Optional[datetime]:
     """Extract the scheduled match time from a post's HTML, or None.
 
-    Parses the Date block (e.g. '13:15 UTC' + '16th August 2026') into a naive
-    UTC datetime. Used to decide when to re-fetch an upcoming ('not played')
-    match — we only retry after its scheduled time has passed.
+    Parses the Date block (e.g. '13:15 UTC' + '16th August 2026') into a
+    timezone-aware UTC datetime (PlusForward renders all wall times in UTC;
+    awareness keeps clickhouse-driver's epoch conversion correct on any
+    server timezone). Used as the sequential-mode sort_time and to decide
+    when to re-fetch an upcoming ('not played') match — we only retry after
+    its scheduled time has passed.
     """
     m = DATE_BLOCK_RE.search(html or "")
     if not m:
@@ -96,7 +99,9 @@ def parse_scheduled_time(html: str) -> Optional[datetime]:
     time_str = m.group(1).replace(" UTC", "").strip()
     date_str = re.sub(r"(\d+)(?:st|nd|rd|th)", r"\1", m.group(2)).strip()
     try:
-        return datetime.strptime(f"{date_str} {time_str}", "%d %B %Y %H:%M")
+        return datetime.strptime(
+            f"{date_str} {time_str}", "%d %B %Y %H:%M"
+        ).replace(tzinfo=timezone.utc)
     except ValueError:
         return None
 
@@ -247,7 +252,7 @@ def refresh_upcoming(db: Database, fetcher: "PostDownloader" = None, now: dateti
     """
     if fetcher is None:
         fetcher = PostDownloader()
-    now = now or datetime.utcnow()
+    now = now or datetime.now(timezone.utc)
 
     rows = db.client.execute(
         "SELECT post_id, raw_html FROM raw_posts FINAL "
