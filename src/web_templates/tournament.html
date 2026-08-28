@@ -51,7 +51,7 @@
   {% if t.schedule_start and t.schedule_start.year > 1970 %}
   <div class="highlight-box">
     <div class="label">Schedule</div>
-    <div class="value" style="font-size:0.95rem;">{{ schedule_start_str }}{% if t.schedule_end and t.schedule_end != t.schedule_start %} — {{ schedule_end_str }}{% endif %}</div>
+    <div class="value" style="font-size:0.95rem;"><span>{{ schedule_start_str }}{% if t.schedule_end and t.schedule_end != t.schedule_start %} — {{ schedule_end_str }}{% endif %}</span></div>
   </div>
   {% endif %}
   {% if t.match_format %}

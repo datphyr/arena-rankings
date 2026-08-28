@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import os
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Optional
 
@@ -112,13 +113,35 @@ def _ranknum(pos) -> int:
 templates.env.filters["ranknum"] = _ranknum
 
 
+# Server-side tz used for the <time> fallback text. ClickHouse's DateTime
+# read-backs from the driver arrive as naive datetimes already rendered in
+# the server's timezone, so this must match the ClickHouse server timezone
+# (native install: Europe/Moscow). The client-side localtime.js then
+# re-renders every <time> in the visitor's own timezone.
+_DISPLAY_TZ = ZoneInfo(os.environ.get("DISPLAY_TZ", "Europe/Moscow"))
+
+
 def _fmt_dt(d) -> str:
-    """Format a datetime as 'YYYY-MM-DD, HH:MM' (comma between date and time).
-    Shared by all templates via the 'dt' Jinja filter."""
+    """Format a datetime for HTML as 'YYYY-MM-DD, HH:MM' (server tz fallback).
+
+    Also emits <time datetime="...Z"> carrying the unambiguous UTC instant,
+    which localtime.js rewrites into the visitor's local timezone on load
+    (no-JS browsers keep the server-rendered fallback text).
+    Returns safe Markup so templates render the element instead of escaping
+    it (same pattern as the _flag filter).
+    """
     if d is None:
         return "—"
     if hasattr(d, "strftime"):
-        return d.strftime("%Y-%m-%d, %H:%M")
+        text = d.strftime("%Y-%m-%d, %H:%M")
+        try:
+            aware = d if d.tzinfo else d.replace(tzinfo=_DISPLAY_TZ)
+            iso = aware.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except (ValueError, OverflowError):
+            return text
+        return Markup(
+            f'<time class="local-dt" datetime="{iso}">{text}</time>'
+        )
     s = str(d)
     # Accept ISO-ish strings like '2018-12-02T13:00:00' or '2018-12-02 13:00:00'
     s = s.replace("T", " ")
