@@ -1,11 +1,12 @@
 [Unit]
 Description=Arena Rankings Pipeline
-After=network.target docker.service
-Wants=docker.service
+After=network.target clickhouse-server.service
+Wants=clickhouse-server.service
 
 [Service]
 Type=simple
 WorkingDirectory=/opt/arena-rankings
+EnvironmentFile=/opt/arena-rankings/.env
 ExecStart=/usr/bin/python3 engine.py
 Restart=on-failure
 RestartSec=10

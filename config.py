@@ -17,8 +17,8 @@ DAEMON_RESTART_DELAY = int(os.environ.get("DAEMON_RESTART_DELAY", "60"))
 CLICKHOUSE_HOST = os.environ.get("CLICKHOUSE_HOST", "localhost")
 CLICKHOUSE_PORT = int(os.environ.get("CLICKHOUSE_PORT", "9000"))
 CLICKHOUSE_DATABASE = os.environ.get("CLICKHOUSE_DATABASE", "arena_rankings")
-CLICKHOUSE_USER = os.environ.get("CLICKHOUSE_USER", "default")
-CLICKHOUSE_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "quakepass")
+CLICKHOUSE_USER = os.environ.get("CLICKHOUSE_USER", "arena_rankings")
+CLICKHOUSE_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "CHANGE_ME")
 
 # Scraping — single timeout for all HTTP requests (connect + read).
 # curl uses this for both --connect-timeout and --max-time.
