@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Request, Query
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
@@ -463,6 +463,15 @@ def home(request: Request, sort: str = Query("elo", pattern="^(elo|glicko2)$")):
         ctx["peak_info"] = _peaks.get("elo")
         ctx["peak_info_glicko"] = _peaks.get("glicko2")
     return templates.TemplateResponse(request, "home.html", ctx)
+
+
+@app.get("/robots.txt", response_class=PlainTextResponse)
+def robots_txt():
+    """Serve robots.txt (blocks AI crawlers; allows normal search engines)."""
+    path = STATIC_DIR / "robots.txt"
+    if path.exists():
+        return PlainTextResponse(path.read_text(encoding="utf-8"))
+    return PlainTextResponse("User-agent: *\nDisallow: /\n", status_code=404)
 
 
 @app.get("/about", response_class=HTMLResponse)
