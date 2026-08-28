@@ -265,9 +265,6 @@ arena-rankings/
 ├── bot_twitch.py           # Twitch bot wrapper (--daemon)
 ├── reset.py                # database reset tool
 ├── backup.py               # backup/restore (Parquet+zstd single archive)
-├── tools/                  # one-off ops scripts
-│   ├── fix_tournament.py   # force-refresh a single tournament's page+bracket
-│   └── restore_tournaments.py  # restore tournament metadata from cached HTML
 ```
 
 ## License
