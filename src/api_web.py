@@ -428,14 +428,30 @@ def _best_rating(ratings: list[dict]) -> Optional[dict]:
 
 
 def _ratings_by_system(ratings: list[dict]) -> dict:
-    """Return {system: best-rating-entry} for a player (best across games per system)."""
+    """Return {system: rating-entry} for a player.
+
+    Prefers the 'All Games' aggregate row per system (the player's overall
+    rating); falls back to that system's best row when no aggregate exists.
+    Game-filtered callers pass pre-filtered rows (per-game only), so the
+    single per-game row wins either way. Keeping this preference stable
+    matters for the h2h headline Elo: picking a best-across-games number in
+    overall mode made the Elo look like it ignored the game filter whenever
+    the player's best game happened to be the selected one.
+    """
     out: dict = {}
     for r in ratings or []:
         sys_name = r.get("system") or ""
         if not sys_name:
             continue
         cur = out.get(sys_name)
-        if cur is None or (r.get("rating") or 0) > (cur.get("rating") or 0):
+        if (
+            cur is None
+            or (r.get("game") == "All Games" and cur.get("game") != "All Games")
+            or (
+                r.get("game") == cur.get("game")
+                and (r.get("rating") or 0) > (cur.get("rating") or 0)
+            )
+        ):
             out[sys_name] = r
     return out
 
