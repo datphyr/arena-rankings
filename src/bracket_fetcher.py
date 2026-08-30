@@ -1024,12 +1024,15 @@ class BracketFetcher:
                     for i, r in enumerate(third)
                 ],
             })
-        # complete = every match in the bracket has a decided winner. TBD
+        # complete = every real match in the bracket has a decided winner. TBD
         # placeholders (pending rounds of a live event) have winner=None, so a
         # still-running tournament renders as Live, not Finished — it used to
         # be hardcoded True, which mislabelled every live native bracket.
+        # Empty placeholder cells (byes, unfilled slots) have no players at
+        # all and by themselves don't make an otherwise finished bracket
+        # "Live" — only a p1+p2 match without a winner does.
         complete = bool(rounds) and all(
-            m.get("winner")
+            m.get("winner") or not (m.get("p1") and m.get("p2"))
             for grp in groups for r_ in grp["rounds"] for m in r_["matches"]
         )
         return {
@@ -1082,13 +1085,25 @@ class BracketFetcher:
                         c for c in el.find_all(recursive=False)
                         if any("bracket-cell-r" in (cc or "") for cc in (c.get("class") or []))
                     ]
+                    def _pf_bold(el) -> bool:
+                        st = (el.get("style") or "").lower().replace(" ", "") if el else ""
+                        return "font-weight:700" in st or "font-weight:bold" in st
+
                     players = []
                     for c in cells:
                         name_el = c.find("div", class_="bracket-name")
                         score_el = c.find("div", class_="bracket-score")
                         name = name_el.get_text(strip=True) if name_el else ""
                         score = score_el.get_text(strip=True) if score_el else ""
-                        is_win = bool(name_el and "font-weight:700" in (name_el.get("style") or ""))
+                        # PF bolds the winner — but WHICH element carries the
+                        # bold changed over the years: older pages style the
+                        # name (font-weight:700), newer ones style the SCORE
+                        # (font-weight:bold) and leave the name unstyled.
+                        # Check both, whitespace-insensitive (styles arrive as
+                        # e.g. ' font-weight:bold; '). Only checking the name
+                        # silently dropped every winner on the new layout
+                        # (no bold anywhere in the parsed bracket).
+                        is_win = _pf_bold(name_el) or _pf_bold(score_el)
                         players.append({"name": name, "score": score, "winner": is_win})
                     if len(players) >= 2:
                         p1, p2 = players[0], players[1]
