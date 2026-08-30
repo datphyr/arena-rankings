@@ -63,6 +63,13 @@
   {% endif %}
 </div>
 
+{% if match.information %}
+<div class="card info-card">
+  <div class="card-title"><span class="dot"></span>Information</div>
+  <div class="info-text">{{ match.information }}</div>
+</div>
+{% endif %}
+
 {% if match.maps %}
 <div class="card maps-card">
   <div class="card-title"><span class="dot"></span>Maps</div>

@@ -621,7 +621,7 @@ class Database:
             "player1_score, player2_score, winner_id, "
             "game_id, match_format, tournament_id, "
             "stage_name, played_at, "
-            "player1_country, player2_country) VALUES",
+            "player1_country, player2_country, information) VALUES",
             [(
                 detail.match_id,
                 detail.player1_id, detail.player2_id,
@@ -632,6 +632,7 @@ class Database:
                 detail.stage_name,
                 detail.played_at,
                 detail.player1_country, detail.player2_country,
+                getattr(detail, "information", "") or "",
             )],
         )
         return True

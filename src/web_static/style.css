@@ -354,6 +354,12 @@ a.vod-link:hover {
   font-size: 0.9rem;
 }
 
+.info-text {
+  color: var(--text);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
 html { scroll-behavior: smooth; font-size: 14px; scrollbar-gutter: stable; }
 
 body {

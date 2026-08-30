@@ -149,7 +149,10 @@ DDL_STATEMENTS = [
         stage_name String DEFAULT '',
         played_at DateTime,
         player1_country LowCardinality(String) DEFAULT '',
-        player2_country LowCardinality(String) DEFAULT ''
+        player2_country LowCardinality(String) DEFAULT '',
+        # Free-text 'Match informations' note from the PlusForward post content
+        # (e.g. 'AGENT has a one-map advantage...'). Empty when not provided.
+        information String DEFAULT ''
     )
     ENGINE = ReplacingMergeTree()
     ORDER BY (game_id, played_at, match_id)

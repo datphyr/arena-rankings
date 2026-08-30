@@ -3200,7 +3200,8 @@ class DataProvider:
             """
             SELECT m.match_id, p1.name, p2.name, m.player1_score, m.player2_score,
                    m.player1_id, m.player2_id, m.winner_id, g.name, t.name,
-                   m.stage_name, m.played_at, m.match_format, t.tier, m.tournament_id
+                   m.stage_name, m.played_at, m.match_format, t.tier, m.tournament_id,
+                   m.information
             FROM matches m
             LEFT JOIN players p1 FINAL ON p1.player_id = m.player1_id
             LEFT JOIN players p2 FINAL ON p2.player_id = m.player2_id
@@ -3287,6 +3288,7 @@ class DataProvider:
             "format": r[12],
             "tier": r[13],
             "tournament_id": r[14],
+            "information": (r[15] or "").strip(),
             "maps": maps,
             "vods": self.get_match_vods(match_id),
         }

@@ -77,6 +77,7 @@ class MatchDetail:
     played_at: datetime
     maps: list[MapResult] = field(default_factory=list)
     vods: list[VodResult] = field(default_factory=list)
+    information: str = ""  # free-text 'Match informations' note from post content
 
 
 class MatchDetailParser:
@@ -230,7 +231,32 @@ class MatchDetailParser:
             played_at=info.get("date", datetime.now(timezone.utc)),
             maps=maps,
             vods=vods,
+            information=self._parse_information(html),
         )
+
+    def _parse_information(self, content: str) -> str:
+        """Extract the free-text 'Match informations' note from the post content.
+
+        On PlusForward match pages the reporter can leave a short note in the
+        post body, e.g.:
+          <div class="postcontent"><div><b>Match informations</b></div>
+            <span class="s_flag s_flag-ru"></span> AGENT has a one-map advantage...
+          </div>
+        The header is always '<b>Match informations</b></div>'; the note runs to
+        the end of the postcontent div (before <!--posthits=). We strip any
+        inline HTML (country flags, <strong>, <a>, ...) and unescape entities.
+        Returns '' when there is no note.
+        """
+        m = re.search(
+            r'<b>Match informations</b></div>(.*?)</div>(?:\s*<br/?>)?\s*</div><!--posthits=',
+            content,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if not m:
+            return ""
+        txt = re.sub(r'<[^>]+>', '', m.group(1))
+        txt = html_module.unescape(txt).strip()
+        return txt
 
     def _parse_players(self, content: str) -> list[dict]:
         """Parse player information from match content.
