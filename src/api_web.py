@@ -1168,8 +1168,13 @@ def _h2h_page(request: Request, p1, p2, p1_id=None, p2_id=None, game="", partial
             p2_match = _smart_match_mode(p2, dx.name_exists)
             ctx["result"] = dx.get_head_to_head(p1, p2, game=game, match=p1_match, match2=p2_match, p1_id=p1_id, p2_id=p2_id)
             # The game filter should only offer games the two players have
-            # actually played each other in (not every game in the DB).
-            ctx["games"] = sorted({m["game"] for m in ctx["result"]["matches"] if m.get("game")})
+            # actually played each other in (not every game in the DB) — taken
+            # from the UNFILTERED pair result ("games", see get_head_to_head),
+            # so the dropdown never collapses to the selected game under a
+            # game-filtered render.
+            ctx["games"] = ctx["result"].get("games") or sorted(
+                {m["game"] for m in ctx["result"]["matches"] if m.get("game")}
+            )
             # Server-side sort of the match history (consistent with matches/tournaments).
             ctx["result"]["matches"] = _sort_matches(ctx["result"]["matches"], sort_col, sort_dir)
             # Convert match datetimes for template use

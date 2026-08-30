@@ -13,6 +13,8 @@
     {% for g in games %}
     <option value="{{ g }}" {{ 'selected' if game == g }}>{{ g }}</option>
     {% endfor %}
+    {#- Keep a hand-set game the pair never met in visible (honest filter state). -#}
+    {% if game and game not in games %}<option value="{{ game }}" selected>{{ game }}</option>{% endif %}
   </select>
   <button type="submit" name="clear" value="1" class="btn">Clear filters</button>
 </form>

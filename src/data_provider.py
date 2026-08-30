@@ -2613,10 +2613,6 @@ class DataProvider:
                 f" OR (m.player1_id = %(p2id)s AND m.player2_id = %(p1id)s)"
             )
             params = {"p1id": p1_id, "p2id": p2_id}
-            gid = self.db.resolve_game_id(game)
-            if gid:
-                where = f"m.game_id = %(gid)s AND ({where})"
-                params["gid"] = gid
         else:
             # Fall back to name-based matching (partial/regex, or unresolved id).
             # Names come from the players table (JOINed as p1/p2).
@@ -2633,10 +2629,16 @@ class DataProvider:
                 f" OR ({p1_cond_r} AND {p2_cond_r})"
             )
             params = {"p1": p1, "p2": p2}
-            gid = self.db.resolve_game_id(game)
-            if gid:
-                where = f"m.game_id = %(gid)s AND ({where})"
-                params["gid"] = gid
+        # Keep the UNFILTERED pair condition: the game-filter options must be
+        # derived from every game this pair has played, not just the filtered
+        # slice (otherwise a page render under game=X collapses the dropdown
+        # to [All games, X], and the AJAX swap never re-renders the select).
+        base_where = where
+        base_params = dict(params)
+        gid = self.db.resolve_game_id(game)
+        if gid:
+            where = f"m.game_id = %(gid)s AND ({where})"
+            params["gid"] = gid
 
         # For partial/regex modes a single player_id can't be resolved, so wins
         # are counted by name-pattern matching instead.
@@ -2694,6 +2696,23 @@ class DataProvider:
         p1_wins = count_row[0][0] if count_row else 0
         p2_wins = count_row[0][1] if count_row else 0
         total = count_row[0][2] if count_row else 0
+
+        # Distinct games this pair has actually played (unfiltered, same pair
+        # condition). The h2h page builds its game-filter options from this so
+        # the dropdown always lists every game the pair met in, never just the
+        # currently selected one.
+        games_rows = self.db.client.execute(
+            f"""
+            SELECT DISTINCT g.name
+            FROM matches m
+            LEFT JOIN players p1 FINAL ON p1.player_id = m.player1_id
+            LEFT JOIN players p2 FINAL ON p2.player_id = m.player2_id
+            LEFT JOIN games g FINAL ON g.game_id = m.game_id
+            WHERE {base_where}
+            """,
+            base_params,
+        )
+        pairs_games = sorted({r[0] for r in games_rows if r[0]})
 
         # Most recent matches, limited for display.
         rows = self.db.client.execute(
@@ -2769,6 +2788,7 @@ class DataProvider:
             "p1_wins": p1_wins,
             "p2_wins": p2_wins,
             "total": total,
+            "games": pairs_games,
             "matches": matches,
         }
 
