@@ -17,6 +17,7 @@ import argparse
 import logging
 import sys
 
+from config import PARSER_WORKERS
 from engine import runner
 from engine import stages
 
@@ -56,7 +57,10 @@ def _has_rank_work() -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a single pipeline stage process")
     parser.add_argument("stage", choices=["download", "parse", "rank", "discovery", "reconcile"])
-    parser.add_argument("--workers", type=int, default=1)
+    # Default parse/db workers to CPU-core count (PARSER_WORKERS env overrides),
+    # matching the batch path's convention (parse_all_matches). Explicit flag
+    # still wins.
+    parser.add_argument("--workers", type=int, default=PARSER_WORKERS)
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--max-pages", type=int, default=0)
     parser.add_argument("--game", default="")

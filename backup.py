@@ -63,6 +63,7 @@ ALL_TABLES = [
     "matches",
     "match_maps",
     "raw_posts",
+    "raw_brackets",
     "rating_history",
     "player_ratings",
 ]

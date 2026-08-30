@@ -2,6 +2,18 @@
 
 import os
 
+# Load the repo .env for shell-invoked scripts (reset.py, cli.py, backup.py —
+# anything not started by systemd). load_dotenv does NOT override already-set
+# environment variables, so the daemon's systemd EnvironmentFile injection
+# wins where present and shell runs pick up the same values. Without this,
+# shell invocations fall back to defaults (e.g. CLICKHOUSE_PASSWORD=CHANGE_ME)
+# and every ClickHouse connection fails with Code 516.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+except ImportError:
+    pass
+
 # Log level: DEBUG, INFO, WARNING, ERROR (default DEBUG)
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "DEBUG")
 

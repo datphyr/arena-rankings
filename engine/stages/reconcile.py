@@ -37,11 +37,14 @@ from config import RECONCILE_INTERVAL, RECONCILE_POST_END_WEEKS
 from src.db_client import Database
 from src.fetcher import PageFetcher
 from src.tournament_resolver import TournamentResolver
-from src.bracket_fetcher import BracketFetcher
+from src.bracket_fetcher import BracketFetcher, rebuild_missing as bracket_rebuild_missing
 
 logger = logging.getLogger("pipeline.reconcile")
 
 _EPOCH = datetime(1970, 1, 1)
+# Sentinel for "schedule obviously missing": DB epoch values read back as
+# 1970-01-01 00:00 or 03:00 depending on server tz; real events are post-2001.
+_MIN_EVENT_DATE = datetime(1971, 1, 1)
 
 # Cadence (seconds) per schedule phase.
 IN_SCHEDULE_SECONDS = int(os.environ.get("RECONCILE_IN_SCHEDULE", "60"))     # 1 min
@@ -77,7 +80,14 @@ def _cadence_seconds(schedule_end, last_match, now: datetime) -> int | None:
 
     None means the tournament is past its scrape window and should be dropped.
     """
-    if schedule_end and schedule_end > _EPOCH:
+    # DB DateTime values are naive wall times in the server timezone
+    # (Europe/Moscow since the 0ed9a99 migration), so epoch-derived "missing"
+    # dates read back as 1970-01-01 03:00 — strictly greater than a literal
+    # 1970-01-01 epoch. PlusForward events are all post-2001, so anything
+    # before 1971 is a missing schedule, not a real date. (Before the
+    # migration this comparison used to be against exact epoch and only
+    # accidentally worked: 00:00 > 00:00 was False.)
+    if schedule_end and schedule_end > _MIN_EVENT_DATE:
         if now < schedule_end:
             return IN_SCHEDULE_SECONDS
         if now < schedule_end + timedelta(weeks=RECONCILE_POST_END_WEEKS):
@@ -132,7 +142,10 @@ def reconcile_once(force_all: bool = False) -> dict:
         return {"due": False, "refreshed": 0, "scanned": 0}
     _last_sweep = now_ts
 
-    now = datetime.utcnow()
+    # Cadence comparisons are all against DB DateTime wall times: naive values
+    # in the ClickHouse server timezone (Europe/Moscow, same as this host)
+    # since the 0ed9a99 migration. utcnow() skews every boundary by 3h.
+    now = datetime.now()
     db = Database()
     try:
         due = _due_tournaments(db, now)
@@ -164,6 +177,18 @@ def reconcile_once(force_all: bool = False) -> dict:
             except Exception as e:
                 logger.error(f"reconcile: refresh failed for {tid}: {e}")
                 skipped += 1
+
+        # Offline bracket backfill: rebuild parsed brackets from the
+        # raw_brackets cache (e.g. right after a `reset.py parsed` wipe or a
+        # bracket-normalization change). No provider requests; bounded per
+        # sweep so a big first-time cache drains over a few cycles.
+        try:
+            n = bracket_rebuild_missing(db, limit=200)
+            if n:
+                logger.info(f"reconcile: rebuilt {n} bracket(s) from raw cache")
+        except Exception as e:
+            logger.warning(f"reconcile: bracket cache rebuild failed: {e}")
+
         return {"due": True, "scanned": len(due), "refreshed": refreshed,
                 "skipped": skipped}
     finally:

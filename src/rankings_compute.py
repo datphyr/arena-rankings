@@ -483,9 +483,13 @@ def compute_elo(db: Database, game_name: str = "", full_recompute: bool = False,
                 db.clear_rating_history(rating_system="elo", game_name=game_name)
                 logger.info(f"Elo {_game_label(game_name)}: full recompute, {len(matches)} matches [backfill]")
             else:  # new_matches
-                last_match_id = db.get_last_processed_match_id(game_name, "elo")
-                last_time = db.get_last_processed_match_time(game_name, "elo")
-                matches = db.get_matches_for_game_after(game_name, last_match_id)
+                # Composite point cursor: (played_at, match_id). played_at is
+                # the trustworthy chronology; match_id only breaks ties
+                # (post ids are NOT chronological — the cursor alone can't be
+                # id-based or late-posted high-id results hide older matches).
+                last_time, last_match_id = db.get_last_processed_point(game_name, "elo")
+                matches = db.get_matches_for_game_after(
+                    game_name, after_time=last_time, after_match_id=last_match_id)
                 if matches:
                     # Detect out-of-order arrivals: a newly parsed match played
                     # EARLIER than the newest already-rated match means match_ids

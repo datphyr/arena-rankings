@@ -42,6 +42,8 @@ logger = logging.getLogger("arena")
 STAGES = [
     ("discovery", ["discovery"]),
     ("download", ["download"]),
+    # parse workers default to PARSER_WORKERS = cpu cores (engine.stage.py),
+    # needed to chew through full re-parses in hours not days.
     ("parse", ["parse"]),
     ("rank", ["rank"]),
     ("reconcile", ["reconcile"]),

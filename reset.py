@@ -67,9 +67,28 @@ RANKING_TABLES = ["player_ratings", "rating_history"]
 # stale empty-game rows behind — truncating the whole table lets the parser
 # rebuild it cleanly. It stays in DOWNLOADED_TABLES as well so `reset.py all`
 # still backs it up.
+#
+# `match_vods` is also parser-derived: linkage rows come from match pages,
+# embeds from VOD post pages. Wiping it means VOD posts must re-parse to
+# refill embeds — which is why reset_parsed late-stamps their sort_time (see
+# RESET_SORT_TIME_LATE below) so they claim only after matches are rebuilt.
 PARSED_TABLES = ["matches", "match_maps", "players", "games", "maps",
-                 "player_aliases", "tournament_brackets", "tournaments"]
-DOWNLOADED_TABLES = ["raw_posts", "tournaments", "discovery_state"]
+                 "player_aliases", "tournament_brackets", "tournaments",
+                 "match_vods"]
+# Downloaded-side tables survive `reset.py parsed` and are backed up/restored
+# by `reset.py all`. raw_brackets is the downloaded cache of provider bracket
+# payloads — it must survive so brackets can be re-derived offline after the
+# parsed wipe (reconcile + reset_parsed rebuild from it automatically).
+DOWNLOADED_TABLES = ["raw_posts", "tournaments", "discovery_state",
+                     "raw_brackets"]
+
+# Epoch-dated sort_time rows (VOD posts from match_downloader.download_vods,
+# tournament pages from the old first-store fallback) claim at the very head
+# of the parse queue. On a re-parse that's wrong for VODs: they'd churn on
+# 'vod pending' before their matches re-parse. Stamping them past every real
+# post makes them claim last (post_id tiebreak keeps a deterministic order).
+RESET_SORT_TIME_FLOOR = datetime(1971, 1, 1)
+RESET_SORT_TIME_LATE = datetime(2030, 1, 1)
 
 VALID_TARGETS = ["rankings", "parsed", "all"]
 
@@ -153,17 +172,29 @@ def reset_parsed(client: Client, db_name: str, dry: bool) -> None:
     if not dry and parsed_count > 0:
         # ReplacingMergeTree: insert new rows with status='downloaded'
         # for all posts that are parsed/skipped (not 'discovered' — those have
-        # no HTML yet and stay as discovery catalog entries). Preserve sort_time.
+        # no HTML yet and stay as discovery catalog entries). Epoch-dated rows
+        # (mostly VOD posts) get a late sort_time instead so they claim AFTER
+        # all real posts — their matches rebuild the match_vods rows that the
+        # VOD re-parse will attach to ('vod pending' would otherwise jam the
+        # queue head for hours, as it did on 2026-08-29).
         rows = client.execute(
             "SELECT post_id, raw_html, sort_time FROM raw_posts FINAL "
             "WHERE status IN ('parsed', 'skipped')"
         )
+        bumped = sum(1 for r in rows if r[2] and r[2] < RESET_SORT_TIME_FLOOR)
+        if bumped:
+            print(f"  → {bumped} epoch-sort_time rows earmarked for late re-claim")
         if rows:
             BATCH = 2000
             total = 0
             for i in range(0, len(rows), BATCH):
                 batch = rows[i:i + BATCH]
-                data = [(r[0], r[1], "downloaded", "", r[2]) for r in batch]
+                data = [
+                    (r[0], r[1], "downloaded", "",
+                     RESET_SORT_TIME_LATE
+                     if (r[2] and r[2] < RESET_SORT_TIME_FLOOR) else r[2])
+                    for r in batch
+                ]
                 client.execute(
                     "INSERT INTO raw_posts "
                     "(post_id, raw_html, status, reason, sort_time) VALUES",
@@ -172,6 +203,22 @@ def reset_parsed(client: Client, db_name: str, dry: bool) -> None:
                 total += len(data)
                 print(f"    → {total}/{len(rows)} posts reset to downloaded", end="\r")
             print(f"    → {total}/{len(rows)} posts reset to downloaded")
+
+    # Brackets were wiped with the parsed tables. If the raw provider-payload
+    # cache survived (raw_brackets), rebuild them all offline now — no
+    # provider requests (the reconcile sweep also does this as a backstop).
+    if not dry:
+        try:
+            from src.db_client import Database
+            from src.bracket_fetcher import rebuild_missing
+            _bdb = Database()
+            n = rebuild_missing(_bdb, limit=0)
+            _bdb.close()
+            if n:
+                print(f"\n  ✓ brackets rebuilt from raw bracket cache: {n}")
+        except Exception as e:
+            # Never fail the reset over the backfill — reconcile re-runs it.
+            print(f"  (bracket cache rebuild skipped: {e})")
 
     print("\n  ✓ Parsed data cleared. Daemon will reprocess on next cycle.")
 

@@ -210,7 +210,11 @@ class Database:
                 "SELECT sort_time FROM raw_posts FINAL WHERE post_id = %(pid)s LIMIT 1",
                 {"pid": post_id},
             )
-            sort_time = rows[0][0] if rows else datetime(1970, 1, 1)
+            # UTC-aware epoch: the driver interprets NAIVE datetimes in the
+            # server timezone (Europe/Moscow since the 0ed9a99 migration), so
+            # a naive epoch literal would serialize as -10800s and blow up
+            # UInt32 packing with Code 53 ("Column sort_time: 'I' format ...").
+            sort_time = rows[0][0] if rows else datetime(1970, 1, 1, tzinfo=timezone.utc)
         self.client.execute(
             "INSERT INTO raw_posts (post_id, raw_html, status, reason, sort_time) VALUES",
             [(post_id, raw_html, status, reason, sort_time)],
@@ -308,7 +312,7 @@ class Database:
         new_indices = [i for i, mid in enumerate(match_ids) if mid not in existing]
         if not new_indices:
             return 0
-        zero_ts = datetime(1970, 1, 1)
+        zero_ts = datetime(1970, 1, 1, tzinfo=timezone.utc)
         data = []
         for i in new_indices:
             mid = match_ids[i]
@@ -533,6 +537,19 @@ class Database:
             [(tournament_id, source, data, datetime.now(timezone.utc))],
         )
 
+    def upsert_raw_bracket(self, tournament_id: int, source: str, payload: str):
+        """Store (or overwrite) the raw provider payload for a tournament's bracket.
+
+        The raw payload is the bracket-world's raw_posts: persisted at every
+        successful provider fetch so the parsed bracket can be re-derived
+        offline (reset.py wipes tournament_brackets; rebuild replays payload).
+        """
+        self.client.execute(
+            "INSERT INTO raw_brackets "
+            "(tournament_id, source, payload, fetched_at) VALUES",
+            [(tournament_id, source, payload, datetime.now(timezone.utc))],
+        )
+
     def get_tournament_bracket(self, tournament_id: int) -> dict | None:
         """Return the cached bracket dict, or None if not stored.
 
@@ -551,6 +568,41 @@ class Database:
         except Exception:
             parsed = {}
         return {"source": source, "data": parsed, "fetched_at": fetched_at}
+
+    def latest_raw_brackets(self) -> dict:
+        """Latest raw bracket payload per tournament.
+
+        Returns {tournament_id: (source, payload_json)} — rows deduped per
+        tournament via argMax(fetched_at) so a provider switch keeps the
+        newest source's payload only.
+        """
+        rows = self.client.execute(
+            "SELECT tournament_id, argMax(source, fetched_at) AS source, "
+            "argMax(payload, fetched_at) AS payload "
+            "FROM raw_brackets GROUP BY tournament_id"
+        )
+        return {r[0]: (r[1], r[2]) for r in rows}
+
+    def missing_bracket_cache_rows(self, limit: int = 200) -> list:
+        """Raw-cache rows (tournament_id, source, payload) with no parsed bracket.
+
+        Drives the offline rebuild: rows wiped from tournament_brackets
+        (e.g. by `reset.py parsed`) that the raw cache can restore.
+        `limit=0` = no limit.
+        """
+        q = (
+            "SELECT rb.tournament_id, rb.source, rb.payload "
+            "FROM (SELECT tournament_id, argMax(source, fetched_at) AS source, "
+            "argMax(payload, fetched_at) AS payload "
+            "FROM raw_brackets GROUP BY tournament_id) rb "
+            "WHERE rb.tournament_id NOT IN "
+            "(SELECT tournament_id FROM tournament_brackets FINAL)"
+        )
+        params = {}
+        if limit:
+            q += " LIMIT %(l)s"
+            params["l"] = limit
+        return self.client.execute(q, params)
 
     # --- Matches ---
 
@@ -722,9 +774,9 @@ class Database:
     ):
         """Insert or update a player rating record."""
         if last_match_date is None:
-            last_match_date = datetime(1970, 1, 1)
+            last_match_date = datetime(1970, 1, 1, tzinfo=timezone.utc)
         if first_match_date is None:
-            first_match_date = datetime(1970, 1, 1)
+            first_match_date = datetime(1970, 1, 1, tzinfo=timezone.utc)
         gid = self.resolve_game_id(game_name)
         self.client.execute(
             "INSERT INTO player_ratings "
@@ -856,43 +908,90 @@ class Database:
                 "SELECT match_id, player1_id, player2_id, player1_score, player2_score, "
                 "winner_id, played_at, game_id, tournament_id "
                 "FROM matches FINAL WHERE game_id = %(g)s AND " + duel_filter +
-                " ORDER BY played_at",
+                " ORDER BY played_at, match_id",
                 {"g": gid},
             )
         return self.client.execute(
             "SELECT match_id, player1_id, player2_id, player1_score, player2_score, "
             "winner_id, played_at, game_id, tournament_id "
-            "FROM matches FINAL WHERE " + duel_filter + " ORDER BY played_at"
+            "FROM matches FINAL WHERE " + duel_filter + " ORDER BY played_at, match_id"
         )
 
-    def get_matches_for_game_after(self, game_name: str = "", after_match_id: int = 0) -> list:
-        """Get matches with match_id > after_match_id for a game (or all games if empty).
+    def get_matches_for_game_after(self, game_name: str = "", after_time=None,
+                                   after_match_id: int = 0) -> list:
+        """Get rated duels strictly after the (played_at, match_id) cursor point.
 
-        Only returns 1v1 duel matches (excludes team formats like TDM, CTF, Team 6v6).
+        The cursor is a composite point: played_at orders the replay and
+        match_id breaks ties (post ids are NOT chronological — late-posted
+        results carry higher ids than matches played earlier, so a bare id
+        cursor never sees a match that parsed after the cursor advanced past
+        its id). Tuple comparison in ClickHouse is lexicographic, so this is
+        one predicate. When after_time is None the cursor is epoch
+        (UTC-aware: naive datetimes get localized to the server timezone).
+        Only returns 1v1 duel matches.
+        """
+        duel_filter = (
+            "((match_format ILIKE '%%duel%%' AND match_format NOT ILIKE '%%team%%')"
+            " OR match_format ILIKE '%%1v1%%')"
+        )
+        if after_time is None:
+            after_time = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        gid = self.resolve_game_id(game_name)
+        params = {"t": after_time, "mid": after_match_id}
+        game_filter = ""
+        if gid:
+            game_filter = "game_id = %(g)s AND "
+            params["g"] = gid
+        query = (
+            "SELECT match_id, player1_id, player2_id, player1_score, player2_score, "
+            "winner_id, played_at, game_id, tournament_id "
+            "FROM matches FINAL "
+            f"WHERE {game_filter}((played_at > %(t)s) "
+            "OR (played_at = %(t)s AND match_id > %(mid)s)) "
+            "AND " + duel_filter + " "
+            "ORDER BY played_at, match_id"
+        )
+        return self.client.execute(query, params)
+
+    def get_last_processed_point(self, game_name: str, rating_system: str):
+        """Get the (played_at, match_id) point of the newest rated match.
+
+        The point cursor for incremental rating compute: played_at orders the
+        replay (the trustworthy chronology), match_id breaks ties. Returns
+        (None, 0) when the scope has no history yet.
+        """
+        gid = self.resolve_game_id(game_name)
+        rows = self.client.execute(
+            "SELECT max(played_at), argMax(match_id, (played_at, match_id)) "
+            "FROM rating_history WHERE game_id = %(g)s AND rating_system = %(rs)s",
+            {"g": gid, "rs": rating_system},
+        )
+        t, mid = rows[0] if rows else (None, 0)
+        return (t, mid) if t else (None, 0)
+
+    def count_matches_after_point(self, game_name: str = "", after_time=None,
+                                  after_match_id: int = 0) -> int:
+        """Count duel matches beyond a (played_at, match_id) cursor point.
+
+        Used by the rank stage gate: anything beyond the last-rated point is
+        unrated work, detected instantly regardless of match_id order.
         """
         duel_filter = (
             "((match_format ILIKE '%%duel%%' AND match_format NOT ILIKE '%%team%%')"
             " OR match_format ILIKE '%%1v1%%')"
         )
         gid = self.resolve_game_id(game_name)
+        params = {"t": after_time, "mid": after_match_id}
+        game_filter = "game_id = %(g)s AND " if gid else ""
         if gid:
-            return self.client.execute(
-                "SELECT match_id, player1_id, player2_id, player1_score, player2_score, "
-                "winner_id, played_at, game_id, tournament_id "
-                "FROM matches FINAL "
-                "WHERE game_id = %(g)s AND match_id > %(mid)s "
-                "AND " + duel_filter + " "
-                "ORDER BY played_at",
-                {"g": gid, "mid": after_match_id},
-            )
-        return self.client.execute(
-            "SELECT match_id, player1_id, player2_id, player1_score, player2_score, "
-            "winner_id, played_at, game_id, tournament_id "
-            "FROM matches FINAL WHERE match_id > %(mid)s "
-            "AND " + duel_filter + " "
-            "ORDER BY played_at",
-            {"mid": after_match_id},
+            params["g"] = gid
+        rows = self.client.execute(
+            "SELECT count() FROM matches FINAL "
+            f"WHERE {game_filter}((played_at > %(t)s) "
+            "OR (played_at = %(t)s AND match_id > %(mid)s)) AND " + duel_filter,
+            params,
         )
+        return rows[0][0] if rows else 0
 
     def get_last_processed_match_id(self, game_name: str, rating_system: str) -> int:
         """Get the last match_id processed in rating_history for a game/system."""
@@ -1056,7 +1155,8 @@ class Database:
     def get_matches_for_game_from_date(self, game_name: str = "", from_date=None) -> list:
         """Get matches with played_at >= from_date for a game (or all games if empty).
 
-        Only returns 1v1 duel matches.
+        Only returns 1v1 duel matches. Ordered by (played_at, match_id) for a
+        deterministic replay when timestamps tie.
         """
         duel_filter = (
             "((match_format ILIKE '%%duel%%' AND match_format NOT ILIKE '%%team%%')"
@@ -1070,7 +1170,7 @@ class Database:
                 "FROM matches FINAL "
                 "WHERE game_id = %(g)s AND played_at >= %(d)s "
                 "AND " + duel_filter + " "
-                "ORDER BY played_at",
+                "ORDER BY played_at, match_id",
                 {"g": gid, "d": from_date},
             )
         return self.client.execute(
@@ -1078,7 +1178,7 @@ class Database:
             "winner_id, played_at, game_id, tournament_id "
             "FROM matches FINAL WHERE played_at >= %(d)s "
             "AND " + duel_filter + " "
-            "ORDER BY played_at",
+            "ORDER BY played_at, match_id",
             {"d": from_date},
         )
 

@@ -1105,9 +1105,15 @@ class DataProvider:
         det = det or self.get_tournament_details(tournament_id)
         if not det:
             return {"is_over": False, "reason": "no-data"}
-        now = datetime.utcnow()
+        # DB wall times are naive in the server timezone (Europe/Moscow);
+        # compare with local now, not utcnow (3h skew since 0ed9a99).
+        now = datetime.now()
         end = det.get("schedule_end")
-        if end and end < now:
+        # Epoch-derived "missing schedule" dates read back as 1970-01-01
+        # (00:00 or 03:00 depending on server tz) — those mean UNKNOWN, not
+        # "ended in 1970": never conclude Finished from a missing schedule.
+        # Real PlusForward events are all post-2001.
+        if end and end > datetime(1971, 1, 1) and end < now:
             return {"is_over": True, "reason": "schedule-ended"}
         rankings = det.get("rankings") or ""
         if isinstance(rankings, str):

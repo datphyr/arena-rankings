@@ -84,6 +84,35 @@ _KUACHI_RE = re.compile(
 _PF_WINNERS_RE = re.compile(r"^(?!loser|grand)[a-z'\s-]+$", re.IGNORECASE)
 _PF_LOSERS_RE = re.compile(r"^loser", re.IGNORECASE)
 
+
+def _pf_round_group(title: str) -> str:
+    """Classify a PlusForward-native round title into winners/losers/grand.
+
+    Round titles vary across eras: 'WB R1'/'LB Semi' (newer, contains digits),
+    "Winner's Final"/"Loser's Round 1" (older), plain 'Quarterfinals' for
+    single-elim. The old charset-only regexes silently DROPPED any title with
+    digits (every 'R1' round vanished from stored brackets) and mis-filed
+    'LB ...' rounds into the winners group (only '^loser|grand' excluded).
+    Classify by prefix instead; unknown titles default to the winners group
+    (legacy behavior for plain single-elim rounds).
+    """
+    t = title.strip().lower()
+    if "grand" in t:
+        return "grand"
+    if t.startswith(("loser", "lower", "lb")):
+        return "losers"
+    return "winners"
+
+
+# Consolidation / placement matches (3rd place decider, 5th-8th placement,
+# "Consolidation Final") share the final round column on PF-native brackets,
+# separated only by a bracket-match-title header. They must NOT merge into the
+# elimination tree: a 2-match "Final" round defeats the shrinking-rounds
+# geometry (rendered flat, no connectors) and mislabels the decider as part
+# of the bracket proper.
+_PF_CONSOLIDATION_RE = re.compile(
+    r"(?:\d+(?:st|nd|rd|th)\s*place|consolidation|third\s*place)", re.IGNORECASE)
+
 # Some PlusForward tournament pages load their bracket link dynamically (the
 # "Groups / Brackets" tab is populated client-side). The bracket content —
 # including the link to the external provider — is served by this AJAX
@@ -181,7 +210,11 @@ class BracketFetcher:
 
 
     def fetch_for_tournament(self, tournament_id: int) -> bool:
-        """Detect provider, fetch bracket, normalize, and store in the DB.
+        """Detect provider, fetch raw payload, normalize, and store in the DB.
+
+        The raw provider payload is persisted in raw_brackets before
+        normalization, so parsed brackets stay re-derivable offline (the
+        bracket-side equivalent of caching match HTML in raw_posts).
 
         Returns True if a bracket was stored, False if the tournament has no
         bracket source (or fetching failed).
@@ -203,17 +236,15 @@ class BracketFetcher:
 
         kind, ref = source  # ('toornament', tid), ('shambler', cup), ('egb', slug), ('kuachi', (cup_id, stage_no)), ('plusforward', tournament_id)
         try:
-            if kind == "toornament":
-                normalized = self._fetch_toornament(ref)
-            elif kind == "shambler":
-                normalized = self._fetch_shambler(ref)
-            elif kind == "egb":
-                normalized = self._fetch_egb(ref)
-            elif kind == "kuachi":
-                cup_id, stage_no = ref
-                normalized = self._fetch_kuachi(cup_id, stage_no)
-            else:  # plusforward native
-                normalized = self._fetch_plusforward_native(ref)
+            payload = self._fetch_payload(kind, ref)
+            # Cache the raw payload BEFORE normalizing: even if normalization
+            # or the parsed store fails later, the provider's answer survived.
+            if payload is not None:
+                self._db.upsert_raw_bracket(
+                    tournament_id, kind,
+                    json.dumps(payload, ensure_ascii=False),
+                )
+            normalized = self._normalize_payload(kind, payload or {})
         except Exception as e:
             BracketFetcher.failed += 1
             logger.warning(f"bracket fetch failed for tournament {tournament_id} ({kind}): {e}")
@@ -241,6 +272,146 @@ class BracketFetcher:
         BracketFetcher.fetched += 1
         logger.debug(f"tournament {tournament_id}: stored {kind} bracket")
         return True
+
+    # ------------------------------------------------------------------
+    # Raw payload layer: fetch (network) vs normalize (pure, offline).
+    # Each provider is split into _fetch_payload (gathers raw provider data
+    # into a JSON-safe payload) and _normalize_payload (payload -> shared
+    # bracket schema, no network). Successful payloads are persisted in the
+    # raw_brackets table so brackets survive `reset.py parsed` wipes and can
+    # be replayed offline after parsing changes.
+
+    def _fetch_payload(self, kind: str, ref) -> dict | None:
+        """Fetch one provider's raw data into a JSON-safe payload (network).
+
+        Returns None only when the provider gives nothing usable at all.
+        Must never be called on the rebuild path.
+        """
+        if kind == "toornament":
+            return self._toornament_payload(ref)
+        if kind == "shambler":
+            return self._shambler_payload(ref)
+        if kind == "egb":
+            return self._egb_payload(ref)
+        if kind == "kuachi":
+            return self._kuachi_payload(ref)
+        if kind == "plusforward":
+            return self._pf_native_payload(ref)
+        raise ValueError(f"unknown bracket source: {kind}")
+
+    def _normalize_payload(self, kind: str, payload: dict) -> dict:
+        """Payload -> shared bracket schema. Pure: no network, no DB."""
+        if kind == "toornament":
+            return self._toornament_normalize(payload)
+        if kind == "shambler":
+            return self._shambler_normalize(payload)
+        if kind == "egb":
+            return self._egb_normalize(payload.get("meta") or {}, payload.get("bracket") or {})
+        if kind == "kuachi":
+            return self._kuachi_normalize(payload)
+        if kind == "plusforward":
+            return self._pf_native_normalize(payload)
+        raise ValueError(f"unknown bracket source: {kind}")
+
+    def rebuild_from_cache(self, tournament_id: int, source: str, payload_json: str) -> bool:
+        """Re-derive one tournament's parsed bracket from its raw cached payload.
+
+        Pure-offline counterpart of fetch_for_tournament: same normalization,
+        same empty-bracket guards, no network. Returns True when the parsed
+        bracket was (re)stored.
+        """
+        try:
+            payload = json.loads(payload_json or "{}")
+        except Exception:
+            logger.warning(f"bracket rebuild {tournament_id}: unparseable cached payload")
+            return False
+        try:
+            normalized = self._normalize_payload(source, payload)
+        except Exception as e:
+            logger.warning(f"bracket rebuild failed for {tournament_id} ({source}): {e}")
+            return False
+        if not normalized or not normalized.get("stages"):
+            return False
+        if not self._has_matches(normalized):
+            return False
+        self._db.upsert_tournament_bracket(
+            tournament_id, normalized.get("source", source),
+            json.dumps(normalized, ensure_ascii=False),
+        )
+        return True
+
+    # ------------------------------------------------------------------
+    # Toornament
+    # ------------------------------------------------------------------
+
+    def _toornament_payload(self, tournament_id: int) -> dict:
+        """Gather a Toornament bracket payload: trimmed stages + raw matches +
+        group-name fallback resolution (the /groups endpoint probe moves here
+        from normalize so rebuilds stay offline)."""
+        stages = self._toornament_stages(tournament_id)
+        if not stages:
+            return {"stages": [], "matches": [], "group_names": {}}
+        matches = self._toornament_matches(tournament_id)
+        # /groups fallback probe (per stage): group-name coverage for any
+        # group the matches' own group objects don't name. Same calls the
+        # old normalize path made, just moved to payload-gathering time.
+        gname_extra = {}
+        for st in stages:
+            d = self._json_get(f"{self.API_TOORNAMENT}/groups",
+                               {"stage_ids": st["id"], "offset": 0, "limit": _API_LIMIT})
+            if d:
+                for g in d.get("items", []):
+                    gname_extra.setdefault(g["id"], g.get("name", ""))
+        # Project raw match items down to the keys normalization consumes —
+        # raw API items are 5-10x larger (metadata/opponent profiles we
+        # never read), and raw_brackets stores one row per tournament.
+        projected = []
+        for m in matches:
+            opps = []
+            for o in (m.get("opponents") or []):
+                part = o.get("participant") or {}
+                opps.append({"participant": {"name": part.get("name", "")},
+                             "score": o.get("score"),
+                             "result": o.get("result")})
+            projected.append({
+                "stage": {"id": (m.get("stage") or {}).get("id")},
+                "group": {"id": (m.get("group") or {}).get("id"),
+                          "name": (m.get("group") or {}).get("name", "")},
+                "round": {"number": (m.get("round") or {}).get("number", 0),
+                          "name": (m.get("round") or {}).get("name", "")},
+                "opponents": opps,
+            })
+        return {"stages": stages, "matches": projected,
+                "group_names": {str(k): v for k, v in gname_extra.items()}}
+
+    def _toornament_normalize(self, payload: dict) -> dict:
+        stages = payload.get("stages") or []
+        matches = payload.get("matches") or []
+        gname_extra = payload.get("group_names") or {}
+        if not stages:
+            return {"source": "toornament", "title": "", "stages": []}
+
+        # Gather all matches for the tournament once (they carry stage/group/round refs).
+        matches_by_stage = {}
+        for m in matches:
+            sid = m.get("stage", {}).get("id")
+            matches_by_stage.setdefault(sid, []).append(m)
+
+        result_stages = []
+        for st in stages:
+            sid = st["id"]
+            sm = matches_by_stage.get(sid, [])
+            groups = self._toornament_groups(sid, sm, gname_extra)
+            result_stages.append({
+                "name": st["name"],
+                "groups": groups,
+            })
+        # Completeness: a Toornament bracket is full/final when all its stages
+        # are 'completed' (per-match status can lag / show LIVE during the
+        # grand final, so use the stage-level status — not per-match).
+        complete = bool(stages) and all(st.get("status") == "completed" for st in stages)
+        return {"source": "toornament", "title": "", "complete": complete,
+                "stages": result_stages}
 
     @staticmethod
     def detect_source(raw_html: str):
@@ -374,34 +545,8 @@ class BracketFetcher:
 
     API_TOORNAMENT = "https://play.toornament.com/api"
 
-    def _fetch_toornament(self, tournament_id: int) -> dict:
-        """Fetch + normalize a Toornament bracket."""
-        stages = self._toornament_stages(tournament_id)
-        if not stages:
-            return {"source": "toornament", "title": "", "stages": []}
-
-        # Gather all matches for the tournament once (they carry stage/group/round refs).
-        matches = self._toornament_matches(tournament_id)
-        matches_by_stage = {}
-        for m in matches:
-            sid = m.get("stage", {}).get("id")
-            matches_by_stage.setdefault(sid, []).append(m)
-
-        result_stages = []
-        for st in stages:
-            sid = st["id"]
-            sm = matches_by_stage.get(sid, [])
-            groups = self._toornament_groups(sid, sm)
-            result_stages.append({
-                "name": st["name"],
-                "groups": groups,
-            })
-        # Completeness: a Toornament bracket is full/final when all its stages
-        # are 'completed' (per-match status can lag / show LIVE during the
-        # grand final, so use the stage-level status — not per-match).
-        complete = bool(stages) and all(st.get("status") == "completed" for st in stages)
-        return {"source": "toornament", "title": "", "complete": complete,
-                "stages": result_stages}
+    # (_fetch_toornament was split into _toornament_payload + _toornament_normalize;
+    # both live near the raw-payload layer above.)
 
     def _toornament_stages(self, tournament_id: int) -> list[dict]:
         d = self._json_get(f"{self.API_TOORNAMENT}/stages",
@@ -429,12 +574,13 @@ class BracketFetcher:
                 break
         return out
 
-    def _toornament_groups(self, stage_id: int, matches: list[dict]) -> list[dict]:
+    def _toornament_groups(self, stage_id: int, matches: list[dict],
+                           gname_extra: dict | None = None) -> list[dict]:
         """Group matches by group (Winners/Losers/Grand Final), then by round.
 
-        Group names are taken from the matches themselves (always present),
-        with the groups endpoint as a fallback — robust to transient failures
-        of the /groups endpoint.
+        Group names are taken from the matches themselves (always present).
+        `gname_extra` (persisted in the raw payload from the fetch-time
+        /groups probe) is the fallback - keeps normalize runnable offline.
         """
         # Primary: group names from the matches' own group objects.
         gname = {}
@@ -443,12 +589,13 @@ class BracketFetcher:
             gid = g.get("id")
             if gid and gid not in gname and g.get("name"):
                 gname[gid] = g["name"]
-        # Fallback: the groups endpoint (may fail transiently).
-        d = self._json_get(f"{self.API_TOORNAMENT}/groups",
-                           {"stage_ids": stage_id, "offset": 0, "limit": _API_LIMIT})
-        if d:
-            for g in d.get("items", []):
-                gname.setdefault(g["id"], g.get("name", ""))
+        # Fallback: /groups-endpoint names resolved at fetch time (pure here);
+        # JSON round-trips dict keys to strings, so normalize back to int.
+        for gid, name in (gname_extra or {}).items():
+            try:
+                gname.setdefault(int(gid), name)
+            except (TypeError, ValueError):
+                gname.setdefault(gid, name)
 
         # Group matches by (group_id, round_number), preserving order.
         by_group = {}
@@ -529,9 +676,15 @@ class BracketFetcher:
 
     API_SHAMBLER = "https://shambler.site/brackets/data-brackets.php"
 
-    def _fetch_shambler(self, cup_id: int) -> dict:
-        """Fetch + normalize a shambler bracket (POST data-brackets.php)."""
+    def _shambler_payload(self, cup_id: int) -> dict:
+        """Fetch a shambler bracket payload (POST data-brackets.php, network)."""
         d = self._json_post(self.API_SHAMBLER, {"cup": cup_id, "update": 0})
+        if not d:
+            return {"response": {}}
+        return {"response": d}
+
+    def _shambler_normalize(self, payload: dict) -> dict:
+        d = payload.get("response") or {}
         if not d:
             return {"source": "shambler", "title": "", "stages": []}
 
@@ -588,20 +741,14 @@ class BracketFetcher:
 
     API_EGB = "https://cup.egb.net"
 
-    def _fetch_egb(self, slug: str) -> dict:
-        """Fetch + normalize an EGB bracket by cup slug.
-
-        Flow: /tournaments/by-slug/<slug> -> tournament uuid, then
-        /tournaments/<uuid>/bracket for the bracket graph.
-        """
+    def _egb_payload(self, slug: str) -> dict | None:
+        """Fetch an EGB bracket payload (network): meta + bracket graph."""
         meta = self._json_get(f"{self.API_EGB}/tournaments/by-slug/{slug}")
         if not meta or not meta.get("id"):
-            return {"source": "egb", "title": "", "stages": []}
+            return None
         tid = meta["id"]
-        bracket = self._json_get(f"{self.API_EGB}/tournaments/{tid}/bracket")
-        if not bracket or not bracket.get("matches"):
-            return {"source": "egb", "title": meta.get("name", ""), "stages": []}
-        return self._egb_normalize(meta, bracket)
+        bracket = self._json_get(f"{self.API_EGB}/tournaments/{tid}/bracket") or {}
+        return {"meta": meta, "bracket": bracket}
 
     @classmethod
     def _egb_normalize(cls, meta: dict, bracket: dict) -> dict:
@@ -677,28 +824,29 @@ class BracketFetcher:
     # ------------------------------------------------------------------
     API_KUACHI = "https://kuachi.gg/api"
 
-    def _fetch_kuachi(self, cup_id: str, stage_no: int) -> dict:
-        """Fetch + normalize a kuachi.gg cup stage bracket.
+    def _kuachi_payload(self, ref) -> dict:
+        """Fetch a kuachi.gg stage payload (network).
 
-        Flow: list stages for the cup, pick the requested stage (by stage_no),
-        fetch all matches for the cup, filter to that stage, then resolve
-        signup ids -> player names. Returns the shared stages/groups schema.
+        Matches are filtered to the requested stage and signup names are
+        resolved at fetch time (two API calls), so normalize stays offline.
         """
-        stages = self._json_get(f"{self.API_KUACHI}/cup/{cup_id}/stages")
-        if not stages:
-            return {"source": "kuachi", "title": "", "stages": []}
-        stage = next((s for s in stages if s.get("stage_no") == stage_no), stages[0])
-        stage_id = stage.get("id")
-        stage_title = stage.get("title") or f"Stage {stage_no + 1}"
+        cup_id, stage_no = ref
+        stages = self._json_get(f"{self.API_KUACHI}/cup/{cup_id}/stages") or []
+        stage = next((s for s in stages if s.get("stage_no") == stage_no), stages[0] if stages else None)
+        stage_title = (stage.get("title") if stage else None) or f"Stage {stage_no + 1}"
+        matches = self._json_get(f"{self.API_KUACHI}/cup/{cup_id}/matches") or []
+        sm = [m for m in matches if stage and m.get("cup_stage_id") == stage.get("id")]
+        if not sm:
+            return {"stage_title": stage_title, "stage_matches": [], "names": {}}
+        names = self._kuachi_signup_names(sm)
+        return {"stage_title": stage_title, "stage_matches": sm, "names": names}
 
-        matches = self._json_get(f"{self.API_KUACHI}/cup/{cup_id}/matches")
-        if not matches:
-            return {"source": "kuachi", "title": stage_title, "stages": []}
-        sm = [m for m in matches if m.get("cup_stage_id") == stage_id]
+    def _kuachi_normalize(self, payload: dict) -> dict:
+        stage_title = payload.get("stage_title") or ""
+        sm = payload.get("stage_matches") or []
         if not sm:
             return {"source": "kuachi", "title": stage_title, "stages": []}
-
-        signup_names = self._kuachi_signup_names(sm)
+        signup_names = payload.get("names") or {}
         groups = self._kuachi_groups(sm, signup_names)
         complete = all(m.get("is_scored") for m in sm)
         return {
@@ -815,18 +963,19 @@ class BracketFetcher:
     # ------------------------------------------------------------------
     # PlusForward-native brackets (rendered by plusforward.net itself)
     # ------------------------------------------------------------------
-    def _fetch_plusforward_native(self, tournament_id: int) -> dict:
-        """Parse a bracket that PlusForward renders natively (no external provider).
-
-        The AJAX bracket endpoint returns bracket HTML (round columns with
-        matches) rather than an external provider link. Parse it and group the
-        rounds into winners / losers / grand-final groups so the bracket
-        renders as a connected elimination tree.
-        """
+    def _pf_native_payload(self, tournament_id: int) -> dict | None:
+        """Fetch a PlusForward-native bracket payload (AJAX HTML, network)."""
         body = self._curl(
             "GET",
             f"{_AJAX_BRACKETS_URL}?tourneybrackets=1&pid={tournament_id}",
         )
+        if not body:
+            return None
+        return {"html": body}
+
+    def _pf_native_normalize(self, payload: dict) -> dict:
+        """Normalize a PlusForward-native AJAX HTML payload (pure)."""
+        body = payload.get("html") or ""
         if not body:
             return {"source": "plusforward", "title": "", "stages": []}
         rounds = self._parse_pf_native_rounds(body)
@@ -835,11 +984,19 @@ class BracketFetcher:
 
         # Group round titles into winners / losers / grand-final groups.
         # Winner's Final + Grand Final are treated as their own single-match
-        # groups; loser rounds form the losers group.
+        # groups; loser rounds ("LB ...", "Loser's ...") form the losers group.
+        # Consolidation deciders (3rd place etc., marked by the parser) are
+        # pulled out into their own "Third place" group so they don't bloat
+        # the elimination tree's round counts (the connector-geometry check
+        # treats equal round counts as round-robin and drops connectors).
         groups = []
-        winners = [r for r in rounds if _PF_WINNERS_RE.match(r["title"])]
-        losers = [r for r in rounds if _PF_LOSERS_RE.match(r["title"])]
-        grand = [r for r in rounds if "grand final" in r["title"].lower()]
+        remaining, third = [], []
+        for r in rounds:
+            (third if r.pop("consolidation", False) else remaining).append(r)
+        rounds = remaining
+        winners = [r for r in rounds if _pf_round_group(r["title"]) == "winners"]
+        losers = [r for r in rounds if _pf_round_group(r["title"]) == "losers"]
+        grand = [r for r in rounds if _pf_round_group(r["title"]) == "grand"]
 
         def _mk_group(name, round_list):
             return {
@@ -859,10 +1016,26 @@ class BracketFetcher:
                 "name": "Grand Final",
                 "rounds": [{"name": g["title"], "round": 0, "matches": g["matches"]}],
             })
+        if third:
+            groups.append({
+                "name": "Third place",
+                "rounds": [
+                    {"name": r["title"], "round": i, "matches": r["matches"]}
+                    for i, r in enumerate(third)
+                ],
+            })
+        # complete = every match in the bracket has a decided winner. TBD
+        # placeholders (pending rounds of a live event) have winner=None, so a
+        # still-running tournament renders as Live, not Finished — it used to
+        # be hardcoded True, which mislabelled every live native bracket.
+        complete = bool(rounds) and all(
+            m.get("winner")
+            for grp in groups for r_ in grp["rounds"] for m in r_["matches"]
+        )
         return {
             "source": "plusforward",
             "title": "",
-            "complete": True,
+            "complete": complete,
             "stages": [{"name": "", "groups": groups}],
         }
 
@@ -870,9 +1043,12 @@ class BracketFetcher:
     def _parse_pf_native_rounds(body: str) -> list:
         """Parse PlusForward-native bracket HTML into a list of round dicts.
 
-        Returns [{title, matches: [{p1, p2, score1, score2, winner}]}].
-        Columns that only contain spacing/connectors (no bracket-match) are
-        skipped.
+        Returns [{title, matches: [{p1, p2, score1, score2, winner}],
+        consolidation: bool}]. Columns that only contain spacing/connectors
+        (no bracket-match) are skipped. A column may contain several segments:
+        the main round plus optional sub-headed sections (a bracket-match-title
+        header, e.g. a '3rd Place Match' decider) — each becomes its own round
+        dict, with consolidation segments flagged for separate grouping.
         """
         try:
             soup = BeautifulSoup(body, "html.parser")
@@ -885,31 +1061,47 @@ class BracketFetcher:
         for col in bracket.find_all("div", class_="bracket-column"):
             title_el = col.find("div", class_="bracket-round-title")
             title = title_el.get_text(strip=True) if title_el else ""
+            # Segments: main round + optional sub-headed sections. A
+            # bracket-match-title header splits the column; consolidation
+            # headers ('3rd Place Match' & co.) mark their segment for
+            # extraction from the elimination tree.
+            seg_title, seg_cons = title, False
             matches = []
-            for m in col.find_all("div", class_="bracket-match"):
-                cells = [
-                    c for c in m.find_all(recursive=False)
-                    if any("bracket-cell-r" in (cc or "") for cc in (c.get("class") or []))
-                ]
-                players = []
-                for c in cells:
-                    name_el = c.find("div", class_="bracket-name")
-                    score_el = c.find("div", class_="bracket-score")
-                    name = name_el.get_text(strip=True) if name_el else ""
-                    score = score_el.get_text(strip=True) if score_el else ""
-                    is_win = bool(name_el and "font-weight:700" in (name_el.get("style") or ""))
-                    players.append({"name": name, "score": score, "winner": is_win})
-                if len(players) >= 2:
-                    p1, p2 = players[0], players[1]
-                    matches.append({
-                        "p1": p1["name"],
-                        "p2": p2["name"],
-                        "score1": int(p1["score"]) if p1["score"].isdigit() else None,
-                        "score2": int(p2["score"]) if p2["score"].isdigit() else None,
-                        "winner": "p1" if p1["winner"] else ("p2" if p2["winner"] else None),
-                    })
+            for el in col.find_all("div", class_=True):
+                cls = el.get("class") or []
+                if "bracket-match-title" in cls:
+                    if matches:
+                        rounds.append({"title": seg_title, "matches": matches,
+                                       "consolidation": seg_cons})
+                    header = el.get_text(" ", strip=True)
+                    seg_title = header or title
+                    seg_cons = bool(_PF_CONSOLIDATION_RE.search(header or ""))
+                    matches = []
+                elif "bracket-match" in cls:
+                    cells = [
+                        c for c in el.find_all(recursive=False)
+                        if any("bracket-cell-r" in (cc or "") for cc in (c.get("class") or []))
+                    ]
+                    players = []
+                    for c in cells:
+                        name_el = c.find("div", class_="bracket-name")
+                        score_el = c.find("div", class_="bracket-score")
+                        name = name_el.get_text(strip=True) if name_el else ""
+                        score = score_el.get_text(strip=True) if score_el else ""
+                        is_win = bool(name_el and "font-weight:700" in (name_el.get("style") or ""))
+                        players.append({"name": name, "score": score, "winner": is_win})
+                    if len(players) >= 2:
+                        p1, p2 = players[0], players[1]
+                        matches.append({
+                            "p1": p1["name"],
+                            "p2": p2["name"],
+                            "score1": int(p1["score"]) if p1["score"].isdigit() else None,
+                            "score2": int(p2["score"]) if p2["score"].isdigit() else None,
+                            "winner": "p1" if p1["winner"] else ("p2" if p2["winner"] else None),
+                        })
             if matches:
-                rounds.append({"title": title, "matches": matches})
+                rounds.append({"title": seg_title, "matches": matches,
+                               "consolidation": seg_cons})
         return rounds
 
     @classmethod
@@ -918,6 +1110,23 @@ class BracketFetcher:
             f"brackets: {cls.fetched} fetched, {cls.skipped} skipped, "
             f"{cls.failed} failed, {cls.no_source} no source"
         )
+
+
+def rebuild_missing(db, limit: int = 0) -> int:
+    """Rebuild parsed tournament_brackets from the raw_brackets cache — offline.
+
+    Replays each cached provider payload through the pure normalizer and
+    upserts brackets for tournaments whose parsed row is missing (wiped by
+    `reset.py parsed` or awaiting a re-parse after normalization changes).
+    No provider requests. Returns the number of brackets rebuilt.
+    """
+    f = BracketFetcher(db)
+    rows = db.missing_bracket_cache_rows(limit or 0)
+    n = 0
+    for tid, source, payload in rows:
+        if f.rebuild_from_cache(int(tid), source, payload):
+            n += 1
+    return n
 
 
 def backfill(db, limit: int = 0, max_age_days: int = None):

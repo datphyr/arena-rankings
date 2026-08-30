@@ -39,6 +39,7 @@ DROP_TABLES = [
     "DROP TABLE IF EXISTS arena_rankings.player_ratings",
     "DROP TABLE IF EXISTS arena_rankings.raw_posts",
     "DROP TABLE IF EXISTS arena_rankings.tournament_brackets",
+    "DROP TABLE IF EXISTS arena_rankings.raw_brackets",
     "DROP TABLE IF EXISTS arena_rankings.match_vods",
 ]
 
@@ -308,5 +309,22 @@ DDL_STATEMENTS = [
     )
     ENGINE = ReplacingMergeTree()
     ORDER BY tournament_id
+    """,
+
+    # raw_brackets — Raw provider payloads for tournament brackets (the
+    # bracket equivalent of raw_posts: downloaded once, parseable forever).
+    # Written by BracketFetcher at every successful provider fetch; after a
+    # `reset.py parsed` wipe, tournament_brackets is re-derived from here
+    # offline (no provider requests). payload holds the source-specific raw
+    # data the per-provider normalizer consumes (API JSON or PF AJAX HTML).
+    """
+    CREATE TABLE IF NOT EXISTS arena_rankings.raw_brackets (
+        tournament_id UInt64,
+        source LowCardinality(String) DEFAULT '',
+        payload String DEFAULT '',
+        fetched_at DateTime DEFAULT toDateTime(0)
+    )
+    ENGINE = ReplacingMergeTree()
+    ORDER BY (tournament_id, source)
     """,
 ]

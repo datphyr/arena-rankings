@@ -19,7 +19,7 @@ Usage:
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timezone
 
 from src.db_client import Database
 from src.fetcher import PageFetcher
@@ -201,7 +201,9 @@ def download_vods(workers: int = 1, limit: int = 0) -> tuple[int, int]:
                 return False
             # sort_time: VOD posts have no match date; use epoch (parser doesn't
             # need chronological order for VODs — they're keyed by post_id).
-            worker_db.store_raw_post(vod_post_id, html, "downloaded", sort_time=datetime(1970, 1, 1))
+            # UTC-aware epoch — naive datetime(1970,1,1) serializes as -10800s
+            # under the Europe/Moscow server timezone (see db_client notes).
+            worker_db.store_raw_post(vod_post_id, html, "downloaded", sort_time=datetime(1970, 1, 1, tzinfo=timezone.utc))
             return True
         finally:
             worker_db.close()

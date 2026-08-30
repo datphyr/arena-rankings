@@ -414,29 +414,67 @@ class TournamentResolver:
         details["tourney_format"] = info_value("Tourney format")
         details["match_format"] = info_value("Match format")
 
-        # Schedule: <div class="tc_title">Schedule</div><div>09 Aug 2026 - 16:00 UTC → 20:15 UTC</div>
+        # Schedule:
+        #   Newer pages: <div class="tc_title">Schedule</div><div>
+        #     <span title="29 Aug 2026 - 11:00 UTC">29 Aug 2026</span>
+        #     <i ...arrow...></i>
+        #     <span title="30 Aug 2026 - 20:15 UTC">30 Aug 2026</span></div>
+        #   (the spans carry full UTC times in title=; the visible text is
+        #   date-only — parse the title attrs when present)
+        #   Older pages: ...<div>09 Aug 2026 - 16:00 UTC → 20:15 UTC</div>
         sched_m = re.search(
-            r'<div class="tc_title">Schedule</div>\s*<div[^>]*>\s*'
-            r'(\d{1,2}\s+\w+\s+\d{4})\s*[-–]\s*(\d{1,2}:\d{2})\s*UTC'
-            r'(?:\s*<i[^>]*></i>\s*|\s*[-–>→]\s*|\s*)(\d{1,2}:\d{2})?\s*UTC?',
+            r'<div class="tc_title">Schedule</div>\s*<div[^>]*>(.*?)</div>',
             body, re.DOTALL | re.IGNORECASE)
         if sched_m:
+            sched_html = sched_m.group(1)
+            # Preferred: exact UTC times from the span title attributes.
+            span_ms = re.findall(
+                r'<span title="(\d{1,2}\s+\w+\s+\d{4})\s*-\s*(\d{1,2}:\d{2})\s*UTC"',
+                sched_html)
             try:
-                start = datetime.strptime(sched_m.group(1), "%d %b %Y")
-                day = start.strftime("%Y-%m-%d ")
-                details["schedule_start"] = day + sched_m.group(2) + ":00"
-                end_time = sched_m.group(3) or sched_m.group(2)
-                # End time can cross midnight (e.g. "22:00 UTC -> 03:00 UTC"
-                # next day). The schedule only lists hours on the start day, so
-                # if the end time is earlier than the start time it belongs to
-                # the following day — bump the date by one. Without this the end
-                # is stored before the start, making the event look like it
-                # ended before it began.
-                if int(end_time.split(":")[0]) < int(sched_m.group(2).split(":")[0]):
-                    end_day = (start + timedelta(days=1)).strftime("%Y-%m-%d ")
+                if len(span_ms) >= 2:
+                    start = datetime.strptime(span_ms[0][0], "%d %b %Y")
+                    details["schedule_start"] = (
+                        start.strftime("%Y-%m-%d ") + span_ms[0][1] + ":00")
+                    end = datetime.strptime(span_ms[1][0], "%d %b %Y")
+                    details["schedule_end"] = (
+                        end.strftime("%Y-%m-%d ") + span_ms[1][1] + ":00")
                 else:
-                    end_day = day
-                details["schedule_end"] = end_day + end_time + ":00"
+                    # No title attributes: plain text date-only range
+                    # ("29 Aug 2026 - 30 Aug 2026"). A date-only end means the
+                    # event runs through that whole day — use 23:59 UTC so
+                    # in-progress detection doesn't flip Finished at midnight
+                    # UTC on the final day.
+                    date_only_m = re.search(
+                        r'(\d{1,2}\s+\w+\s+\d{4})\s*[-–>→]\s*(\d{1,2}\s+\w+\s+\d{4})',
+                        re.sub(r'<[^>]+>', ' ', sched_html))
+                    if date_only_m:
+                        start = datetime.strptime(date_only_m.group(1), "%d %b %Y")
+                        end_d = datetime.strptime(date_only_m.group(2), "%d %b %Y")
+                        details["schedule_start"] = start.strftime("%Y-%m-%d 00:00:00")
+                        details["schedule_end"] = end_d.strftime("%Y-%m-%d 23:59:00")
+                    else:
+                        # Legacy format with explicit times on the start day.
+                        legacy_m = re.search(
+                            r'(\d{1,2}\s+\w+\s+\d{4})\s*[-–]\s*(\d{1,2}:\d{2})\s*UTC'
+                            r'(?:\s*<i[^>]*></i>\s*|\s*[-–>→]\s*|\s*)(\d{1,2}:\d{2})?\s*UTC?',
+                            sched_html, re.DOTALL | re.IGNORECASE)
+                        if legacy_m:
+                            start = datetime.strptime(legacy_m.group(1), "%d %b %Y")
+                            day = start.strftime("%Y-%m-%d ")
+                            details["schedule_start"] = day + legacy_m.group(2) + ":00"
+                            end_time = legacy_m.group(3) or legacy_m.group(2)
+                            # End time can cross midnight (e.g. "22:00 UTC -> 03:00 UTC"
+                            # next day). The schedule only lists hours on the start day, so
+                            # if the end time is earlier than the start time it belongs to
+                            # the following day — bump the date by one. Without this the end
+                            # is stored before the start, making the event look like it
+                            # ended before it began.
+                            if int(end_time.split(":")[0]) < int(legacy_m.group(2).split(":")[0]):
+                                end_day = (start + timedelta(days=1)).strftime("%Y-%m-%d ")
+                            else:
+                                end_day = day
+                            details["schedule_end"] = end_day + end_time + ":00"
             except ValueError:
                 pass
 
