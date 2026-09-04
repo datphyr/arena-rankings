@@ -1146,58 +1146,75 @@ class DataProvider:
         self._compute_bracket_junctions(br["data"])
         return br
 
-    # Standard English bracket round names: Final, Semi-final, Quarter-final,
-    # Round of 16, Round of 32, ... then "Round N" for deeper rounds.
+    # Standard English bracket round names for the last three elimination
+    # rounds (by distance from the final). Everything before them is numbered
+    # sequentially ("WB Round 1", "LB Round 2", ...) — see _round_name.
     _ROUND_SUFFIXES = {
         0: "Final",
         1: "Semi-final",
         2: "Quarter-final",
-        3: "Round of 16",
-        4: "Round of 32",
-        5: "Round of 64",
-        6: "Round of 128",
     }
 
     @classmethod
-    def _round_name(cls, index: int, total_rounds: int, prefix: str) -> str:
-        """Round name for a single-elim bracket, counting back from the final."""
-        if prefix == "GF":
-            return "Grand Final"
-        k = total_rounds - index - 1  # rounds remaining until the final
-        suffix = cls._ROUND_SUFFIXES.get(k, f"Round {index + 1}")
-        return f"{prefix} {suffix}"
+    def _round_name(cls, index: int, final_idx: int, prefix: str) -> str:
+        """Round name: standard names for the last three elimination rounds,
+        sequential "Round N" for everything before them.
+
+        "Round of N" capacity naming was tried and cannot be universal: losers
+        brackets don't halve cleanly (players drop in from the winners
+        bracket), so capacities repeat, collide and look non-monotonic, and
+        odd play-in rounds have no honest capacity name. Sequential numbering
+        is collision-free for any bracket shape and matches the source
+        providers' own convention (Toornament/Challonge number early rounds).
+        """
+        k = final_idx - index  # rounds remaining until the final
+        if k <= 2:
+            return f"{prefix} {cls._ROUND_SUFFIXES[k]}"
+        return f"{prefix} Round {index + 1}"
 
     @staticmethod
     def _rename_bracket_rounds(data: dict):
-        """Rename rounds to shambler-style names (WB Final, WB Half Final, ...).
+        """Rename rounds to shambler-style names (WB Final, WB Semi-final, ...).
 
-        Names are assigned by distance from the final (positional), so they're
-        unique even when a bracket doesn't halve cleanly (e.g. losers bracket).
-        The merged Grand Final round (if present) is named "Grand Final" and
-        the count-back starts from the round before it (the bracket final).
+        Only winners/losers brackets are renamed: the last three rounds get
+        the standard names by distance from the final, earlier rounds get
+        sequential numbers ("WB Round 1", ...). Grand Final rounds (merged
+        or standalone) are named "Grand Final". League/swiss/group stages and
+        groups that carry their own round titles keep them as-is.
         """
         for stage in data.get("stages", []):
             for group in stage.get("groups", []):
+                # Groups that carry their own accurate round titles (e.g.
+                # Challonge's "WB Semi-finals (bo3)") keep them as-is.
+                if group.get("named"):
+                    continue
                 name = (group.get("name") or "").lower()
                 if "winner" in name:
                     prefix = "WB"
                 elif "loser" in name:
                     prefix = "LB"
+                elif "grand" in name or "final" in name:
+                    # Standalone Grand Final group (e.g. not merged because
+                    # the stage has no Winners Bracket group).
+                    for rnd in group.get("rounds", []):
+                        if rnd.get("matches"):
+                            rnd["name"] = "Grand Final"
+                    continue
                 else:
-                    prefix = "GF"
+                    # Leagues / swiss / group stages ("Alpha League",
+                    # "Swiss Group 1", "Main Bracket", "Third place") keep
+                    # their source round titles ("Day 1", "Round 1", ...).
+                    continue
                 rounds = [r for r in group.get("rounds", []) if r.get("matches")]
-                total = len(rounds)
-                # If the last round is a merged Grand Final, it gets its own
-                # name and the count-back starts from the previous round.
-                has_gf = bool(rounds) and (rounds[-1].get("name") == "Grand Final")
-                final_idx = total - 2 if has_gf else total - 1
+                # A merged Grand Final round is not part of the count-back.
+                has_gf = bool(rounds) and rounds[-1].get("name") == "Grand Final"
+                final_idx = len(rounds) - 2 if has_gf else len(rounds) - 1
                 for idx, rnd in enumerate(rounds):
-                    if has_gf and idx == total - 1:
-                        rnd["name"] = "Grand Final"
-                    else:
-                        k = final_idx - idx  # rounds remaining until the final
-                        suffix = DataProvider._ROUND_SUFFIXES.get(k, f"Round {idx + 1}")
-                        rnd["name"] = f"{prefix} {suffix}"
+                    if rnd.get("name") == "Grand Final":
+                        continue
+                    rnd["name"] = DataProvider._round_name(
+                        idx, final_idx, prefix,
+                    )
 
     @staticmethod
     def _drop_empty_matches(data: dict):

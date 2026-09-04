@@ -1,4 +1,5 @@
-"""Bracket fetching + normalization for Toornament, shambler and EGB.
+"""Bracket fetching + normalization for Toornament, shambler, EGB,
+Challonge, Battlefy and start.gg.
 
 PlusForward does not host bracket data — its tournament pages link out to an
 external provider. This module detects which provider a tournament uses (from
@@ -7,7 +8,8 @@ public (no-auth) API, and normalizes it into a single source-agnostic JSON shape
 suitable for rendering:
 
     {
-      "source": "toornament" | "shambler" | "egb",
+      "source": "toornament" | "shambler" | "egb" | "challonge"
+                | "battlefy" | "startgg",
       "title": "...",
       "stages": [{
         "name": "Playoffs",
@@ -29,6 +31,11 @@ Providers:
   - Toornament: play.toornament.com/api/*  (GET, no auth)
   - shambler:   shambler.site/brackets/data-brackets.php (POST, no auth)
   - EGB:        cup.egb.net/tournaments/* (GET, no auth) — slug -> uuid -> bracket
+  - Challonge:  archived pages via web.archive.org (the live site is
+                Cloudflare-gated and the API needs a key, but every page
+                embeds the full bracket state as JSON, and wayback has them)
+  - Battlefy:   api.battlefy.com (GET, no auth; needs Origin/Referer headers)
+  - start.gg:   api.start.gg GraphQL (needs STARTGG_API_TOKEN env var)
 
 Usage:
     from src.bracket_fetcher import BracketFetcher
@@ -56,6 +63,17 @@ logger = logging.getLogger(__name__)
 BRACKET_RATE_LIMIT_DELAY = float(__import__("os").environ.get("BRACKET_RATE_LIMIT_DELAY", "0.4"))
 BRACKET_HTTP_TIMEOUT = int(__import__("os").environ.get("BRACKET_HTTP_TIMEOUT", "15"))
 
+# Wayback Machine fetches (Challonge archive) get their own slower rate
+# limit and timeout — archive.org 429s aggressively on bursts and serves
+# snapshots slowly. After a block page we cool down before the next attempt.
+WAYBACK_RATE_LIMIT_DELAY = float(__import__("os").environ.get("WAYBACK_RATE_LIMIT_DELAY", "2.5"))
+WAYBACK_HTTP_TIMEOUT = int(__import__("os").environ.get("WAYBACK_HTTP_TIMEOUT", "60"))
+WAYBACK_BLOCK_COOLDOWN = float(__import__("os").environ.get("WAYBACK_BLOCK_COOLDOWN", "30"))
+
+# Optional start.gg API token (free self-service at developer.start.gg).
+# Without it start.gg/smash.gg tournaments are skipped, not crashed.
+_STARTGG_API_TOKEN = (__import__("os").environ.get("STARTGG_API_TOKEN") or "").strip()
+
 # Retry on non-JSON responses (intermittent Cloudflare challenge pages).
 _JSON_RETRIES = int(__import__("os").environ.get("BRACKET_JSON_RETRIES", "4"))
 _JSON_RETRY_DELAY = float(__import__("os").environ.get("BRACKET_JSON_RETRY_DELAY", "2.0"))
@@ -76,6 +94,23 @@ _EGB_RE = re.compile(
 # AFPS tournaments). The bracket is served by the kuachi REST API.
 _KUACHI_RE = re.compile(
     r"kuachi\.gg/cups/([0-9a-fA-F-]{36})/stage/(\d+)", re.IGNORECASE)
+
+# Challonge links: [<subdomain>.]challonge.com/<slug>
+# (e.g. 125fps.challonge.com/sundaycup21). The live site is Cloudflare-gated
+# and the API needs a key, but archived pages embed the full bracket state.
+_CHALLONGE_RE = re.compile(
+    r"(?<![a-z0-9-])((?:[a-z0-9-]+\.)*challonge\.com)/([a-z0-9_-]+)",
+    re.IGNORECASE)
+
+# Battlefy tournament pages: battlefy.com/<org>/<slug>/<24-hex-id>/...
+_BATTLEFY_RE = re.compile(
+    r"(?<![a-z0-9-])(?:www\.)?battlefy\.com/[a-z0-9_-]+/[a-z0-9_-]+/([0-9a-f]{24})",
+    re.IGNORECASE)
+
+# start.gg / smash.gg tournament pages: /tournament/<slug>[/...]
+_STARTGG_RE = re.compile(
+    r"(?<![a-z0-9-])(?:smash\.gg|start\.gg)/tournament/([a-z0-9-]+)",
+    re.IGNORECASE)
 
 # Round-title patterns for PlusForward-native brackets (double elimination).
 # Winners-bracket rounds are any non-loser, non-grand-final round (e.g.
@@ -153,6 +188,8 @@ class BracketFetcher:
         self._db = db
         self._html_fetcher = fetcher or PageFetcher()
         self._last_request = 0.0
+        self._last_wayback = 0.0
+        self._wayback_blocked_until = 0.0
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -234,7 +271,7 @@ class BracketFetcher:
             BracketFetcher.no_source += 1
             return False
 
-        kind, ref = source  # ('toornament', tid), ('shambler', cup), ('egb', slug), ('kuachi', (cup_id, stage_no)), ('plusforward', tournament_id)
+        kind, ref = source  # ('toornament', tid), ('shambler', cup), ('egb', slug), ('kuachi', (cup_id, stage_no)), ('plusforward', tournament_id), ('challonge', (host, slug)), ('battlefy', tid), ('startgg', slug)
         try:
             payload = self._fetch_payload(kind, ref)
             # Cache the raw payload BEFORE normalizing: even if normalization
@@ -295,6 +332,12 @@ class BracketFetcher:
             return self._egb_payload(ref)
         if kind == "kuachi":
             return self._kuachi_payload(ref)
+        if kind == "challonge":
+            return self._challonge_payload(ref)
+        if kind == "battlefy":
+            return self._battlefy_payload(ref)
+        if kind == "startgg":
+            return self._startgg_payload(ref)
         if kind == "plusforward":
             return self._pf_native_payload(ref)
         raise ValueError(f"unknown bracket source: {kind}")
@@ -309,6 +352,12 @@ class BracketFetcher:
             return self._egb_normalize(payload.get("meta") or {}, payload.get("bracket") or {})
         if kind == "kuachi":
             return self._kuachi_normalize(payload)
+        if kind == "challonge":
+            return self._challonge_normalize(payload)
+        if kind == "battlefy":
+            return self._battlefy_normalize(payload)
+        if kind == "startgg":
+            return self._startgg_normalize(payload)
         if kind == "plusforward":
             return self._pf_native_normalize(payload)
         raise ValueError(f"unknown bracket source: {kind}")
@@ -435,6 +484,15 @@ class BracketFetcher:
         m = _KUACHI_RE.search(raw_html)
         if m:
             return ("kuachi", (m.group(1), int(m.group(2))))
+        m = _CHALLONGE_RE.search(raw_html)
+        if m:
+            return ("challonge", (m.group(1).lower(), m.group(2)))
+        m = _BATTLEFY_RE.search(raw_html)
+        if m:
+            return ("battlefy", m.group(1))
+        m = _STARTGG_RE.search(raw_html)
+        if m:
+            return ("startgg", m.group(1))
         return None
 
     def _detect_source_ajax(self, tournament_id: int):
@@ -469,7 +527,7 @@ class BracketFetcher:
     # HTTP (JSON) helpers — external APIs, curl-based like PageFetcher
     # ------------------------------------------------------------------
 
-    def _json_get(self, url: str, params: dict = None) -> Optional[dict]:
+    def _json_get(self, url: str, params: dict = None, headers: list = None) -> Optional[dict]:
         """GET a JSON API endpoint and return parsed JSON (or None).
 
         Retries on non-JSON responses (e.g. intermittent Cloudflare challenge
@@ -480,7 +538,7 @@ class BracketFetcher:
             qs = urllib.parse.urlencode(params)
             url = f"{url}?{qs}"
         for attempt in range(_JSON_RETRIES):
-            body = self._curl("GET", url, attempt=attempt)
+            body = self._curl("GET", url, attempt=attempt, headers=headers)
             if body is None:
                 continue
             try:
@@ -490,10 +548,10 @@ class BracketFetcher:
                 time.sleep(_JSON_RETRY_DELAY + random.uniform(0, 0.3))
         return None
 
-    def _json_post(self, url: str, data: dict) -> Optional[dict]:
+    def _json_post(self, url: str, data: dict, headers: list = None) -> Optional[dict]:
         """POST form-encoded data to a JSON API endpoint (with retry)."""
         for attempt in range(_JSON_RETRIES):
-            body = self._curl("POST", url, data=data, attempt=attempt)
+            body = self._curl("POST", url, data=data, attempt=attempt, headers=headers)
             if body is None:
                 continue
             try:
@@ -503,7 +561,8 @@ class BracketFetcher:
                 time.sleep(_JSON_RETRY_DELAY + random.uniform(0, 0.3))
         return None
 
-    def _curl(self, method: str, url: str, data: dict = None, attempt: int = 0) -> Optional[str]:
+    def _curl(self, method: str, url: str, data: dict = None, attempt: int = 0,
+              headers: list = None) -> Optional[str]:
         """Raw curl GET/POST, returning the response body (or None)."""
         self._rate_limit()
         ua = random.choice(USER_AGENTS)
@@ -519,6 +578,8 @@ class BracketFetcher:
             if data:
                 import urllib.parse
                 cmd += ["--data", urllib.parse.urlencode(data)]
+        if headers:
+            cmd += headers
         cmd.append(url)
         try:
             result = subprocess.run(
@@ -958,6 +1019,449 @@ class BracketFetcher:
                 winner = "p1"
             elif m.get("high_id") == wid:
                 winner = "p2"
+        return {"p1": p1, "p2": p2, "score1": s1, "score2": s2, "winner": winner}
+
+    # ------------------------------------------------------------------
+    # Challonge (archived pages via the Wayback Machine)
+    # ------------------------------------------------------------------
+    #
+    # The live challonge.com is Cloudflare-gated and its API needs a key, but
+    # every Challonge bracket page embeds the full bracket state in the
+    # TournamentStore JSON. archive.org archived these pages (many with the
+    # bracket already complete), so we fetch the nearest snapshot of the
+    # bracket page and extract the embedded JSON — no auth, no API key.
+    #
+    # The Wayback "web/2/" shorthand redirects to the closest snapshot to the
+    # present for the given URL (or 404 if none exists).
+    WAYBACK_BASE = "https://web.archive.org/web/2/"
+
+    @staticmethod
+    def _challonge_bracket_url(ref) -> str:
+        """Challonge bracket-page URL from a (host, slug) detection ref."""
+        host, slug = ref
+        return f"https://{host}/{slug}"
+
+    def _challonge_payload(self, ref) -> dict | None:
+        """Fetch the archived Challonge bracket page and pull its state.
+
+        The embedded JSON is the raw bracket state (players, rounds, matches,
+        scores, winners) — exactly what normalize consumes, so no further
+        network calls are needed and rebuilds stay offline.
+        """
+        src_url = self._challonge_bracket_url(ref)
+        body = self._curl_wayback(f"{self.WAYBACK_BASE}{src_url}")
+        if not body:
+            return None
+        i = body.find("_initialStoreState['TournamentStore']")
+        if i < 0:
+            logger.debug(f"challonge {src_url}: no TournamentStore JSON in archived page")
+            return None
+        j = body.find("{", i)
+        if j < 0:
+            return None
+        try:
+            store, _ = json.JSONDecoder().raw_decode(body[j:])
+        except Exception as e:
+            logger.debug(f"challonge {src_url}: bad embedded JSON: {e}")
+            return None
+        # Sanity gate: a real Challenge bracket has tournaments + rounds/matches
+        # data (the store shape lives on the bracket page itself).
+        if not isinstance(store, dict) or not store.get("tournament"):
+            return None
+        return {"source_url": src_url, "store": store}
+
+    def _curl_wayback(self, url: str) -> Optional[str]:
+        """Rate-limited GET for web.archive.org (it 429s on bursts).
+
+        Wayback can serve an anti-bot block page to some UAs, so on a block
+        (tiny body / HTML but no wayback banner) we retry with the next UA.
+        """
+        now = time.time()
+        if now < self._wayback_blocked_until:
+            # IP-level block: wait out the cooldown before trying again.
+            time.sleep(self._wayback_blocked_until - now + random.uniform(0.1, 0.5))
+        elapsed = time.time() - self._last_wayback
+        if elapsed < WAYBACK_RATE_LIMIT_DELAY:
+            time.sleep(WAYBACK_RATE_LIMIT_DELAY - elapsed + random.uniform(0.1, 0.4))
+        self._last_wayback = time.time()
+        for attempt, ua in enumerate(USER_AGENTS):
+            cmd = [
+                "curl", "-s", "-L", "--compressed",
+                "--connect-timeout", str(WAYBACK_HTTP_TIMEOUT),
+                "--max-time", str(WAYBACK_HTTP_TIMEOUT),
+                "-A", ua,
+                "-H", "Accept: text/html",
+            ]
+            cmd.append(url)
+            try:
+                result = subprocess.run(
+                    cmd, capture_output=True, timeout=WAYBACK_HTTP_TIMEOUT + 5)
+                body = result.stdout.decode("utf-8", errors="replace")
+            except (subprocess.TimeoutExpired, OSError) as e:
+                logger.debug(f"wayback curl failed for {url}: {e}")
+                body = ""
+            if not body:
+                continue
+            if result.returncode in (0, 28) and "_initialStoreState['TournamentStore']" in body:
+                return body
+            if attempt < len(USER_AGENTS) - 1 and len(body) < 2000:
+                # Block page ("abusive bot traffic") or 429 — try next UA.
+                time.sleep(WAYBACK_RATE_LIMIT_DELAY)
+                continue
+            if "_initialStoreState['TournamentStore']" in body:
+                return body
+        # All UAs blocked (or no snapshot): cool down so a sustained backfill
+        # doesn't keep hammering archive.org.
+        self._wayback_blocked_until = time.time() + WAYBACK_BLOCK_COOLDOWN
+        return None
+
+    @staticmethod
+    def _challonge_normalize(payload: dict) -> dict:
+        """Normalize an archived Challonge TournamentStore (pure, offline).
+
+        Challonge's own round titles are accurate ("WB Semi-finals (bo3)",
+        "Grand-finals", ...) and its winners bracket already includes the
+        grand final as the last positive round, so we keep the source titles
+        (marking the groups "named" so the display pipeline doesn't
+        positionally rename them) and do NOT create a separate Grand Final
+        group — that would duplicate the final round.
+        """
+        store = payload.get("store") or {}
+        mbr = store.get("matches_by_round") or {}
+        if not mbr:
+            return {"source": "challonge", "title": "", "stages": []}
+        # Round titles from the store's rounds list (e.g. "WB Semi-finals
+        # (bo3)"); the map name follows on a second line and is dropped.
+        titles = {}
+        for r in store.get("rounds") or []:
+            try:
+                rn = int(r.get("number"))
+            except (TypeError, ValueError):
+                continue
+            title = (r.get("title") or "").strip().split("\n")[0].strip()
+            titles[rn] = title
+        rounds = {}
+        for rk, ms in mbr.items():
+            try:
+                rn = int(rk)
+            except (TypeError, ValueError):
+                continue
+            rounds.setdefault(rn, []).extend(ms or [])
+        if not rounds:
+            return {"source": "challonge", "title": "", "stages": []}
+
+        def _rname(rn: int) -> str:
+            return titles.get(rn) or f"Round {abs(rn)}"
+
+        groups = []
+        for side in ("winners", "losers"):
+            rs = [r for r in rounds if (r > 0) == (side == "winners")]
+            if not rs:
+                continue
+            rs = sorted(rs, key=lambda r: abs(r))
+            groups.append({
+                "name": "Winners Bracket" if side == "winners" else "Losers Bracket",
+                "named": True,  # keep Challonge's own round titles
+                "rounds": [
+                    {"name": _rname(r), "round": i,
+                     "matches": [BracketFetcher._challonge_match(m) for m in rounds[r]]}
+                    for i, r in enumerate(rs)
+                ],
+            })
+        # Optional third-place decider (a separate match object in the store).
+        tpm = store.get("third_place_match")
+        if isinstance(tpm, dict) and (tpm.get("player1") or tpm.get("player2")):
+            groups.append({
+                "name": "Third place",
+                "named": True,
+                "rounds": [{"name": "Third place", "round": 0,
+                            "matches": [BracketFetcher._challonge_match(tpm)]}],
+            })
+        complete = all(
+            m.get("winner") or not (m.get("p1") and m.get("p2"))
+            for g in groups for r in g["rounds"] for m in r["matches"]
+        )
+        return {
+            "source": "challonge",
+            "title": "",
+            "complete": complete,
+            "stages": [{"name": "", "groups": groups}],
+        }
+
+    @staticmethod
+    def _challonge_match(m: dict) -> dict:
+        """Normalize a Challonge match to {p1, p2, score1, score2, winner}."""
+        p1 = ((m.get("player1") or {}).get("display_name") or "").strip()
+        p2 = ((m.get("player2") or {}).get("display_name") or "").strip()
+        scores = m.get("scores") or []
+        s1 = scores[0] if len(scores) > 0 else None
+        s2 = scores[1] if len(scores) > 1 else None
+        winner = None
+        wid = m.get("winner_id")
+        p1id = (m.get("player1") or {}).get("id")
+        p2id = (m.get("player2") or {}).get("id")
+        if wid is not None and wid == p1id:
+            winner = "p1"
+        elif wid is not None and wid == p2id:
+            winner = "p2"
+        # Bye placeholders ("player2" empty) carry no winner; the generic
+        # complete check treats those as non-blocking.
+        return {"p1": p1, "p2": p2, "score1": s1, "score2": s2, "winner": winner}
+
+    # ------------------------------------------------------------------
+    # Battlefy (api.battlefy.com)
+    # ------------------------------------------------------------------
+    #
+    # Battlefy's API needs no key but rejects requests without browser-like
+    # Origin/Referer headers (403 "Direct API access is not permitted").
+    # The matches endpoint serves the full bracket: winner/loser/final
+    # matches with team names + scores, linked via matchNumber/next.
+    API_BATTLEFY = "https://api.battlefy.com"
+    _BF_HEADERS = [
+        "-H", "Origin: https://battlefy.com",
+        "-H", "Referer: https://battlefy.com/",
+    ]
+
+    def _battlefy_payload(self, tournament_hex_id: str) -> dict | None:
+        """Fetch a Battlefy tournament's bracket payload (network).
+
+        Two calls: tournament (stage ids) then stage matches. Both raw
+        payloads are kept so rebuilds stay offline (normalize below is pure).
+        """
+        d = self._json_get(
+            f"{self.API_BATTLEFY}/tournaments/{tournament_hex_id}",
+            headers=self._BF_HEADERS)
+        if not d or not isinstance(d, dict):
+            return None
+        stage_ids = d.get("stageIDs") or []
+        if not stage_ids:
+            return {"tournament": d, "stage": None, "matches": []}
+        stage = self._json_get(
+            f"{self.API_BATTLEFY}/stages/{stage_ids[0]}",
+            headers=self._BF_HEADERS)
+        matches = self._json_get(
+            f"{self.API_BATTLEFY}/stages/{stage_ids[0]}/matches",
+            headers=self._BF_HEADERS) or []
+        return {
+            "tournament": d,
+            "stage": stage,
+            "matches": matches,
+            "name": (d.get("name") or ""),
+        }
+
+    @staticmethod
+    def _battlefy_normalize(payload: dict) -> dict:
+        """Normalize a Battlefy payload into the shared schema (pure).
+
+        Battlefy matchTypes: winner / loser / final; roundNumber is 1-based
+        within the winners and losers sides (0 = third-place decider), and
+        the 'final' matches (roundNumber 1..) end the bracket.
+        """
+        ms = payload.get("matches") or []
+        if not ms:
+            return {"source": "battlefy", "title": "", "stages": []}
+        w, l, f, third = {}, {}, [], []
+        for m in ms:
+            nm = BracketFetcher._battlefy_match(m)
+            if nm.get("_bye"):
+                continue
+            t = nm.get("_t")
+            rn = m.get("roundNumber")
+            if t == "winner":
+                w.setdefault(rn, []).append(nm)
+            elif t == "loser" and rn == 0:
+                # roundNumber 0 = third-place decider, not a losers-bracket round
+                third.append(nm)
+            elif t == "loser":
+                l.setdefault(rn, []).append(nm)
+            else:
+                f.append(nm)
+
+        def _mk(name, by_round):
+            if not by_round:
+                return None
+            return {"name": name, "rounds": [
+                {"name": f"Round {rn}", "round": i,
+                 "matches": by_round[rn]}
+                for i, rn in enumerate(sorted(by_round))
+            ]}
+
+        groups = [g for g in (
+            _mk("Winners Bracket", w),
+            _mk("Losers Bracket", l),
+            (_mk("Grand Final", {1: f}) if f else None),
+        ) if g]
+        if third:
+            groups.append({"name": "Third place", "rounds": [
+                {"name": "Third place", "round": 0, "matches": third}]})
+        complete = all(
+            m.get("winner") or not (m.get("p1") and m.get("p2"))
+            for g in groups for r in g["rounds"] for m in r["matches"]
+        )
+        return {
+            "source": "battlefy",
+            "title": payload.get("name") or "",
+            "complete": complete,
+            "stages": [{"name": "", "groups": groups}],
+        }
+
+    @staticmethod
+    def _battlefy_match(m: dict) -> dict:
+        """Normalize one Battlefy match to {p1, p2, score1, score2, winner}.
+
+        Keeps the source matchType in "_t" (stripped by _battlefy_normalize's
+        grouping) so the bracket-side grouping can split winners/losers/final
+        exactly like the other providers' group structure.
+        """
+        t = (m.get("top") or {}).get("team") or {}
+        b = (m.get("bottom") or {}).get("team") or {}
+        p1 = (t.get("name") or "").strip()
+        p2 = (b.get("name") or "").strip()
+        # Byes: an empty side (no team) is a placeholder, not a real match.
+        if not p1 or not p2:
+            return {"p1": p1, "p2": p2, "score1": None, "score2": None,
+                    "winner": None, "_t": m.get("matchType"), "_bye": True}
+        s1 = (m.get("top") or {}).get("score")
+        s2 = (m.get("bottom") or {}).get("score")
+        if s1 is None or s2 is None:
+            s1 = s2 = None
+        winner = None
+        if (m.get("top") or {}).get("winner"):
+            winner = "p1"
+        elif (m.get("bottom") or {}).get("winner"):
+            winner = "p2"
+        return {"p1": p1, "p2": p2, "score1": s1, "score2": s2,
+                "winner": winner, "_t": m.get("matchType")}
+
+    # ------------------------------------------------------------------
+    # start.gg / smash.gg (api.start.gg GraphQL)
+    # ------------------------------------------------------------------
+    #
+    # The legacy REST API (api.smash.gg/*, expand=...) is dead (503/403),
+    # and the GraphQL API requires a token. When STARTGG_API_TOKEN is set we
+    # query the phase/set structure the same way the site does; without a
+    # token the source simply isn't fetchable and we skip (never crash).
+    API_STARTGG = "https://api.start.gg/gql/alpha"
+
+    def _startgg_payload(self, slug: str) -> dict | None:
+        """Fetch a start.gg tournament bracket via GraphQL (network).
+
+        Requires STARTGG_API_TOKEN (free self-service token). Queries the
+        tournament's events -> phases -> sets with entrant/score data.
+        """
+        if not _STARTGG_API_TOKEN:
+            logger.debug(f"startgg {slug}: STARTGG_API_TOKEN not set, skipping")
+            return None
+        query = """query Q($slug: String!) {
+          tournament(slug: $slug) {
+            id
+            name
+            events {
+              id
+              name
+              phaseGroups {
+                id
+                phase { id name }
+                sets {
+                  id
+                  round
+                  identifier
+                  totalGames
+                  state
+                  slots {
+                    entrant { name }
+                    standing { placement }
+                  }
+                }
+              }
+            }
+          }
+        }"""
+        body = self._json_post(
+            self.API_STARTGG, {"query": query, "variables": {"slug": slug}},
+            headers=["-H", f"Authorization: Bearer {_STARTGG_API_TOKEN}",
+                     "-H", "Content-Type: application/json"])
+        if not body:
+            return None
+        data = body.get("data") or {}
+        tourn = data.get("tournament") or {}
+        if not tourn:
+            return None
+        return {"tournament": tourn}
+
+    @staticmethod
+    def _startgg_normalize(payload: dict) -> dict:
+        """Normalize a start.gg GraphQL payload into the shared schema (pure).
+
+        Sets carry a signed `round` (positive = winners, negative = losers,
+        matching the site's bracket display) and slots with entrant names +
+        standing (1 = winner). Group by the phaseGroup's phase name when
+        available, else by round sign.
+        """
+        tourn = payload.get("tournament") or {}
+        events = tourn.get("events") or []
+        groups = []
+        for ev in events:
+            for pg in ev.get("phaseGroups") or []:
+                phase = pg.get("phase") or {}
+                pname = phase.get("name") or ""
+                sets = pg.get("sets") or []
+                if not sets:
+                    continue
+                by_round = {}
+                for s in sets:
+                    rn = s.get("round")
+                    by_round.setdefault(rn, []).append(s)
+                rounds = []
+                for rn in sorted(by_round, key=lambda r: abs(r or 0)):
+                    rounds.append({
+                        "name": f"Round {abs(rn or 0)}",
+                        "round": rn or 0,
+                        "matches": [BracketFetcher._startgg_match(s) for s in by_round[rn]],
+                    })
+                # Group label: prefer the phase name; fall back to Winners/
+                # Losers by the sign of the first round.
+                sign = 1
+                if by_round:
+                    first = min(by_round, key=lambda r: abs(r or 0))
+                    sign = 1 if (first or 0) >= 0 else -1
+                gname = pname or ("Winners Bracket" if sign > 0 else "Losers Bracket")
+                groups.append({"name": gname, "rounds": rounds})
+        if not groups:
+            return {"source": "startgg", "title": "", "stages": []}
+        complete = all(
+            m.get("winner") or not (m.get("p1") and m.get("p2"))
+            for g in groups for r in g["rounds"] for m in r["matches"]
+        )
+        return {
+            "source": "startgg",
+            "title": tourn.get("name") or "",
+            "complete": complete,
+            "stages": [{"name": "", "groups": groups}],
+        }
+
+    @staticmethod
+    def _startgg_match(s: dict) -> dict:
+        """Normalize one start.gg set to {p1, p2, score1, score2, winner}."""
+        slots = s.get("slots") or []
+        p1 = p2 = ""
+        s1 = s2 = None
+        winner = None
+        if len(slots) >= 1 and slots[0].get("entrant"):
+            p1 = (slots[0]["entrant"].get("name") or "").strip()
+        if len(slots) >= 2 and slots[1].get("entrant"):
+            p2 = (slots[1]["entrant"].get("name") or "").strip()
+        # standing.placement 1 marks the winner; scores are derived from the
+        # set's completed games (not carried in this query), so they stay
+        # None unless present in the payload.
+        if slots and slots[0].get("standing", {}).get("placement") == 1:
+            winner = "p1"
+        elif len(slots) > 1 and slots[1].get("standing", {}).get("placement") == 1:
+            winner = "p2"
+        score1 = s.get("score1")
+        score2 = s.get("score2")
+        if isinstance(score1, int) and isinstance(score2, int):
+            s1, s2 = score1, score2
         return {"p1": p1, "p2": p2, "score1": s1, "score2": s2, "winner": winner}
 
     # ------------------------------------------------------------------
