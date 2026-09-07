@@ -1,16 +1,19 @@
-"""Reconciliation sweep — refresh tournaments with stuck incomplete standings.
+"""Reconciliation sweep — refresh tournaments with stuck incomplete data.
 
 The pipeline's normal tournament refresh is event-driven: it only re-downloads
 and re-parses a tournament's page (and bracket) when a *new match* for that
 tournament arrives. This creates a gap: if a tournament's final match is parsed
 while PlusForward still shows placeholder standings (empty 1st/2nd names), and
 no further matches arrive, the stale page/bracket/standings are never
-re-checked — even after PlusForward publishes the real winners later.
+re-checked — even after PlusForward publishes the real winners later. The same
+applies to brackets fetched mid-event (e.g. an EGB grand final still READY at
+fetch time): the standings may already be complete, so nothing ever re-fetches
+the bracket once the provider publishes the result.
 
 This stage closes that gap with a schedule-driven, graduated cadence. Every
-sweep it considers only tournaments with INCOMPLETE final standings (some ranked
-position has an empty player name) and force-refreshes those whose per-schedule
-cadence is due:
+sweep it considers tournaments with INCOMPLETE final standings (some ranked
+position has an empty player name) **or** an INCOMPLETE stored bracket
+(complete=false) and force-refreshes those whose per-schedule cadence is due:
 
   - before schedule_end: refresh every minute        (RECONCILE_IN_SCHEDULE)
   - schedule_end .. +1 week: refresh every hour      (RECONCILE_POST_END)
@@ -100,8 +103,30 @@ def _cadence_seconds(schedule_end, last_match, now: datetime) -> int | None:
     return NO_SCHEDULE_SECONDS
 
 
+def _incomplete_bracket_tournaments(db: Database) -> list[int]:
+    """Tournament ids whose stored bracket is marked incomplete.
+
+    A bracket fetched mid-event (e.g. an EGB grand final still READY at fetch
+    time) stays incomplete forever unless something re-fetches it — the
+    standings may already be complete, so the standings-driven sweep alone
+    never revisits it. This is the bracket-side working set for that sweep.
+    """
+    rows = db.client.execute(
+        "SELECT tournament_id, data FROM tournament_brackets FINAL"
+    )
+    out = []
+    for tid, data in rows:
+        try:
+            d = json.loads(data or "{}")
+        except Exception:
+            continue
+        if d.get("complete") is False:
+            out.append(tid)
+    return out
+
+
 def _due_tournaments(db: Database, now: datetime) -> list[int]:
-    """Incomplete-standings tournaments whose per-schedule cadence is due."""
+    """Incomplete-standings / incomplete-bracket tournaments due for refresh."""
     # Newest match time per tournament.
     last_match = {
         r[0]: r[1]
@@ -127,14 +152,27 @@ def _due_tournaments(db: Database, now: datetime) -> list[int]:
         last = _last_attempt.get(tid)
         if last is None or (time.time() - last) >= cadence:
             due.append(tid)
-    return due
+    # Incomplete brackets: refresh on the same graduated cadence so a bracket
+    # fetched while its final was still pending gets re-checked after the
+    # provider publishes the result. Dropped once past the scrape window.
+    for tid in _incomplete_bracket_tournaments(db):
+        det = db.get_tournament_details(tid)
+        schedule_end = det.get("schedule_end") if det else None
+        cadence = _cadence_seconds(schedule_end, last_match.get(tid), now)
+        if cadence is None:
+            _last_attempt.pop(tid, None)
+            continue
+        last = _last_attempt.get(tid)
+        if last is None or (time.time() - last) >= cadence:
+            due.append(tid)
+    return list(dict.fromkeys(due))
 
 
 def reconcile_once(force_all: bool = False) -> dict:
     """Run one reconciliation sweep. Returns stats dict.
 
-    force_all: refresh every incomplete-standings tournament regardless of the
-    interval gate (used by manual runs / tests).
+    force_all: refresh every incomplete-standings / incomplete-bracket
+    tournament regardless of the interval gate (used by manual runs / tests).
     """
     global _last_sweep
     now_ts = time.time()
@@ -158,20 +196,30 @@ def reconcile_once(force_all: bool = False) -> dict:
                 fetcher = PageFetcher()
                 resolver = TournamentResolver(db, fetcher)
                 bracket_fetcher = BracketFetcher(db, fetcher)
-                html = fetcher.fetch(f"https://www.plusforward.net/post/{tid}/")
-                if not html:
-                    logger.warning(f"reconcile: no html for {tid}")
-                    skipped += 1
-                    continue
-                db.store_raw_post(tid, html, status="downloaded")
-                resolver.resolve(tid, force=True)
+                det = db.get_tournament_details(tid)
+                standings_incomplete = bool(det) and _incomplete_rankings(det.get("rankings"))
+                if standings_incomplete:
+                    # Standings stuck: re-download + re-parse the page.
+                    html = fetcher.fetch(f"https://www.plusforward.net/post/{tid}/")
+                    if not html:
+                        logger.warning(f"reconcile: no html for {tid}")
+                        skipped += 1
+                        continue
+                    db.store_raw_post(tid, html, status="downloaded")
+                    resolver.resolve(tid, force=True)
+                # Bracket-only case (standings already complete): just
+                # re-fetch the bracket — e.g. an EGB grand final that was
+                # still READY when first fetched, published later.
                 try:
                     bracket_fetcher.fetch_for_tournament_if_needed(tid, force=True)
                 except Exception as e:
                     logger.warning(f"reconcile: bracket refresh failed for {tid}: {e}")
                 det = db.get_tournament_details(tid)
-                if det and not _incomplete_rankings(det.get("rankings")):
-                    logger.info(f"reconcile: {tid} standings now complete")
+                standings_ok = bool(det) and not _incomplete_rankings(det.get("rankings"))
+                b = db.get_tournament_bracket(tid)
+                bracket_ok = bool(b) and b.get("data", {}).get("complete") is True
+                if standings_ok and bracket_ok:
+                    logger.info(f"reconcile: {tid} standings + bracket now complete")
                     _last_attempt.pop(tid, None)
                 refreshed += 1
             except Exception as e:
