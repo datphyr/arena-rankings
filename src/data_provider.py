@@ -1608,10 +1608,17 @@ class DataProvider:
                 # End rating: most recent snapshot at/before the last match.
                 end_rating = rows[-1][1]
                 # Start rating: most recent snapshot strictly before the first
-                # match; if none (history begins inside the window), use the
-                # earliest in-window snapshot as the baseline.
+                # match. A player with no such snapshot has no rated history
+                # before this window — their history begins inside it, i.e. they
+                # are making their debut here. Baseline those at the initial
+                # rating, exactly like the per-match path does
+                # (get_matches_rating_deltas). Falling back to the earliest
+                # in-window snapshot instead made start == end for a debut, so
+                # the delta came out exactly 0 and the standings template hides
+                # zero deltas — the player showed no rating at all even though
+                # their match rows did.
                 idx = bisect.bisect_left(rows, (first_ts,))
-                start_rating = rows[idx - 1][1] if idx > 0 else rows[0][1]
+                start_rating = rows[idx - 1][1] if idx > 0 else 1500.0
                 out[pid][sys] = round(end_rating - start_rating, 1)
         return out
 
