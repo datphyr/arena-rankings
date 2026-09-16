@@ -3,7 +3,7 @@
 import logging
 import json
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from clickhouse_driver import Client
@@ -27,6 +27,23 @@ _schema_lock = threading.Lock()
 from src.db_schema import DDL_STATEMENTS
 
 logger = logging.getLogger(__name__)
+
+# Matches whose played_at is further in the future than this are treated as
+# bad data (PlusForward typo dates, e.g. "5th October 2026" for a September
+# match) and excluded from every rating read. Without this, a future-dated
+# match becomes the incremental cursor (max(played_at) in rating_history),
+# hiding every unrated match with an earlier played_at behind it, and the
+# count-based backfill check in _check_match_state fires forever because the
+# recompute re-rates the same future match (observed: full recompute every
+# few minutes, then "incremental, 1 from 2026-10-01" every minute for days).
+# The match stays visible on the site; it just never enters ratings or the
+# cursor until its date is corrected (or actually arrives).
+FUTURE_MATCH_TOLERANCE_SECONDS = 24 * 3600
+
+
+def _future_cutoff() -> datetime:
+    """UTC cutoff: played_at > this is treated as a future-dated match."""
+    return datetime.now(timezone.utc) + timedelta(seconds=FUTURE_MATCH_TOLERANCE_SECONDS)
 
 
 class _DatetimeEpoch:
@@ -897,7 +914,9 @@ class Database:
     def get_all_matches_for_game(self, game_name: str = "") -> list:
         """Get all parsed matches for a specific game (or all games if empty).
 
-        Only returns 1v1 duel matches.
+        Only returns 1v1 duel matches. Future-dated matches (played_at beyond
+        the tolerance window) are excluded — they are bad data (PlusForward
+        typo dates) and must never enter ratings or the cursor.
         """
         duel_filter = (
             "((match_format ILIKE '%%duel%%' AND match_format NOT ILIKE '%%team%%')"
@@ -909,13 +928,16 @@ class Database:
                 "SELECT match_id, player1_id, player2_id, player1_score, player2_score, "
                 "winner_id, played_at, game_id, tournament_id "
                 "FROM matches FINAL WHERE game_id = %(g)s AND " + duel_filter +
-                " ORDER BY played_at, match_id",
-                {"g": gid},
+                " AND played_at <= %(cut)s "
+                "ORDER BY played_at, match_id",
+                {"g": gid, "cut": _future_cutoff()},
             )
         return self.client.execute(
             "SELECT match_id, player1_id, player2_id, player1_score, player2_score, "
             "winner_id, played_at, game_id, tournament_id "
-            "FROM matches FINAL WHERE " + duel_filter + " ORDER BY played_at, match_id"
+            "FROM matches FINAL WHERE " + duel_filter +
+            " AND played_at <= %(cut)s ORDER BY played_at, match_id",
+            {"cut": _future_cutoff()},
         )
 
     def get_matches_for_game_after(self, game_name: str = "", after_time=None,
@@ -929,7 +951,8 @@ class Database:
         its id). Tuple comparison in ClickHouse is lexicographic, so this is
         one predicate. When after_time is None the cursor is epoch
         (UTC-aware: naive datetimes get localized to the server timezone).
-        Only returns 1v1 duel matches.
+        Only returns 1v1 duel matches. Future-dated matches are excluded so
+        they can never become the cursor or be rated.
         """
         duel_filter = (
             "((match_format ILIKE '%%duel%%' AND match_format NOT ILIKE '%%team%%')"
@@ -938,7 +961,7 @@ class Database:
         if after_time is None:
             after_time = datetime(1970, 1, 1, tzinfo=timezone.utc)
         gid = self.resolve_game_id(game_name)
-        params = {"t": after_time, "mid": after_match_id}
+        params = {"t": after_time, "mid": after_match_id, "cut": _future_cutoff()}
         game_filter = ""
         if gid:
             game_filter = "game_id = %(g)s AND "
@@ -950,6 +973,7 @@ class Database:
             f"WHERE {game_filter}((played_at > %(t)s) "
             "OR (played_at = %(t)s AND match_id > %(mid)s)) "
             "AND " + duel_filter + " "
+            "AND played_at <= %(cut)s "
             "ORDER BY played_at, match_id"
         )
         return self.client.execute(query, params)
@@ -960,12 +984,18 @@ class Database:
         The point cursor for incremental rating compute: played_at orders the
         replay (the trustworthy chronology), match_id breaks ties. Returns
         (None, 0) when the scope has no history yet.
+
+        Future-dated matches are excluded from the cursor: a typo-dated match
+        (e.g. PlusForward "5th October 2026" for a September match) must never
+        become the cursor, or every unrated match with an earlier played_at
+        would hide behind it forever.
         """
         gid = self.resolve_game_id(game_name)
         rows = self.client.execute(
             "SELECT max(played_at), argMax(match_id, (played_at, match_id)) "
-            "FROM rating_history WHERE game_id = %(g)s AND rating_system = %(rs)s",
-            {"g": gid, "rs": rating_system},
+            "FROM rating_history WHERE game_id = %(g)s AND rating_system = %(rs)s "
+            "AND played_at <= %(cut)s",
+            {"g": gid, "rs": rating_system, "cut": _future_cutoff()},
         )
         t, mid = rows[0] if rows else (None, 0)
         return (t, mid) if t else (None, 0)
@@ -976,20 +1006,22 @@ class Database:
 
         Used by the rank stage gate: anything beyond the last-rated point is
         unrated work, detected instantly regardless of match_id order.
+        Future-dated matches are excluded — they are bad data, not work.
         """
         duel_filter = (
             "((match_format ILIKE '%%duel%%' AND match_format NOT ILIKE '%%team%%')"
             " OR match_format ILIKE '%%1v1%%')"
         )
         gid = self.resolve_game_id(game_name)
-        params = {"t": after_time, "mid": after_match_id}
+        params = {"t": after_time, "mid": after_match_id, "cut": _future_cutoff()}
         game_filter = "game_id = %(g)s AND " if gid else ""
         if gid:
             params["g"] = gid
         rows = self.client.execute(
             "SELECT count() FROM matches FINAL "
             f"WHERE {game_filter}((played_at > %(t)s) "
-            "OR (played_at = %(t)s AND match_id > %(mid)s)) AND " + duel_filter,
+            "OR (played_at = %(t)s AND match_id > %(mid)s)) AND " + duel_filter +
+            " AND played_at <= %(cut)s",
             params,
         )
         return rows[0][0] if rows else 0
@@ -1054,12 +1086,17 @@ class Database:
         return rows[0][0] if rows and rows[0][0] else None
 
     def get_last_processed_date(self, game_name: str, rating_system: str):
-        """Get the last played_at date processed in rating_history for a game/system."""
+        """Get the last played_at date processed in rating_history for a game/system.
+
+        Future-dated matches are excluded so a typo-dated match can never
+        become the Glicko-2 period cursor.
+        """
         gid = self.resolve_game_id(game_name)
         rows = self.client.execute(
             "SELECT max(played_at) FROM rating_history "
-            "WHERE game_id = %(g)s AND rating_system = %(rs)s",
-            {"g": gid, "rs": rating_system},
+            "WHERE game_id = %(g)s AND rating_system = %(rs)s "
+            "AND played_at <= %(cut)s",
+            {"g": gid, "rs": rating_system, "cut": _future_cutoff()},
         )
         return rows[0][0] if rows and rows[0][0] else None
 
@@ -1157,7 +1194,8 @@ class Database:
         """Get matches with played_at >= from_date for a game (or all games if empty).
 
         Only returns 1v1 duel matches. Ordered by (played_at, match_id) for a
-        deterministic replay when timestamps tie.
+        deterministic replay when timestamps tie. Future-dated matches are
+        excluded so they can never be rated or become the cursor.
         """
         duel_filter = (
             "((match_format ILIKE '%%duel%%' AND match_format NOT ILIKE '%%team%%')"
@@ -1170,17 +1208,19 @@ class Database:
                 "winner_id, played_at, game_id, tournament_id "
                 "FROM matches FINAL "
                 "WHERE game_id = %(g)s AND played_at >= %(d)s "
+                "AND played_at <= %(cut)s "
                 "AND " + duel_filter + " "
                 "ORDER BY played_at, match_id",
-                {"g": gid, "d": from_date},
+                {"g": gid, "d": from_date, "cut": _future_cutoff()},
             )
         return self.client.execute(
             "SELECT match_id, player1_id, player2_id, player1_score, player2_score, "
             "winner_id, played_at, game_id, tournament_id "
             "FROM matches FINAL WHERE played_at >= %(d)s "
+            "AND played_at <= %(cut)s "
             "AND " + duel_filter + " "
             "ORDER BY played_at, match_id",
-            {"d": from_date},
+            {"d": from_date, "cut": _future_cutoff()},
         )
 
     def get_tournament_tier(self, tournament_id: int) -> str:

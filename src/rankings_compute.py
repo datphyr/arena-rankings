@@ -15,7 +15,7 @@ from collections import defaultdict
 from datetime import datetime
 
 from config import ELO_K_BASE, ELO_TIER_MULTIPLIER, DEFAULT_TIER_MULTIPLIER, GLICKO2_TAU, GLICKO2_INITIAL_VOL, GLICKO2_PERIOD
-from src.db_client import Database
+from src.db_client import Database, _future_cutoff
 
 logger = logging.getLogger(__name__)
 
@@ -368,6 +368,14 @@ def _check_match_state(db: Database, game_name: str, rating_system: str) -> tupl
       - min(hist) > min(db) → older matches appeared → backfill
       - Both same → up to date
 
+    Future-dated matches (played_at beyond the tolerance window) are excluded
+    from both sides of every comparison: they are bad data (PlusForward typo
+    dates) and must never drive a backfill loop. Without this, a future-dated
+    match is re-rated by every full recompute, so db_count != hist_count never
+    resolves and the pipeline full-recomputes forever (observed: recomputes at
+    22:40/23:03/23:04, then "incremental, 1 from 2026-10-01" every minute for
+    two days).
+
     Both Elo and Glicko-2 use this function so they stay in sync: they both
     compare against Elo's history, which is the authoritative match tracker.
 
@@ -382,20 +390,21 @@ def _check_match_state(db: Database, game_name: str, rating_system: str) -> tupl
     gid = db.resolve_game_id(game_name)
     if gid:
         db_minmax = db.client.execute(
-            f"SELECT min(match_id), max(match_id), count() FROM matches FINAL WHERE game_id = %(g)s AND {duel_filter}",
-            {"g": gid}
+            f"SELECT min(match_id), max(match_id), count() FROM matches FINAL WHERE game_id = %(g)s AND {duel_filter} AND played_at <= %(cut)s",
+            {"g": gid, "cut": _future_cutoff()}
         )[0]
         hist_minmax = db.client.execute(
-            "SELECT min(match_id), max(match_id), count(DISTINCT match_id) FROM rating_history WHERE rating_system = %(rs)s AND game_id = %(g)s",
-            {"rs": hist_system, "g": gid}
+            "SELECT min(match_id), max(match_id), count(DISTINCT match_id) FROM rating_history WHERE rating_system = %(rs)s AND game_id = %(g)s AND played_at <= %(cut)s",
+            {"rs": hist_system, "g": gid, "cut": _future_cutoff()}
         )[0]
     else:
         db_minmax = db.client.execute(
-            f"SELECT min(match_id), max(match_id), count() FROM matches FINAL WHERE {duel_filter}"
+            f"SELECT min(match_id), max(match_id), count() FROM matches FINAL WHERE {duel_filter} AND played_at <= %(cut)s",
+            {"cut": _future_cutoff()}
         )[0]
         hist_minmax = db.client.execute(
-            "SELECT min(match_id), max(match_id), count(DISTINCT match_id) FROM rating_history WHERE rating_system = %(rs)s",
-            {"rs": hist_system}
+            "SELECT min(match_id), max(match_id), count(DISTINCT match_id) FROM rating_history WHERE rating_system = %(rs)s AND played_at <= %(cut)s",
+            {"rs": hist_system, "cut": _future_cutoff()}
         )[0]
 
     db_min, db_max, db_count = db_minmax
