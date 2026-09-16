@@ -714,6 +714,15 @@ def _parse_post(db, parser, resolver, bracket_fetcher, post_id: int, raw_html: s
     if _is_tournament_post(raw_html):
         try:
             resolver.resolve(post_id)
+            # Also fetch the bracket here: a tournament page can be parsed on
+            # its own (claimed straight from the queue, or resolved by another
+            # path) without any match post being stored, in which case the
+            # bracket fetch in store_parsed_match never runs. Idempotent.
+            if bracket_fetcher is not None:
+                try:
+                    bracket_fetcher.fetch_for_tournament_if_needed(post_id)
+                except Exception as e:
+                    logger.warning(f"bracket fetch failed for tournament {post_id}: {e}")
             db.raw_post_mark(post_id, "parsed")
             return True, ""
         except Exception as e:
@@ -833,9 +842,11 @@ def parse_all_matches(limit: int = 0, workers: int = 0) -> tuple[int, int]:
         parser = MatchDetailParser()
         fetcher = PageFetcher()
         resolver = TournamentResolver(db, fetcher)
+        bracket_fetcher = BracketFetcher(db, fetcher)
         try:
             for i, (match_id, raw_html) in enumerate(rows, 1):
-                ok, reason = _parse_post(db, parser, resolver, None, match_id, raw_html)
+                ok, reason = _parse_post(db, parser, resolver,
+                                         bracket_fetcher, match_id, raw_html)
                 if ok:
                     success += 1
                 else:

@@ -125,8 +125,28 @@ def _incomplete_bracket_tournaments(db: Database) -> list[int]:
     return out
 
 
+def _missing_bracket_tournaments(db: Database) -> list[int]:
+    """Tournament ids with NO stored bracket at all.
+
+    The normal parse path fetches a tournament's bracket when it stores a
+    match, and the reconcile sweep catches *incomplete* stored brackets — but
+    a tournament that finished fast (standings complete before any bracket was
+    fetched) has no bracket row and complete standings, so neither path ever
+    looks at it. This is that third working set: bracketless tournaments,
+    which the sweep fetch-probes on the same graduated cadence so a bracket
+    published later still lands. The cadence gate drops long-dead events, so
+    this stays bounded to the recent window.
+    """
+    rows = db.client.execute(
+        "SELECT tournament_id FROM tournaments FINAL "
+        "WHERE tournament_id NOT IN "
+        "(SELECT tournament_id FROM tournament_brackets FINAL)"
+    )
+    return [r[0] for r in rows]
+
+
 def _due_tournaments(db: Database, now: datetime) -> list[int]:
-    """Incomplete-standings / incomplete-bracket tournaments due for refresh."""
+    """Incomplete-standings / incomplete-bracket / bracketless due for refresh."""
     # Newest match time per tournament.
     last_match = {
         r[0]: r[1]
@@ -135,36 +155,46 @@ def _due_tournaments(db: Database, now: datetime) -> list[int]:
             "WHERE tournament_id > 0 GROUP BY tournament_id"
         )
     }
-    rows = db.client.execute(
-        "SELECT tournament_id, schedule_end, rankings FROM tournaments FINAL "
-        "WHERE rankings != '' AND rankings != '[]'"
-    )
+    # Scheduled end per tournament (bulk: the cadence gate needs it for every
+    # candidate set below, and per-tid lookups would be an N+1 query storm).
+    schedule_end_by_tid = {
+        r[0]: r[1]
+        for r in db.client.execute(
+            "SELECT tournament_id, schedule_end FROM tournaments FINAL"
+        )
+    }
+
     due = []
-    for tid, schedule_end, rankings in rows:
-        if not _incomplete_rankings(rankings):
-            continue  # complete — not our concern
-        cadence = _cadence_seconds(schedule_end, last_match.get(tid), now)
+
+    def _add(tid: int) -> None:
+        cadence = _cadence_seconds(
+            schedule_end_by_tid.get(tid), last_match.get(tid), now)
         if cadence is None:
             # Past the scrape window — drop it from the working set so we stop
             # hitting PlusForward for a dead event.
             _last_attempt.pop(tid, None)
-            continue
+            return
         last = _last_attempt.get(tid)
         if last is None or (time.time() - last) >= cadence:
             due.append(tid)
+
+    rows = db.client.execute(
+        "SELECT tournament_id, rankings FROM tournaments FINAL "
+        "WHERE rankings != '' AND rankings != '[]'"
+    )
+    for tid, rankings in rows:
+        if _incomplete_rankings(rankings):
+            _add(tid)
     # Incomplete brackets: refresh on the same graduated cadence so a bracket
     # fetched while its final was still pending gets re-checked after the
     # provider publishes the result. Dropped once past the scrape window.
     for tid in _incomplete_bracket_tournaments(db):
-        det = db.get_tournament_details(tid)
-        schedule_end = det.get("schedule_end") if det else None
-        cadence = _cadence_seconds(schedule_end, last_match.get(tid), now)
-        if cadence is None:
-            _last_attempt.pop(tid, None)
-            continue
-        last = _last_attempt.get(tid)
-        if last is None or (time.time() - last) >= cadence:
-            due.append(tid)
+        _add(tid)
+    # Bracketless tournaments (no stored bracket at all): probe them too, so a
+    # bracket that was never fetched (or was published after the event) still
+    # lands. Same graduated cadence; long-dead events drop out via `None`.
+    for tid in _missing_bracket_tournaments(db):
+        _add(tid)
     return list(dict.fromkeys(due))
 
 

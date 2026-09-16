@@ -16,6 +16,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from src.bracket_fetcher import BracketFetcher
 from src.db_client import Database
 from src.fetcher import PageFetcher
 from src.match_parser import MatchDetailParser, _parse_post
@@ -53,7 +54,14 @@ def _parse_one(post_id: int, raw_html: str) -> tuple[int, bool, str]:
         parser = MatchDetailParser()
         fetcher = PageFetcher()
         resolver = TournamentResolver(db, fetcher)
-        ok, reason = _parse_post(db, parser, resolver, None, post_id, raw_html)
+        # Pass a BracketFetcher so storing a match also fetches its
+        # tournament's bracket (idempotent, once per tournament). Without it
+        # the normal parse path never fetched brackets at all — only the
+        # reconcile sweep did, and only for tournaments whose standings were
+        # still incomplete, so a tournament that finished quickly kept no
+        # bracket forever.
+        bracket_fetcher = BracketFetcher(db, fetcher)
+        ok, reason = _parse_post(db, parser, resolver, bracket_fetcher, post_id, raw_html)
         return (post_id, ok, reason)
     finally:
         db.close()

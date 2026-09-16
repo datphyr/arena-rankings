@@ -199,9 +199,10 @@ class BracketFetcher:
                                        force: bool = False) -> bool:
         """Fetch + store a bracket only if it's missing or stale.
 
-        Cheap no-network fast-path: if the tournament has no bracket source
-        (no toornament/shambler link), returns False immediately. Then skips
-        the fetch if a bracket is already stored and fresh.
+        Cheap fast-path: a fresh, non-empty stored bracket returns False
+        immediately (no network, no tournament-page read). A tournament with
+        no bracket source in its cached HTML still goes through
+        fetch_for_tournament, which falls back to the dynamic AJAX probe.
 
         Args:
             tournament_id: PlusForward tournament id.
@@ -210,25 +211,29 @@ class BracketFetcher:
             force: if True, always re-fetch + re-store even if a fresh bracket
                 exists (used to refresh brackets for in-progress events).
         """
+        # Cheap fast-path first: a fresh, non-empty stored bracket means there
+        # is nothing to do. Checking it before reading the cached tournament
+        # page matters now that the parse path calls this for every match —
+        # that read pulls the whole (50-100 KB) tournament HTML out of
+        # ClickHouse per match, all to immediately conclude "already stored".
+        if not force:
+            existing = self._db.get_tournament_bracket(tournament_id)
+            if existing and existing.get("data") and self._has_matches(existing["data"]):
+                if max_age_days is None:
+                    return False  # already stored, fresh enough
+                fa = existing.get("fetched_at")
+                if fa and (datetime.datetime.utcnow() - fa).days < max_age_days:
+                    return False
         raw_html = self._db.get_tournament_html(tournament_id)
         if not raw_html or not self.detect_source(raw_html):
             # No bracket link in the static HTML — but it may be loaded
             # dynamically ("Groups / Brackets" tab). Let fetch_for_tournament
             # decide via the AJAX fallback rather than returning False here.
             return self.fetch_for_tournament(tournament_id) if raw_html else False
-        if not force:
-            existing = self._db.get_tournament_bracket(tournament_id)
-            if existing and existing.get("data"):
-                # An empty stored bracket (no match data) doesn't count as
-                # fetched — it was likely a transient empty API response that
-                # got persisted. Always retry those.
-                if not self._has_matches(existing["data"]):
-                    return self.fetch_for_tournament(tournament_id)
-                if max_age_days is None:
-                    return False  # already stored, fresh enough
-                fa = existing.get("fetched_at")
-                if fa and (datetime.datetime.utcnow() - fa).days < max_age_days:
-                    return False
+        # Reaching here means either forced, nothing stored/fresh, or an empty
+        # stored bracket (no match data — a transient API miss that was
+        # persisted; the fast-path above deliberately skips those, so they
+        # always retry). All of them fetch.
         return self.fetch_for_tournament(tournament_id)
 
     @staticmethod
