@@ -824,29 +824,38 @@ class BracketFetcher:
         (1-based), indexInRound, home/away ({type, participant}), status,
         winner (participant id) and score ({home, away}). We group by side
         (a "group") then by round, resolving participant ids to names.
+
+        Group-stage matches (side "GROUP", carrying a `group` id like "A"/"B"
+        and ids like "GRP-A-R1-M0") are split per group instead of by side:
+        side alone collapses every round-robin group into one "GROUP" group,
+        whose per-group round numbers then overlap into a single bogus column
+        sequence (4 matches in round 1, 1 in each later round). Those groups
+        are marked round_robin so the display pipeline renders them flat and
+        skips elimination-style winner inference.
         """
         pmap = {p["id"]: p.get("displayName", "") for p in bracket.get("participants", [])}
 
-        # Split matches into side groups.
+        # Split matches: group-stage matches by their `group` id, everything
+        # else by side.
         by_side = {}
+        by_group = {}
         for m in bracket.get("matches", []):
-            by_side.setdefault(m.get("side", ""), []).append(m)
+            gid = m.get("group")
+            if gid or m.get("side") == "GROUP":
+                by_group.setdefault(gid or "", []).append(m)
+            else:
+                by_side.setdefault(m.get("side", ""), []).append(m)
 
         groups = []
+        # Round-robin groups first: the group stage qualifies into the bracket.
+        for gid in sorted(by_group):
+            groups.append(cls._egb_group(
+                f"Group {gid}" if gid else "Group", by_group[gid], pmap,
+                round_robin=True,
+            ))
         for side in sorted(by_side, key=lambda s: _EGB_SIDE_ORDER.get(s, 9)):
-            sm = by_side[side]
-            # Group by round, order by round number then indexInRound.
-            by_round = {}
-            for m in sm:
-                by_round.setdefault(m.get("round", 1), []).append(m)
-            rounds = []
-            for rn in sorted(by_round):
-                rms = sorted(by_round[rn], key=lambda m: m.get("indexInRound", 0))
-                norm = []
-                for m in rms:
-                    norm.append(cls._egb_match(m, pmap))
-                rounds.append({"name": f"Round {rn}", "round": rn, "matches": norm})
-            groups.append({"name": _EGB_SIDE_NAME.get(side, side), "rounds": rounds})
+            groups.append(cls._egb_group(
+                _EGB_SIDE_NAME.get(side, side), by_side[side], pmap))
 
         # Finished when every match is terminal (no pending/live matches).
         statuses = {m.get("status") for m in bracket.get("matches", [])}
@@ -859,6 +868,33 @@ class BracketFetcher:
             "complete": complete,
             "stages": [{"name": meta.get("name", ""), "groups": groups}],
         }
+
+    @classmethod
+    def _egb_group(cls, name: str, matches: list, pmap: dict,
+                   round_robin: bool = False) -> dict:
+        """Build one EGB group: match list by round, ordered by round then
+        indexInRound. Round numbers stay as the source gives them (per group),
+        so a second round-robin group numbers its rounds from 1 again.
+
+        round_robin marks group-stage groups: they have no elimination tree,
+        so the display pipeline renders them flat and does not infer winners
+        from advancement.
+        """
+        by_round = {}
+        for m in matches:
+            by_round.setdefault(m.get("round", 1), []).append(m)
+        rounds = []
+        for rn in sorted(by_round):
+            rms = sorted(by_round[rn], key=lambda m: m.get("indexInRound", 0))
+            rounds.append({
+                "name": f"Round {rn}",
+                "round": rn,
+                "matches": [cls._egb_match(m, pmap) for m in rms],
+            })
+        group = {"name": name, "rounds": rounds}
+        if round_robin:
+            group["round_robin"] = True
+        return group
 
     @staticmethod
     def _egb_match(m: dict, pmap: dict) -> dict:

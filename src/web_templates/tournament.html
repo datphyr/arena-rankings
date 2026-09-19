@@ -132,10 +132,12 @@
         {% if rounds %}
         {% set max_count = (rounds | map(attribute='matches') | map('length') | max) %}
         {% set min_count = (rounds | map(attribute='matches') | map('length') | min) %}
-        {% set grp_name = group.name | lower %}
-        {# Swiss / round-robin / group stages are not elimination brackets —
-           render flat (no connectors) regardless of round count variations. #}
-        {% set is_flat = (max_count == min_count) or ('swiss' in grp_name) or ('round-robin' in grp_name) or (grp_name == 'group 1') %}
+        {# Round-robin / group stages carry an explicit round_robin flag from
+           the normalizer — they are not elimination brackets, so render flat
+           (no connectors) no matter how their round counts vary. Groups
+           without the flag fall back to the equal-count check (a bracket
+           where every round has the same match count has no tree to draw). #}
+        {% set is_flat = group.round_robin or (max_count == min_count) %}
         <div class="bracket-group">
           <div class="bracket-group-name">{{ group.name }}</div>
           <div class="bracket-columns {{ 'bracket-flat' if is_flat }}" style="--bracket-max: {{ max_count }};">

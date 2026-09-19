@@ -1259,9 +1259,16 @@ class DataProvider:
         For each group, a player who appears in round N+1 must have advanced
         from round N, so they're the winner of their round-N match. Only fills
         in winners that are currently None (keeps recorded ones).
+
+        Round-robin groups (flagged round_robin by the normalizer) are skipped:
+        they have no advancement, so a player appearing in a later round proves
+        nothing. Inferring there would fabricate a winner for a postponed match
+        whose players also meet again in a later round.
         """
         for stage in data.get("stages", []):
             for group in stage.get("groups", []):
+                if group.get("round_robin"):
+                    continue
                 rounds = [r for r in group.get("rounds", []) if r.get("matches")]
                 for idx in range(len(rounds) - 1):
                     cur = rounds[idx]["matches"]
