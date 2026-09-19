@@ -167,6 +167,12 @@ _EGB_SIDE_NAME = {
 # Toornament API caps page size at 50 (64+ returns an out-of-range error).
 _API_LIMIT = 50
 
+# Toornament stage types that are round-robin/group stages rather than
+# elimination trees. Their groups carry no advancement, so the display
+# pipeline must render them flat (see tournament.html) and must NOT infer
+# winners from a player reappearing in a later round (_infer_bracket_winners).
+_TOORNAMENT_ROUND_ROBIN_TYPES = {"league", "pools", "swiss", "round_robin"}
+
 
 class BracketFetcher:
     """Fetch + normalize + store brackets for a tournament."""
@@ -455,7 +461,10 @@ class BracketFetcher:
         for st in stages:
             sid = st["id"]
             sm = matches_by_stage.get(sid, [])
-            groups = self._toornament_groups(sid, sm, gname_extra)
+            groups = self._toornament_groups(
+                sid, sm, gname_extra,
+                round_robin=st.get("type") in _TOORNAMENT_ROUND_ROBIN_TYPES,
+            )
             result_stages.append({
                 "name": st["name"],
                 "groups": groups,
@@ -641,12 +650,17 @@ class BracketFetcher:
         return out
 
     def _toornament_groups(self, stage_id: int, matches: list[dict],
-                           gname_extra: dict | None = None) -> list[dict]:
+                           gname_extra: dict | None = None,
+                           round_robin: bool = False) -> list[dict]:
         """Group matches by group (Winners/Losers/Grand Final), then by round.
 
         Group names are taken from the matches themselves (always present).
         `gname_extra` (persisted in the raw payload from the fetch-time
         /groups probe) is the fallback - keeps normalize runnable offline.
+
+        `round_robin` marks every group in a round-robin/group stage (league,
+        pools, swiss): they have no elimination tree, so the display pipeline
+        renders them flat and does not infer winners from advancement.
         """
         # Primary: group names from the matches' own group objects.
         gname = {}
@@ -692,10 +706,13 @@ class BracketFetcher:
                 rn = rnd.get("number", 0)
                 rounds_map.setdefault(rn, []).append(m)
             rounds = [self._toornament_round(rn, ms) for rn, ms in sorted(rounds_map.items())]
-            out_groups.append({
+            group = {
                 "name": gname.get(gid, ""),
                 "rounds": rounds,
-            })
+            }
+            if round_robin:
+                group["round_robin"] = True
+            out_groups.append(group)
         return out_groups
 
     @staticmethod
@@ -992,6 +1009,9 @@ class BracketFetcher:
         Elimination matches carry elim_type (WB/LB/GF/GF2) + elim_round;
         group-stage matches carry group_no + group_round. We split by elim
         type (a "group") then by round, ordering winners -> losers -> final.
+        Group-stage groups are marked round_robin (no elimination tree): the
+        display pipeline renders them flat and does not infer winners from
+        advancement.
         """
         _KUACHI_SIDE_ORDER = {"WB": 0, "LB": 1, "GF": 2, "GF1": 2, "GF2": 3}
         _KUACHI_SIDE_NAME = {"WB": "Winners Bracket", "LB": "Losers Bracket", "GF": "Grand Final", "GF1": "Grand Final", "GF2": "Grand Final Reset"}
@@ -1039,7 +1059,11 @@ class BracketFetcher:
                     "round": rn,
                     "matches": [cls._kuachi_match(m, names) for m in rms],
                 })
-            groups.append({"name": f"Group {gno + 1}", "rounds": rounds})
+            groups.append({
+                "name": f"Group {gno + 1}",
+                "round_robin": True,
+                "rounds": rounds,
+            })
         return groups
 
     @staticmethod
