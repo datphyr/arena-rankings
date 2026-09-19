@@ -420,7 +420,21 @@ def _check_match_state(db: Database, game_name: str, rating_system: str) -> tupl
         # Older matches appeared in the DB → backfill
         return "backfill", db_count, hist_count
     if hist_max < db_max:
-        # New matches at the end → incremental
+        # New ids at the end — but post ids are NOT chronological, so confirm
+        # the whole count deficit lies beyond the last-rated point before
+        # choosing incremental. A late-arriving result (e.g. a losers-bracket
+        # match published after the grand final) carries a HIGHER id with an
+        # EARLIER played_at: the point cursor can't see it, the incremental
+        # pass fetches nothing, and the rank stage re-fires every cycle
+        # forever while the match stays unrated (observed: tournament 95381,
+        # matches 95711-95716, re-firing every minute for hours).
+        # Deficit larger than the tail ⇒ unrated matches INSIDE the rated
+        # range ⇒ full recompute, the only way to insert them at the right
+        # point in the replay.
+        rated_time, rated_mid = db.get_last_processed_point(game_name, hist_system)
+        tail = db.count_matches_after_point(game_name, rated_time, rated_mid)
+        if tail != db_count - hist_count:
+            return "backfill", db_count, hist_count
         return "new_matches", db_count, hist_count
     # min and max both match — but count could still differ (matches removed/replaced)
     if db_count != hist_count:
