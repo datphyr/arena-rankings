@@ -20,6 +20,7 @@ import time
 import html as _html
 from datetime import datetime, timedelta
 from typing import Optional
+from urllib.parse import quote
 
 from config import BASE_URL, RETRY_BACKOFF
 from src.fetcher import PageFetcher
@@ -28,6 +29,14 @@ logger = logging.getLogger(__name__)
 
 # Default when tier can't be resolved.
 DEFAULT_TIER = ""
+
+# PlusForward's tournament listing (/tournaments/) encodes each event's tier as
+# a CSS class on the row link: scale1=Premier, scale2=Major, scale3=Minor. The
+# tournament page itself stopped carrying the tier keyword when the template was
+# rewritten (2026-09), so this listing is now the only tier source. Results are
+# cached by exact event name for the process lifetime — the parse stage builds a
+# fresh resolver per post, hence the class-level cache.
+_TIER_SCALE_MAP = {"scale1": "premier", "scale2": "major", "scale3": "minor"}
 
 
 class TournamentResolver:
@@ -43,6 +52,10 @@ class TournamentResolver:
     network_fetches: int = 0
     failures: int = 0
     parsed_details: int = 0
+    # Exact event name -> tier, resolved from the /tournaments/ listing. Class
+    # level so it survives across the per-post resolver instances the parse
+    # stage creates.
+    _tier_by_name_cache: dict[str, str] = {}
 
     def __init__(self, db, fetcher: PageFetcher = None):
         """
@@ -134,8 +147,11 @@ class TournamentResolver:
                 if html:
                     # Fast path: tier + html already stored. But if the name or
                     # game is empty (e.g. parsed before name/game extraction
-                    # existed), recover them from the cached HTML rather than
-                    # leaving them blank.
+                    # existed, or parsed by an older resolver that didn't know
+                    # the current template), re-parse the full metadata from the
+                    # cached HTML rather than leaving it blank. Reusing the
+                    # normal resolve path keeps name/game/tier/schedule/prize/
+                    # maplist/rankings consistent in one place.
                     name_rows = self._db.client.execute(
                         "SELECT name, game FROM tournaments FINAL WHERE tournament_id = %(t)s",
                         {"t": tournament_id},
@@ -143,42 +159,8 @@ class TournamentResolver:
                     existing_name = name_rows[0][0] if name_rows else ""
                     existing_game = name_rows[0][1] if name_rows else ""
                     if not existing_name or not existing_game:
-                        det = self._db.get_tournament_details(tournament_id) or {}
-                        parsed_details = self._parse_tournament_details(html)
-                        # Recover name: prefer the page title; fall back to the
-                        # existing stored name.
-                        new_name = self._parse_name(html) or existing_name
-                        # Recover game: prefer the title text; fall back to the
-                        # pfcat category icon resolved via the games table.
-                        new_game = existing_game or parsed_details.get("game") or ""
-                        id_to_name = {gid: nm for nm, gid in self._db._game_id_cache().items()}
-                        if not new_game and parsed_details.get("game_category_id"):
-                            new_game = id_to_name.get(parsed_details["game_category_id"], "")
-                        # Refresh rankings too: freshly re-parse from the cached
-                        # HTML so each entry carries its correct game (multi-game
-                        # pages), resolved from the canonical category id.
-                        new_rankings = parsed_details.get("rankings", "[]")
-                        try:
-                            import json as _json
-                            entries = _json.loads(new_rankings)
-                            for e in entries:
-                                if isinstance(e, dict) and e.get("game_category_id"):
-                                    e["game"] = id_to_name.get(e["game_category_id"], e.get("game", ""))
-                            new_rankings = _json.dumps(entries, ensure_ascii=False)
-                        except Exception:
-                            pass
-                        # Preserve existing metadata; only update name/game/rankings.
-                        self._db.upsert_tournament(
-                            tournament_id, new_name, tier,
-                            game=new_game,
-                            prize_money=det.get("prize_money", ""),
-                            tourney_format=det.get("tourney_format", ""),
-                            match_format=det.get("match_format", ""),
-                            schedule_start=det.get("schedule_start"),
-                            schedule_end=det.get("schedule_end"),
-                            maplist=det.get("maplist") or [],
-                            rankings=new_rankings,
-                        )
+                        TournamentResolver.db_hits += 1
+                        return self._resolve_from_html(html, tournament_id)
                     TournamentResolver.db_hits += 1
                     return tier
                 # Tier exists but raw_html is missing — fall through to download.
@@ -210,21 +192,33 @@ class TournamentResolver:
 
     def _resolve_from_html(self, html: str, tournament_id: int) -> str:
         """Parse tier + tournament metadata from HTML and upsert to DB."""
-        tier = self._parse_tier(html, tournament_id)
         details = self._parse_tournament_details(html)
         # Prefer the name parsed from THIS page; fall back to the existing DB
         # name only if the page has no name (avoids clobbering a known name
         # with empty when resolving a tournament page without a title).
         name = self._parse_name(html) or self._get_existing_name(tournament_id)
-        # Fall back to the pfcat category icon for the game when the title text
-        # is empty (older pages). Resolve category id -> game name via the
-        # games table; unknown/absent ids keep the empty game.
+        # Tier. The old template carried the keyword in the inner title; the new
+        # template (2026-09) dropped it from the page entirely — only the
+        # /tournaments/ listing still encodes it (scale1/2/3). So: page, then
+        # listing by exact name, then keep the stored tier, and only guess
+        # 'minor' as a last resort (never clobbering a real stored tier with it).
+        tier = self._parse_tier(html, tournament_id)
+        if not tier:
+            tier = self._lookup_tier_via_listing(name)
+        if not tier:
+            tier = self._db.get_tournament_tier(tournament_id)
+        if not tier:
+            tier = "minor"
+        # Game: prefer the page text; else resolve the pfcat category id via the
+        # games table; else keep the stored game.
         game = details["game"]
         if not game:
             cat = details.get("game_category_id") or 0
             if cat:
                 id_to_name = {gid: nm for nm, gid in self._db._game_id_cache().items()}
                 game = id_to_name.get(cat, "")
+        if not game:
+            game = self._get_existing_game(tournament_id)
         # Resolve each rankings entry's game from its pfcat category id (the
         # canonical game name via the games table). The title-derived `game` is
         # only a fallback for entries whose category is unknown (0). Multi-game
@@ -260,18 +254,61 @@ class TournamentResolver:
     def _parse_name(html: str) -> str:
         """Extract the tournament name from the page title.
 
-        Format: <h1 class="posttitle"><a href="/post/123/...">Name</a></h1>
+        Old template: <h1 class="posttitle"><a href="/post/123/...">Name</a></h1>
+        New template (2026-09): <a class="title" href="/post/123/...">Name</a>
+        inside the .overview block (no h1). The /post/<id>/ href pins it to
+        this page's own post, so a comment/related link can't be mistaken for
+        the title.
         """
         m = re.search(
             r'<h1 class="posttitle">\s*<a[^>]*href="/post/\d+/[^"]*">([^<]+)</a>',
             html, re.DOTALL)
+        if not m:
+            m = re.search(
+                r'<a class="title" href="/post/\d+/[^"]*">([^<]+)</a>',
+                html, re.DOTALL)
         if m:
             return _html.unescape(re.sub(r'<[^>]+>', '', m.group(1)).strip())
         return ""
 
+    def _lookup_tier_via_listing(self, name: str) -> str:
+        """Resolve a tournament tier from the /tournaments/ listing by name.
+
+        The listing row carries the tier as a CSS class (scale1/2/3). Returns
+        the tier, or '' when no row title matches exactly. Cached by name.
+        """
+        if not name:
+            return ""
+        cached = TournamentResolver._tier_by_name_cache.get(name)
+        if cached is not None:
+            return cached
+        tier = ""
+        try:
+            url = f"{BASE_URL}/tournaments/?search={quote(name, safe='')}"
+            html = self._fetcher.fetch(url, max_retries=1)
+            if html:
+                target = _html.unescape(name).strip()
+                for row_name, cls in re.findall(
+                        r'<a href="/post/\d+/[^"]*" title="([^"]*)" class="(scale\d)"',
+                        html):
+                    if _html.unescape(row_name).strip() == target:
+                        tier = _TIER_SCALE_MAP.get(cls, "")
+                        break
+        except Exception as e:
+            logger.debug(f"tier listing lookup failed for {name!r}: {e}")
+        TournamentResolver._tier_by_name_cache[name] = tier
+        return tier
+
     def _get_existing_name(self, tournament_id: int) -> str:
         rows = self._db.client.execute(
             "SELECT name FROM tournaments FINAL WHERE tournament_id = %(t)s",
+            {"t": tournament_id},
+        )
+        return rows[0][0] if rows else ""
+
+    def _get_existing_game(self, tournament_id: int) -> str:
+        rows = self._db.client.execute(
+            "SELECT game FROM tournaments FINAL WHERE tournament_id = %(t)s",
             {"t": tournament_id},
         )
         return rows[0][0] if rows else ""
@@ -316,7 +353,16 @@ class TournamentResolver:
         Strategies:
         1. Inner title keyword: <div class="title"><i class="pfcat-N"></i> Premier|Major ...
         2. Inner title exists but no tier keyword → minor
+
+        New template (2026-09): returns '' — the page no longer carries the tier
+        keyword at all; the caller resolves it from the /tournaments/ listing.
         """
+
+        # New template: tier keyword was dropped from the page. Signal
+        # "unknown" so the caller falls back to the listing/stored tier
+        # instead of guessing minor and clobbering a real tier.
+        if 'pf-tournament-head' in html:
+            return ""
 
         # Strategy 1: Main content title in postinnercontent.
         #   <div id="postinnercontent"><div class="title"><i class="pfcat-20"></i> Premier Quake Champions - TDM 2v2 Tournament </div>
@@ -379,12 +425,36 @@ class TournamentResolver:
         if m:
             body = m.group(1)
 
+        # New template (2026-09) moved the headline + a key/value summary ABOVE
+        # postinnercontent, into the .overview block inside .pf-tournament-head.
+        # Slice it out so the new-template branches below can read it.
+        overview = ""
+        ov_m = re.search(r'<div class="overview">(.*?)<div id="postinnercontent"', html, re.DOTALL)
+        if ov_m:
+            overview = ov_m.group(1)
+
+        def overview_values(label: str) -> list:
+            """All values under a .overview summary label (e.g. Game, Date)."""
+            om = re.search(
+                r'<div class="label">' + re.escape(label) + r'</div>'
+                r'((?:\s*<div class="value">.*?</div>)+)',
+                overview, re.DOTALL)
+            if not om:
+                return []
+            return [_html.unescape(re.sub(r'<[^>]+>', '', v)).strip()
+                    for v in re.findall(r'<div class="value">(.*?)</div>', om.group(1), re.DOTALL)]
+
         # Game — from the inner title: <i class="pfcat-N"></i> [Tier] Game - Format
         game_m = re.search(
             r'<div class="title">\s*<i class="pfcat-\d+"></i>\s*(?:premier|major|minor\s+)?'
             r'([A-Za-z0-9 &\.\-]+?)(?:\s*[-–]\s*|\s*$)', body, re.DOTALL | re.IGNORECASE)
         if game_m:
             details["game"] = game_m.group(1).strip()
+        # New template: game is the first .overview Game value.
+        if not details["game"]:
+            gv = overview_values("Game")
+            if gv:
+                details["game"] = gv[0]
 
         # Fallback game source: some (older) tournament pages have an empty
         # title after the icon, but still carry the pfcat category icon that
@@ -395,6 +465,13 @@ class TournamentResolver:
         cat_m = re.search(r'<div class="title">\s*<i class="pfcat-(\d+)"', body, re.DOTALL)
         if cat_m:
             details["game_category_id"] = int(cat_m.group(1))
+        # New template: the page's own category icon lives in the .posthead
+        # "Tournament" chip (<a class="cat"><i class="pfcat pfcat-N">).
+        if not details["game_category_id"]:
+            cat_m2 = re.search(
+                r'<a class="cat"[^>]*>.*?<i class="pfcat pfcat-(\d+)"', html, re.DOTALL)
+            if cat_m2:
+                details["game_category_id"] = int(cat_m2.group(1))
 
         # Info block fields: <div class="tc_title">Label</div><div>Value</div>
         def info_value(label):
@@ -410,9 +487,25 @@ class TournamentResolver:
             # Without this, values like "&amp;" get double-escaped ("&amp;amp;").
             return _html.unescape(val)
 
+        def info_title_value(label):
+            """Value for a .tour_info field (new template uses info_title, not tc_title)."""
+            pat = re.compile(
+                r'<div class="info_title">' + re.escape(label) + r'</div>\s*<div[^>]*>(.*?)</div>',
+                re.DOTALL | re.IGNORECASE)
+            m = pat.search(body)
+            if not m:
+                return ""
+            return _html.unescape(re.sub(r'<[^>]+>', '', m.group(1)).strip())
+
         details["prize_money"] = info_value("Prizemoney")
-        details["tourney_format"] = info_value("Tourney format")
-        details["match_format"] = info_value("Match format")
+        # New template: prize is the .overview value under "Prize pool" (or,
+        # on some pages, the shorter label "Prize").
+        if not details["prize_money"]:
+            pv = overview_values("Prize pool") or overview_values("Prize")
+            if pv:
+                details["prize_money"] = pv[0]
+        details["tourney_format"] = info_value("Tourney format") or info_title_value("Tourney format")
+        details["match_format"] = info_value("Match format") or info_title_value("Match format")
 
         # Schedule:
         #   Newer pages: <div class="tc_title">Schedule</div><div>
@@ -478,11 +571,50 @@ class TournamentResolver:
             except ValueError:
                 pass
 
-        # Maplist: <span class="map_preview" ... data-name="Awoken">Awoken</span>
+        # New template: the schedule lives in the .overview "Date" values, e.g.
+        #   single-day: ["25 Sep 2026", "16:00 - 20:15 UTC"]
+        #   multi-day:  ["07 Nov 2026 -", "08 Nov 2026"]
+        if not details["schedule_start"]:
+            date_vals = overview_values("Date")
+            if date_vals:
+                joined = " ".join(date_vals)
+                dates = re.findall(r'(\d{1,2}\s+\w{3}\s+\d{4})', joined)
+                times = re.search(
+                    r'(\d{1,2}:\d{2})\s*[-–>→]\s*(\d{1,2}:\d{2})', joined)
+                try:
+                    if len(dates) >= 2:
+                        # Multi-day: whole-day bounds (23:59 end so in-progress
+                        # detection doesn't flip mid final day).
+                        s = datetime.strptime(dates[0], "%d %b %Y")
+                        e = datetime.strptime(dates[1], "%d %b %Y")
+                        details["schedule_start"] = s.strftime("%Y-%m-%d 00:00:00")
+                        details["schedule_end"] = e.strftime("%Y-%m-%d 23:59:00")
+                    elif len(dates) == 1 and times:
+                        s = datetime.strptime(dates[0], "%d %b %Y")
+                        day = s.strftime("%Y-%m-%d ")
+                        t1, t2 = times.group(1), times.group(2)
+                        # End hour earlier than start hour = crossed midnight.
+                        if int(t2.split(":")[0]) < int(t1.split(":")[0]):
+                            end_day = (s + timedelta(days=1)).strftime("%Y-%m-%d ")
+                        else:
+                            end_day = day
+                        details["schedule_start"] = day + t1 + ":00"
+                        details["schedule_end"] = end_day + t2 + ":00"
+                    elif len(dates) == 1:
+                        s = datetime.strptime(dates[0], "%d %b %Y")
+                        details["schedule_start"] = s.strftime("%Y-%m-%d 00:00:00")
+                        details["schedule_end"] = s.strftime("%Y-%m-%d 23:59:00")
+                except ValueError:
+                    pass
+
+        # Maplist: old template <span class="map_preview" data-name="Awoken">,
+        # new template <div class="map_name">Awoken</div>.
         maplist = re.findall(
             r'<span class="map_preview"[^>]*data-name="([^"]+)"', body)
+        if not maplist:
+            maplist = re.findall(r'<div class="map_name">([^<]+)</div>', body)
         if maplist:
-            details["maplist"] = maplist
+            details["maplist"] = [_html.unescape(x) for x in maplist]
 
         # Final rankings: .tour_rankings table rows.
         #   <td class="position">1st</td> ... <a class="profile" href="/player/16947/...">Name</a> ... <td class="prizemoney">60 USD</td>
@@ -536,6 +668,44 @@ class TournamentResolver:
                     "game": "",
                     "game_category_id": 0,
                 })
+        # New template: .tour_rankings holds <div class="row"> blocks, one per
+        # placement, each with .position, a .entity profile link (carrying the
+        # pfcat category id in the href) and .prizemoney.
+        if not rankings:
+            idx = body.find('tour_rankings')
+            if idx >= 0:
+                for chunk in body[idx:].split('<div class="row">')[1:]:
+                    pm = re.search(r'<div class="position">([^<]+)</div>', chunk)
+                    if not pm:
+                        continue
+                    # Prefer the 4-segment href (player/game/cat) so the entry
+                    # keeps its game category; fall back to the 2-segment form.
+                    em = re.search(
+                        r'<a class="profile" href="/player/(\d+)/(?:[^/]+)/(\d+)/[^"]*"[^>]*>(.*?)</a>',
+                        chunk, re.DOTALL)
+                    if em:
+                        pid, cat, raw_name = int(em.group(1)), int(em.group(2)), em.group(3)
+                    else:
+                        em = re.search(
+                            r'<a class="profile" href="/player/(\d+)/[^"]*"[^>]*>(.*?)</a>',
+                            chunk, re.DOTALL)
+                        if not em:
+                            continue
+                        pid, cat, raw_name = int(em.group(1)), 0, em.group(2)
+                    pname = _html.unescape(re.sub(r'<[^>]+>', '', raw_name)).strip()
+                    # Placeholder rows (no real player name) are skipped so a
+                    # pending standings table never fabricates a placement.
+                    if not pname:
+                        continue
+                    zm = re.search(r'<div class="prizemoney">([^<]*)</div>', chunk)
+                    rankings.append({
+                        "position": pm.group(1).strip(),
+                        "player_id": pid,
+                        "player_name": pname,
+                        "prize": zm.group(1).strip() if zm else "",
+                        "game": "",
+                        "game_category_id": cat,
+                    })
         if rankings:
             details["rankings"] = json.dumps(rankings, ensure_ascii=False)
 

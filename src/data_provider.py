@@ -1364,6 +1364,35 @@ class DataProvider:
         raw_html data-name / data-image.
         """
         # Ordered maplist from raw_html: (map_id, name), deduped by id.
+        # Two template variants:
+        #   old: <span class="map_preview" data-image="/maps/11_x.jpg" data-name="X">
+        #   new (2026-09): <img src="/files/images/maps/11_x.jpg" alt="X" /><div class="map_name">X</div>
+        def parse_maplist(html: str) -> list[tuple[int, str]]:
+            """Return [(map_id, name)] in page order, deduped by map_id."""
+            out: list[tuple[int, str]] = []
+            seen_ids: set[int] = set()
+            for img, name in re.findall(
+                r'data-image="([^"]+)"[^>]*data-name="([^"]+)"', html
+            ):
+                m = re.search(r'/maps/(\d+)_', img)
+                if m:
+                    mid = int(m.group(1))
+                    if mid not in seen_ids:
+                        seen_ids.add(mid)
+                        out.append((mid, name))
+            if out:
+                return out
+            for img, name in re.findall(
+                r'<img src="([^"]*/files/images/maps/[^"]+)"[^>]*alt="([^"]*)"', html
+            ):
+                m = re.search(r'/maps/(\d+)_', img)
+                if m:
+                    mid = int(m.group(1))
+                    if mid not in seen_ids:
+                        seen_ids.add(mid)
+                        out.append((mid, name))
+            return out
+
         by_id: dict[int, str] = {}  # map_id -> name (ordered)
         order: list[int] = []
         rows = self.db.client.execute(
@@ -1372,15 +1401,10 @@ class DataProvider:
         )
         raw = rows[0][0] if rows else ""
         if raw:
-            for img, name in re.findall(
-                r'data-image="([^"]+)"[^>]*data-name="([^"]+)"', raw
-            ):
-                m = re.search(r'/maps/(\d+)_', img)
-                if m:
-                    mid = int(m.group(1))
-                    if mid not in by_id:
-                        by_id[mid] = name
-                        order.append(mid)
+            for mid, name in parse_maplist(raw):
+                if mid not in by_id:
+                    by_id[mid] = name
+                    order.append(mid)
         # Merge in played-map ids from match_maps (keeps maps not in maplist).
         mrows = self.db.client.execute(
             """
@@ -1417,6 +1441,13 @@ class DataProvider:
                 m = re.search(r'/maps/(\d+)_', img)
                 if m:
                     raw_img[int(m.group(1))] = img
+            if not raw_img:
+                for img, name in re.findall(
+                    r'<img src="([^"]*/files/images/maps/[^"]+)"[^>]*alt="([^"]*)"', raw
+                ):
+                    m = re.search(r'/maps/(\d+)_', img)
+                    if m:
+                        raw_img[int(m.group(1))] = img
         out = []
         for mid in order:
             name = by_id.get(mid) or name_by_id.get(mid, "")
