@@ -671,6 +671,15 @@ class TournamentResolver:
         # New template: .tour_rankings holds <div class="row"> blocks, one per
         # placement, each with .position, a .entity profile link (carrying the
         # pfcat category id in the href) and .prizemoney.
+        #
+        # Rows with no resolvable player are KEPT as empty-name placeholders
+        # rather than dropped. While an event is still running PlusForward
+        # renders the already-decided slots first (e.g. 5th/5th/7th/7th) and
+        # leaves the pending top slots (1st/2nd/...) as blank rows. Dropping
+        # those placeholders produced a standings table that *looked* complete
+        # (no empty names) yet really only listed the bottom half, so the
+        # reconcile sweep's "any empty name" test saw it as finished and never
+        # revisited the tournament after the real winners were published.
         if not rankings:
             idx = body.find('tour_rankings')
             if idx >= 0:
@@ -689,14 +698,20 @@ class TournamentResolver:
                         em = re.search(
                             r'<a class="profile" href="/player/(\d+)/[^"]*"[^>]*>(.*?)</a>',
                             chunk, re.DOTALL)
-                        if not em:
-                            continue
-                        pid, cat, raw_name = int(em.group(1)), 0, em.group(2)
+                        if em:
+                            pid, cat, raw_name = int(em.group(1)), 0, em.group(2)
+                        else:
+                            # Pending slot: PlusForward emits the row (and its
+                            # position) with a player-less entity link. Keep
+                            # the position so the table's top half is known to
+                            # still be missing.
+                            pid, cat, raw_name = 0, 0, ""
                     pname = _html.unescape(re.sub(r'<[^>]+>', '', raw_name)).strip()
-                    # Placeholder rows (no real player name) are skipped so a
-                    # pending standings table never fabricates a placement.
+                    # A player-less link resolves to the category-form href
+                    # (/player/<pfcat>/<Game>/) whose first segment is the
+                    # category id, not a player — never store it as one.
                     if not pname:
-                        continue
+                        pid, cat = 0, 0
                     zm = re.search(r'<div class="prizemoney">([^<]*)</div>', chunk)
                     rankings.append({
                         "position": pm.group(1).strip(),

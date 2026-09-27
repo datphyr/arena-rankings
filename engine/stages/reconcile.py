@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from datetime import datetime, timedelta
 
@@ -64,8 +65,35 @@ _last_sweep = 0.0
 _last_attempt: dict[int, float] = {}
 
 
+def _first_place(entries) -> int | None:
+    """Lowest (best) numeric position in a standings table, or None."""
+    places = []
+    for e in entries:
+        m = re.match(r"\s*(\d+)", str(e.get("position") or ""))
+        if m:
+            places.append(int(m.group(1)))
+    return min(places) if places else None
+
+
 def _incomplete_rankings(rankings_json) -> bool:
-    """True if rankings exist but at least one position has an empty player name."""
+    """True if a standings table is not fully published yet.
+
+    Two independent signals, either of which means the event still has
+    unpublished placements:
+
+      - **pending slot**: some ranked row has an empty player name. While an
+        event runs PlusForward renders the decided slots and leaves the rest
+        blank, so a blank name is the normal "not final yet" marker.
+      - **missing top of the table**: the best listed position is not 1st
+        (e.g. only 5th/5th/7th/7th are listed). This catches a table already
+        stored in the truncated shape — the blank-slot signal reads the row
+        as it sits in the DB, so a truncated row with no blanks would look
+        complete forever and never trigger a re-parse that could heal it.
+
+    A tournament whose page genuinely lists no 1st (a few old qualifier
+    pages) simply stays in the working set; the cadence gate drops it once it
+    is past the scrape window.
+    """
     if not rankings_json:
         return False
     if isinstance(rankings_json, str):
@@ -75,7 +103,12 @@ def _incomplete_rankings(rankings_json) -> bool:
             return False
     else:
         entries = rankings_json
-    return bool(entries) and not all(e.get("player_name") for e in entries)
+    if not entries:
+        return False
+    if not all(e.get("player_name") for e in entries):
+        return True
+    first = _first_place(entries)
+    return first is not None and first != 1
 
 
 def _cadence_seconds(schedule_end, last_match, now: datetime) -> int | None:
