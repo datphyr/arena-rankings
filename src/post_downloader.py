@@ -26,9 +26,10 @@ Usage:
 """
 
 import logging
+import os
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from src.db_client import Database
@@ -42,6 +43,13 @@ logger = logging.getLogger(__name__)
 # "Invalid post id." body text is unreliable due to transient partial loads).
 GENERIC_TITLE = "Post | Plus Forward"
 TITLE_RE = re.compile(r"<title>([^<]*)</title>", re.IGNORECASE)
+
+# Upcoming-match re-fetch sweep (refresh_upcoming): per-post cooldown between
+# re-fetch attempts, and how long past its scheduled slot a still-unplayed
+# 'not played' row keeps getting retried before being treated as a dead event.
+UPCOMING_COOLDOWN = float(os.environ.get("UPCOMING_COOLDOWN", "600"))
+_UPCOMING_MAX_AGE = timedelta(days=int(os.environ.get("UPCOMING_MAX_AGE_DAYS", "14")))
+_upcoming_last_try: dict[int, float] = {}
 
 
 def _is_wall(fetcher: "PostDownloader", post_id: int, consec_bad: int) -> tuple[bool, bool]:
@@ -70,9 +78,19 @@ def _is_wall(fetcher: "PostDownloader", post_id: int, consec_bad: int) -> tuple[
     return False, False
 
 # Scheduled time of a match, from the match page Date block:
-#   <div class="title">Date</div><div class="date"><div>13:15 UTC</div><div>16th August 2026</div></div>
+#   old template: <div class="title">Date</div><div class="date"><div>13:15 UTC</div><div>16th August 2026</div></div>
 DATE_BLOCK_RE = re.compile(
     r'<div class="title">Date</div><div class="date"><div>([^<]+)</div><div>([^<]+)</div></div>',
+    re.DOTALL,
+)
+# 2026-09 template: the kickoff moved into the match-head date block, ordered
+# date-then-time and without the "Date" title wrapper:
+#   <div class="match-head">...<div class="date"><div>27th September 2026</div><div>15:15 UTC</div></div>
+# Without this, parse_scheduled_time returned None for new-template pages, so
+# refresh_upcoming skipped their stuck 'not played' rows forever and they were
+# never re-fetched once the match finished.
+NEW_DATE_BLOCK_RE = re.compile(
+    r'<div class="match-head">.*?<div class="date"><div>([^<]+)</div><div>([^<]+)</div></div>',
     re.DOTALL,
 )
 
@@ -94,10 +112,16 @@ def parse_scheduled_time(html: str) -> Optional[datetime]:
     its scheduled time has passed.
     """
     m = DATE_BLOCK_RE.search(html or "")
-    if not m:
-        return None
-    time_str = m.group(1).replace(" UTC", "").strip()
-    date_str = re.sub(r"(\d+)(?:st|nd|rd|th)", r"\1", m.group(2)).strip()
+    if m:
+        time_str = m.group(1).replace(" UTC", "").strip()
+        date_str = re.sub(r"(\d+)(?:st|nd|rd|th)", r"\1", m.group(2)).strip()
+    else:
+        # 2026-09 template: date first, time second.
+        m = NEW_DATE_BLOCK_RE.search(html or "")
+        if not m:
+            return None
+        date_str = re.sub(r"(\d+)(?:st|nd|rd|th)", r"\1", m.group(1)).strip()
+        time_str = m.group(2).replace(" UTC", "").strip()
     try:
         return datetime.strptime(
             f"{date_str} {time_str}", "%d %B %Y %H:%M"
@@ -239,7 +263,25 @@ def download_posts(limit: int = 0, workers: int = 1) -> tuple[int, int, bool]:
         db.close()
 
 
-def refresh_upcoming(db: Database, fetcher: "PostDownloader" = None, now: datetime = None) -> int:
+def count_due_upcoming(db: Database) -> int:
+    """Cheap count of 'not played' rows due for a re-fetch right now.
+
+    sort_time on these rows is the scheduled kickoff (from the matchlist at
+    discovery, refreshed from the page on each attempt), so the window is a
+    pure SQL filter — no per-row HTML parsing. Used as the download stage's
+    has_work gate so refresh_upcoming only wakes the stage when something is
+    actually due.
+    """
+    rows = db.client.execute(
+        "SELECT count() FROM raw_posts FINAL "
+        "WHERE status = 'skipped' AND reason = 'not played' "
+        "AND sort_time <= now() AND sort_time > now() - INTERVAL 14 DAY"
+    )
+    return rows[0][0] if rows else 0
+
+
+def refresh_upcoming(db: Database, fetcher: "PostDownloader" = None, now: datetime = None,
+                     limit: int = 0, ignore_cooldown: bool = False) -> int:
     """Re-fetch 'not played' matches whose scheduled time has passed.
 
     Upcoming matches are stored with status 'skipped' and reason 'not played'.
@@ -247,6 +289,12 @@ def refresh_upcoming(db: Database, fetcher: "PostDownloader" = None, now: dateti
     scores (the match finished), we mark it 'downloaded' so the parse stage
     processes it. If it still has no scores, we leave it as 'not played' and
     retry on a later cycle.
+
+    A match can only leave this set by being re-fetched, so this sweep is the
+    only path that recovers a match discovered *before* it was played — without
+    it those rows sit at 'not played' forever even after the result is on the
+    site. A per-post cooldown (and a max age past the scheduled time) keeps a
+    permanently-cancelled event from being re-fetched every cycle.
 
     Returns the number of posts re-fetched.
     """
@@ -260,9 +308,20 @@ def refresh_upcoming(db: Database, fetcher: "PostDownloader" = None, now: dateti
     )
     refreshed = 0
     for post_id, html in rows:
+        if limit and refreshed >= limit:
+            break
         scheduled = parse_scheduled_time(html)
         if scheduled is None or scheduled > now:
             continue  # not due yet — retry later
+        if (now - scheduled) > _UPCOMING_MAX_AGE:
+            # Far past its slot and still unplayed: cancelled/dead event. Leave
+            # it alone rather than re-fetching forever.
+            continue
+        if not ignore_cooldown:
+            last = _upcoming_last_try.get(post_id)
+            if last is not None and (time.time() - last) < UPCOMING_COOLDOWN:
+                continue
+        _upcoming_last_try[post_id] = time.time()
         new_html = fetcher.fetch_post(post_id)
         if new_html is None or not is_valid_post(new_html):
             continue

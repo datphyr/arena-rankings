@@ -21,9 +21,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from src.db_client import Database
 from src.fetcher import PageFetcher
 from src import match_downloader as md
+from src.post_downloader import refresh_upcoming
 from engine.queue import PipelineQueue, ClaimedItem
 
 logger = logging.getLogger("pipeline.download")
+
+# Max 'not played' posts to re-fetch per cycle. Bounded so a large backlog of
+# long-past matches can't monopolise a cycle; the per-post cooldown in
+# refresh_upcoming keeps the sweep from re-hitting the same pages every cycle.
+UPCOMING_REFETCH_LIMIT = 20
 
 
 def _fetch_one(post_id: int, sort_time) -> tuple[int, bool, str]:
@@ -50,15 +56,22 @@ def _settle(q: PipelineQueue, item: ClaimedItem, ok: bool, reason: str, stats: d
 
 
 def run_cycle(workers: int = 1, limit: int = 0) -> dict:
-    """Process one bounded batch of discovered rows. Returns stats dict."""
+    """Process one bounded batch of discovered rows. Returns stats dict.
+
+    After the discovered batch, also re-fetches any 'not played' matches whose
+    scheduled time has passed. A match discovered before it was played only
+    becomes parseable once its page gains scores, and nothing else in the
+    pipeline ever revisits a 'skipped' row — without this sweep those matches
+    sat at 'not played' forever even after the result was published on the
+    site.
+    """
     q = PipelineQueue(pending_status="discovered")
     try:
         batch = q.claim(limit=limit or 20)
+        stats = {"claimed": len(batch), "ok": 0, "failed": 0, "refreshed": 0}
         if not batch:
-            return {"claimed": 0, "ok": 0, "failed": 0, "empty": True}
-
-        stats = {"claimed": len(batch), "ok": 0, "failed": 0}
-        if workers <= 1:
+            stats["empty"] = True
+        elif workers <= 1:
             for item in batch:
                 _pid, ok, reason = _fetch_one(item.post_id, item.sort_time)
                 _settle(q, item, ok, reason, stats)
@@ -72,6 +85,20 @@ def run_cycle(workers: int = 1, limit: int = 0) -> dict:
                     item = futures[fut]
                     _pid, ok, reason = fut.result()
                     _settle(q, item, ok, reason, stats)
+
+        # Re-fetch finished-but-stuck upcoming matches (own DB/fetcher).
+        try:
+            udb = Database()
+            try:
+                stats["refreshed"] = refresh_upcoming(
+                    udb, limit=UPCOMING_REFETCH_LIMIT)
+            finally:
+                udb.close()
+        except Exception as e:
+            logger.warning(f"upcoming refresh failed: {e}")
+
+        if stats["refreshed"]:
+            stats.pop("empty", None)
         return stats
     finally:
         q.db.close()

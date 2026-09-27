@@ -26,11 +26,18 @@ from src.logging_setup import configure_logging
 
 def _has_download_work() -> bool:
     from engine.queue import PipelineQueue
+    from src.post_downloader import count_due_upcoming
     q = PipelineQueue(pending_status="discovered")
+    db = q.db
     try:
-        return q.pending_count() > 0
+        if q.pending_count() > 0:
+            return True
+        # Also wake for 'not played' matches whose kickoff has passed — they
+        # need re-fetching into 'downloaded' so the parse stage can pick up the
+        # result. Without this the stage sleeps on an empty discovered queue.
+        return count_due_upcoming(db) > 0
     finally:
-        q.db.close()
+        db.close()
 
 
 def _has_parse_work() -> bool:

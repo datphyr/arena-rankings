@@ -124,12 +124,23 @@ class MatchDetailParser:
         if not m:
             m = re.search(r'<div class="match">(.*?)</div>\s*<div class="sharelinks">', html, re.DOTALL)
         if m:
-            info = self._parse_match_info(m.group(1))
+            content = m.group(1)
+            new_tpl = 'class="match-main"' in content
+            info = (self._parse_match_info_new(content, html) if new_tpl
+                    else self._parse_match_info(content))
             fmt = info.get("format", "").lower()
-            if fmt and "duel" not in fmt and "1v1" not in fmt:
+            # Mirror the _parse filter exactly: a team format is anything that
+            # is not a 1v1 duel. Testing only `"duel" not in fmt` would let
+            # "Team Duel" through (it contains "duel") and misreport those
+            # pages as parse errors instead of team format.
+            is_duel = "duel" in fmt and "team" not in fmt
+            is_1v1 = "1v1" in fmt
+            if fmt and not is_duel and not is_1v1:
                 return "team format"
             # Has a match area but no scores → upcoming/live match, not yet played.
-            if self._parse_scores(m.group(1)) is None:
+            scores = (self._parse_scores_new(content) if new_tpl
+                      else self._parse_scores(content))
+            if scores is None:
                 return "not played"
         return "parse error"
 
@@ -152,8 +163,18 @@ class MatchDetailParser:
 
         content = match_area.group(1)
 
+        # PlusForward's 2026-09 template rewrote the match page: the old
+        # m_vs_img/m_results/m_info markup is gone, replaced by
+        # match-main > match-vs (entity-left / center / entity-right) plus an
+        # event/round/date header. Detect it and read the matching shape;
+        # the old selectors are kept for cached/pages rendered the old way.
+        new_tpl = 'class="match-main"' in content
+
         # Parse match info first (need format to filter)
-        info = self._parse_match_info(content)
+        if new_tpl:
+            info = self._parse_match_info_new(content, html)
+        else:
+            info = self._parse_match_info(content)
 
         # Only parse 1v1 duels — skip team formats (TDM, CTF, Team 6v6, etc.)
         match_format = info.get("format", "").lower()
@@ -164,14 +185,20 @@ class MatchDetailParser:
             return None
 
         # Parse players
-        players = self._parse_players(content)
+        if new_tpl:
+            players = self._parse_players_new(content)
+        else:
+            players = self._parse_players(content)
         if len(players) < 2:
             return None
 
         p1, p2 = players[0], players[1]
 
         # Parse scores
-        scores = self._parse_scores(content)
+        if new_tpl:
+            scores = self._parse_scores_new(content)
+        else:
+            scores = self._parse_scores(content)
         if scores is None:
             return None
 
@@ -179,8 +206,10 @@ class MatchDetailParser:
         if not info.get("category_id", 0):
             info["category_id"] = self._parse_category_from_links(content)
 
-        # Parse maps (m_detailed is outside the <div class="match"> area)
-        maps = self._parse_maps(html)
+        # Parse maps (the old m_detailed table lives outside the
+        # <div class="match"> area; the 2026-09 template nests them in
+        # .map-results).
+        maps = self._parse_maps_new(html) if new_tpl else self._parse_maps(html)
 
         # Parse VODs (the VODS section is inside the match area's m_info block)
         vods = self._parse_vods(html)
@@ -189,7 +218,7 @@ class MatchDetailParser:
         # on the winner's score div — present even at 0:0 for forfeits/walkovers).
         # Fall back to score comparison; if scores are equal and no marker, it's
         # a draw with no winner (winner_id = 0).
-        win_marker = self._parse_win_marker(content)
+        win_marker = self._parse_win_marker_new(content) if new_tpl else self._parse_win_marker(content)
         if win_marker == 1:
             winner_id = p1["id"]
         elif win_marker == 2:
@@ -332,6 +361,173 @@ class MatchDetailParser:
             if w2 and not w1:
                 return 2
         return 0
+
+    # ------------------------------------------------------------------
+    # 2026-09 template (match-main / match-vs / map-results / showres)
+    #
+    # PlusForward rewrote the match page in 2026-09. The old markup
+    # (m_vs_img, m_results>res, m_info>title, m_name_flag) is gone and with it
+    # every score/player/format/map selector — readers targeting it returned
+    # empty, so new matches were classified 'not played' and never stored. The
+    # helpers below read the replacement markup; the originals stay for cached
+    # pages and any render that still uses the old shape.
+    # ------------------------------------------------------------------
+
+    def _parse_match_info_new(self, content: str, html: str) -> dict:
+        """Match metadata from the 2026-09 layout.
+
+        Head block carries tournament + round; .date the kickoff; .center>
+        .mode the format. Game name comes from the page-title suffix
+        ("<Game> Match | Plus Forward") and the category from the pfcat icon.
+        """
+        info = {}
+
+        # Tournament + stage (round).
+        ev = re.search(
+            r'<div class="event">.*?<a class="name" href="/post/(\d+)/[^"]*"[^>]*>([^<]+)</a>'
+            r'\s*<div class="round">([^<]*)</div>',
+            content, re.DOTALL)
+        if ev:
+            info["tournament_id"] = int(ev.group(1))
+            info["tournament"] = html_module.unescape(ev.group(2).strip())
+            stage = html_module.unescape(ev.group(3).strip())
+            if stage:
+                info["stage"] = stage
+
+        # Date ("26th September 2026" + "19:45 UTC").
+        dm = re.search(
+            r'<div class="date"><div>([^<]+)</div><div>([^<]+)</div></div>', content)
+        if dm:
+            info["date"] = self._parse_detail_datetime(dm.group(1), dm.group(2))
+
+        # Format: Duel / Time Limit Duel / TDM 2v2 / Team Duel.
+        mo = re.search(r'<div class="mode">([^<]+)</div>', content)
+        if mo:
+            info["format"] = html_module.unescape(mo.group(1).strip())
+
+        # Game name from the title suffix, e.g.
+        # "Keltz vs dramiS, NAQCL ... #74, Quake Champions Match | Plus Forward".
+        tm = re.search(r'<title>([^<]*)</title>', html, re.IGNORECASE)
+        if tm:
+            gm = re.search(r',\s*([^,]+?)\s+Match\s*\|\s*Plus Forward', tm.group(1))
+            if gm:
+                info["game"] = html_module.unescape(gm.group(1).strip())
+
+        # Category id. The 2026-09 match area carries no pfcat icon, so take
+        # it from the player links (which encode the game category, e.g.
+        # /player/17288/H3LLDOWN/3/Quake-Live/), then fall back to the page
+        # header's own "Match" chip icon.
+        cat = self._parse_category_from_links(content)
+        if not cat:
+            cm = re.search(r'<a class="cat"[^>]*>.*?pfcat pfcat-(\d+)', html, re.DOTALL)
+            if cm:
+                cat = int(cm.group(1))
+        if cat:
+            info["category_id"] = cat
+
+        return info
+
+    def _parse_players_new(self, content: str) -> list[dict]:
+        """Players from the 2026-09 match-vs entities.
+
+        The left entity leads with the name and the right entity leads with the
+        image, so scope each side separately (left ends at .center, right runs
+        to the end of the match-vs block) before pulling the link and flag.
+        """
+        players = []
+        vs = re.search(r'<div class="match-vs">(.*?)<div class="match-extra">',
+                       content, re.DOTALL)
+        scope = vs.group(1) if vs else content
+        blocks = []
+        lm = re.search(r'<div class="entity entity-left">(.*?)<div class="center">',
+                       scope, re.DOTALL)
+        if lm:
+            blocks.append(lm.group(1))
+        rm = re.search(r'<div class="entity entity-right">(.*)', scope, re.DOTALL)
+        if rm:
+            blocks.append(rm.group(1))
+        for blk in blocks:
+            link = re.search(
+                r'<a class="name" href="/player/(\d+)/[^"]*"[^>]*>([^<]+)</a>', blk)
+            if not link:
+                continue
+            flag = re.search(r's_flag\s+s_flag-([a-z0-9]{2,3})', blk)
+            players.append({
+                "id": int(link.group(1)),
+                "name": html_module.unescape(link.group(2).strip()),
+                "country": flag.group(1).lower() if flag else "",
+            })
+        return players[:2]
+
+    def _parse_scores_new(self, content: str) -> Optional[tuple[int, int]]:
+        """Match score from the 2026-09 .center block."""
+        m = re.search(
+            r'<div class="score">\s*<div class="value[^"]*">(-?\d+)</div>\s*'
+            r'<div class="colon">:</div>\s*<div class="value[^"]*">(-?\d+)</div>',
+            content)
+        if m:
+            return (int(m.group(1)), int(m.group(2)))
+        return None
+
+    def _parse_win_marker_new(self, content: str) -> int:
+        """Winner marker (class='win') from the 2026-09 score block, else 0."""
+        m = re.search(
+            r'<div class="score">\s*<div class="value([^"]*)">(-?\d+)</div>\s*'
+            r'<div class="colon">:</div>\s*<div class="value([^"]*)">(-?\d+)</div>',
+            content)
+        if not m:
+            return 0
+        w1 = "win" in m.group(1)
+        w2 = "win" in m.group(3)
+        if w1 and not w2:
+            return 1
+        if w2 and not w1:
+            return 2
+        return 0
+
+    def _parse_maps_new(self, content: str) -> list[MapResult]:
+        """Per-map results from the 2026-09 .map-results block.
+
+        One .map per map:
+          <div class="map  map_players ">
+            <img src="/files/images/maps/24_cure.jpg" />
+            <div class="data"><div class="score">
+              <div class="value win">9</div><div class="colon">:</div>
+              <div class="value ">1</div></div><div class="name">Cure</div></div>
+            <div class="players"><div class="player win">a</div>
+              <div class="vs">vs</div><div class="player ">b</div></div>
+          </div>
+        """
+        maps: list[MapResult] = []
+        i = content.find('map-results')
+        if i < 0:
+            return maps
+        block = content[i:]
+        chunks = re.split(r'<div class="map\s[^"]*">', block)[1:]
+        for chunk in chunks:
+            nm = re.search(r'<div class="name">([^<]+)</div>', chunk)
+            sc = re.search(
+                r'<div class="score">\s*<div class="value[^"]*">(-?\d+)</div>\s*'
+                r'<div class="colon">:</div>\s*<div class="value[^"]*">(-?\d+)</div>',
+                chunk)
+            if not nm or not sc:
+                continue
+            map_id, image = 0, ""
+            im = re.search(r'<img src="(/files/images/maps/(\d+)_[^"]+)"', chunk)
+            if im:
+                image = im.group(1)
+                map_id = int(im.group(2))
+            pl = re.findall(r'<div class="player[^"]*">([^<]*)</div>', chunk)
+            maps.append(MapResult(
+                map_name=html_module.unescape(nm.group(1).strip()) or "?",
+                player1_score=int(sc.group(1)),
+                player2_score=int(sc.group(2)),
+                player1_name=html_module.unescape(pl[0]).strip() if pl else "",
+                player2_name=html_module.unescape(pl[1]).strip() if len(pl) > 1 else "",
+                map_id=map_id,
+                image=image,
+            ))
+        return maps
 
     def _parse_match_info(self, content: str) -> dict:
         """Parse match metadata (date, tournament, format, etc.)."""
