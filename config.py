@@ -54,10 +54,15 @@ RETRY_BACKOFF = 2.0
 #   RECONCILE_POST_END: cadence (s) after schedule_end, for a while.
 #   RECONCILE_POST_END_WEEKS: how many weeks past schedule_end to keep
 #     refreshing before stopping scraping the tournament entirely.
+#   RECONCILE_SETTLE_HOURS: after schedule_end, keep re-checking a tournament's
+#     standings for this many hours even when they already look complete, so a
+#     table that PlusForward EXTENDS after the event (captured mid-event as a
+#     shorter, plausible-looking final table) gets picked up.
 RECONCILE_INTERVAL = int(os.environ.get("RECONCILE_INTERVAL", "60"))
 RECONCILE_IN_SCHEDULE = int(os.environ.get("RECONCILE_IN_SCHEDULE", "60"))
 RECONCILE_POST_END = int(os.environ.get("RECONCILE_POST_END", "3600"))
 RECONCILE_POST_END_WEEKS = int(os.environ.get("RECONCILE_POST_END_WEEKS", "1"))
+RECONCILE_SETTLE_HOURS = int(os.environ.get("RECONCILE_SETTLE_HOURS", "48"))
 
 USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/119.0",

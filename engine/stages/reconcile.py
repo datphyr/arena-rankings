@@ -11,12 +11,16 @@ fetch time): the standings may already be complete, so nothing ever re-fetches
 the bracket once the provider publishes the result.
 
 This stage closes that gap with a schedule-driven, graduated cadence. Every
-sweep it considers tournaments with INCOMPLETE final standings (some ranked
-position has an empty player name) **or** an INCOMPLETE stored bracket
-(complete=false) and force-refreshes those whose per-schedule cadence is due:
+sweep it considers tournaments whose final standings are NOT PUBLISHED YET
+(no rankings table at all, or some ranked position has an empty player name),
+tournaments whose standings are inside the post-event SETTLE WINDOW (they look
+complete but PlusForward may still extend the table), **or** an INCOMPLETE
+stored bracket (complete=false), and force-refreshes those whose per-schedule
+cadence is due:
 
   - before schedule_end: refresh every minute        (RECONCILE_IN_SCHEDULE)
-  - schedule_end .. +1 week: refresh every hour      (RECONCILE_POST_END)
+  - schedule_end .. settle window: every hour        (RECONCILE_POST_END)
+  - settle window .. +1 week: refresh every hour     (RECONCILE_POST_END)
   - past +1 week: stop scraping that tournament      (dropped)
 
 A tournament with no parsed schedule (epoch dates) is treated as "unknown": it
@@ -37,7 +41,11 @@ import re
 import time
 from datetime import datetime, timedelta
 
-from config import RECONCILE_INTERVAL, RECONCILE_POST_END_WEEKS
+from config import (
+    RECONCILE_INTERVAL,
+    RECONCILE_POST_END_WEEKS,
+    RECONCILE_SETTLE_HOURS,
+)
 from src.db_client import Database
 from src.fetcher import PageFetcher
 from src.tournament_resolver import TournamentResolver
@@ -55,6 +63,15 @@ IN_SCHEDULE_SECONDS = int(os.environ.get("RECONCILE_IN_SCHEDULE", "60"))     # 1
 POST_END_SECONDS = int(os.environ.get("RECONCILE_POST_END", "3600"))          # 1 hr
 # Tournaments without a usable schedule are probed on the slow cadence.
 NO_SCHEDULE_SECONDS = int(os.environ.get("RECONCILE_NO_SCHEDULE", "3600"))
+
+# After schedule_end, keep re-checking a tournament's standings for this many
+# hours even when they already look complete. PlusForward can EXTEND (or
+# correct) a standings table after the event: a table captured mid-event is a
+# shorter-but-plausible version that the completeness tests accept, so without
+# a settle window the sweep marks it done and the stale table sticks forever
+# (observed: 250 FPS QL League S6 Qualifier #3, tid 96012, captured with a
+# 4-row table while the live page carried a corrected 17-row one).
+SETTLE_SECONDS = RECONCILE_SETTLE_HOURS * 3600
 
 # Process-lifetime clock so the sweep only scans the DB every RECONCILE_INTERVAL.
 _last_sweep = 0.0
@@ -93,6 +110,11 @@ def _incomplete_rankings(rankings_json) -> bool:
     A tournament whose page genuinely lists no 1st (a few old qualifier
     pages) simply stays in the working set; the cadence gate drops it once it
     is past the scrape window.
+
+    Note: an *empty* table (""/"[]") is NOT incomplete-by-this-test — it is
+    handled separately by `_standings_not_published`, which gates it on the
+    schedule so historical pages that never had a standings table don't turn
+    the sweep into a permanent full-catalog re-scrape.
     """
     if not rankings_json:
         return False
@@ -109,6 +131,27 @@ def _incomplete_rankings(rankings_json) -> bool:
         return True
     first = _first_place(entries)
     return first is not None and first != 1
+
+
+def _standings_not_published(rankings_json) -> bool:
+    """True if a tournament's final standings have not been published yet.
+
+    Superset of `_incomplete_rankings` that also treats a stored EMPTY table
+    (""/"[]") as "not published yet". This is the real-world shape of the gap
+    this sweep exists to close: a very recent event can be captured with NO
+    rankings block at all (PlusForward hadn't rendered the table when the page
+    was last downloaded), so `_incomplete_rankings` reports it complete and the
+    sweep never revisits it — the event page stays blank forever even though
+    the provider publishes a full table hours later (observed: Estoty Duel
+    #221, tid 96651).
+
+    Empty is only a *candidate* signal; callers gate it on the schedule window
+    (`_cadence_seconds`) so the ~dozen ancient pages that legitimately never
+    had a standings table stay out of the working set.
+    """
+    if rankings_json in ("", "[]", None):
+        return True
+    return _incomplete_rankings(rankings_json)
 
 
 def _cadence_seconds(schedule_end, last_match, now: datetime) -> int | None:
@@ -134,6 +177,18 @@ def _cadence_seconds(schedule_end, last_match, now: datetime) -> int | None:
     if last_match and (now - last_match) > timedelta(weeks=RECONCILE_POST_END_WEEKS):
         return None
     return NO_SCHEDULE_SECONDS
+
+
+def _standings_settling(schedule_end, now: datetime) -> bool:
+    """True if a just-finished tournament is inside its post-event settle window.
+
+    During this window the sweep re-checks the standings even when they already
+    look complete, because PlusForward may still publish a bigger/corrected
+    table after the event (see SETTLE_SECONDS).
+    """
+    if not schedule_end or schedule_end <= _MIN_EVENT_DATE:
+        return False
+    return schedule_end <= now < schedule_end + timedelta(seconds=SETTLE_SECONDS)
 
 
 def _incomplete_bracket_tournaments(db: Database) -> list[int]:
@@ -211,13 +266,44 @@ def _due_tournaments(db: Database, now: datetime) -> list[int]:
         if last is None or (time.time() - last) >= cadence:
             due.append(tid)
 
+    # Standings working set: incomplete tables, plus empty tables for events
+    # whose schedule still puts them inside the scrape window (a freshly
+    # finished event whose page was downloaded before PlusForward rendered the
+    # standings block). Restricting to tournaments that have at least one
+    # match keeps us from probing catalog-only entries; the cadence gate drops
+    # anything past the window, so ancient table-less pages cost one scan, not
+    # a re-scrape.
     rows = db.client.execute(
-        "SELECT tournament_id, rankings FROM tournaments FINAL "
-        "WHERE rankings != '' AND rankings != '[]'"
+        "SELECT t.tournament_id, t.rankings, t.schedule_end FROM tournaments AS t FINAL "
+        "WHERE t.rankings != '' AND t.rankings != '[]'"
     )
-    for tid, rankings in rows:
+    for tid, rankings, _se in rows:
         if _incomplete_rankings(rankings):
             _add(tid)
+    empty_rows = db.client.execute(
+        "SELECT t.tournament_id FROM tournaments AS t FINAL "
+        "WHERE (t.rankings = '' OR t.rankings = '[]') "
+        "AND t.tournament_id IN (SELECT DISTINCT tournament_id FROM matches FINAL "
+        "WHERE tournament_id > 0)"
+    )
+    for (tid,) in empty_rows:
+        _add(tid)
+    # Post-event settle window: a just-finished event can still get its
+    # standings table EXTENDED (or corrected) by PlusForward after schedule_end.
+    # A mid-event capture is a shorter-but-plausible table that the completeness
+    # tests above accept, so without this it would be marked done and the stale
+    # table would stick forever (observed: tid 96012, captured as a 4-row table
+    # while the live page carried a corrected 17-row one). Re-check these on the
+    # post-end cadence for SETTLE_SECONDS. Bounded to recent events.
+    settle_rows = db.client.execute(
+        "SELECT t.tournament_id FROM tournaments AS t FINAL "
+        "WHERE t.schedule_end > %(lo)s AND t.schedule_end <= %(hi)s "
+        "AND t.tournament_id IN (SELECT DISTINCT tournament_id FROM matches FINAL "
+        "WHERE tournament_id > 0)",
+        {"lo": now - timedelta(seconds=SETTLE_SECONDS), "hi": now},
+    )
+    for (tid,) in settle_rows:
+        _add(tid)
     # Incomplete brackets: refresh on the same graduated cadence so a bracket
     # fetched while its final was still pending gets re-checked after the
     # provider publishes the result. Dropped once past the scrape window.
@@ -260,9 +346,14 @@ def reconcile_once(force_all: bool = False) -> dict:
                 resolver = TournamentResolver(db, fetcher)
                 bracket_fetcher = BracketFetcher(db, fetcher)
                 det = db.get_tournament_details(tid)
-                standings_incomplete = bool(det) and _incomplete_rankings(det.get("rankings"))
-                if standings_incomplete:
-                    # Standings stuck: re-download + re-parse the page.
+                standings_incomplete = bool(det) and _standings_not_published(
+                    det.get("rankings"))
+                settling = _standings_settling(
+                    det.get("schedule_end") if det else None, now)
+                if standings_incomplete or settling:
+                    # Standings stuck / not published yet, OR the event just
+                    # ended and PlusForward may still extend its table: always
+                    # re-download + re-parse rather than trust the cached copy.
                     html = fetcher.fetch(f"https://www.plusforward.net/post/{tid}/")
                     if not html:
                         logger.warning(f"reconcile: no html for {tid}")
@@ -278,12 +369,20 @@ def reconcile_once(force_all: bool = False) -> dict:
                 except Exception as e:
                     logger.warning(f"reconcile: bracket refresh failed for {tid}: {e}")
                 det = db.get_tournament_details(tid)
-                standings_ok = bool(det) and not _incomplete_rankings(det.get("rankings"))
+                standings_ok = bool(det) and not _standings_not_published(
+                    det.get("rankings"))
                 b = db.get_tournament_bracket(tid)
                 bracket_ok = bool(b) and b.get("data", {}).get("complete") is True
-                if standings_ok and bracket_ok:
+                # A settling tournament is only "done" once its settle window
+                # closes; until then keep it in the working set so the hourly
+                # cadence keeps re-checking it for a late table extension.
+                still_settling = bool(det) and _standings_settling(
+                    det.get("schedule_end"), now)
+                if standings_ok and bracket_ok and not still_settling:
                     logger.info(f"reconcile: {tid} standings + bracket now complete")
                     _last_attempt.pop(tid, None)
+                elif still_settling:
+                    logger.info(f"reconcile: {tid} settling — will re-check for a late standings update")
                 refreshed += 1
             except Exception as e:
                 logger.error(f"reconcile: refresh failed for {tid}: {e}")
