@@ -272,41 +272,61 @@ class BracketFetcher:
             BracketFetcher.no_source += 1
             return False
 
-        source = self.detect_source(raw_html)
-        if not source:
-            # The static HTML may lack the bracket link (loaded dynamically
-            # into the "Groups / Brackets" tab). Fall back to the AJAX
-            # endpoint the page JS uses before declaring no source.
-            source = self._detect_source_ajax(tournament_id)
-        if not source:
+        # PlusForward renders its own bracket for many events, and it is the
+        # page's own source of truth: unlike external providers it cannot lag
+        # behind the tournament (Toornament was observed still reporting
+        # "running" with blank Grand Final slots long after the event ended —
+        # tid 97535). So probe it FIRST and prefer it when it covers the event:
+        #   native complete AND covers every known match -> native
+        #   native complete but missing matches          -> external if complete
+        #   native incomplete, external complete         -> external (proves final)
+        #   both incomplete / no external                -> native (PF priority)
+        # The coverage guard matters: PF's native bracket can omit a match we
+        # already stored (tid 95983: native carries 29 real matches, the DB has
+        # 30 — LB R3 1eroy vs Overtime), so pure preference would silently drop
+        # it. Measured across recent events native otherwise matches our match
+        # set exactly (96459 30=30, 96851 22=22, 96651 34=34), sometimes carries
+        # more (97534) and never fewer unless a match is genuinely absent.
+        native = self._pf_native_fallback(tournament_id)
+        native_ok = bool(native and native["normalized"].get("complete"))
+
+        chosen = None  # (kind, payload, normalized)
+        if native_ok and self._covers_known_matches(
+                tournament_id, native["normalized"]):
+            chosen = ("plusforward", native["payload"], native["normalized"])
+        else:
+            source = self.detect_source(raw_html)
+            if not source:
+                # Static HTML lacks the link (loaded dynamically into the
+                # "Groups / Brackets" tab) — probe the AJAX endpoint.
+                source = self._detect_source_ajax(tournament_id)
+            external = (self._fetch_external_bracket(tournament_id, source)
+                        if source else None)
+            if external and external["normalized"].get("complete"):
+                chosen = (external["kind"], external["payload"],
+                          external["normalized"])
+            elif native:
+                chosen = ("plusforward", native["payload"], native["normalized"])
+            elif external:
+                chosen = (external["kind"], external["payload"],
+                          external["normalized"])
+
+        if chosen is None:
             BracketFetcher.no_source += 1
             return False
 
-        kind, ref = source  # ('toornament', tid), ('shambler', cup), ('egb', slug), ('kuachi', (cup_id, stage_no)), ('plusforward', tournament_id), ('challonge', (host, slug)), ('battlefy', tid), ('startgg', slug)
-        try:
-            payload = self._fetch_payload(kind, ref)
-            # Cache the raw payload BEFORE normalizing: even if normalization
-            # or the parsed store fails later, the provider's answer survived.
-            if payload is not None:
-                self._db.upsert_raw_bracket(
-                    tournament_id, kind,
-                    json.dumps(payload, ensure_ascii=False),
-                )
-            normalized = self._normalize_payload(kind, payload or {})
-        except Exception as e:
-            BracketFetcher.failed += 1
-            logger.warning(f"bracket fetch failed for tournament {tournament_id} ({kind}): {e}")
-            return False
+        kind, payload, normalized = chosen
 
-        if not normalized or not normalized.get("stages"):
-            BracketFetcher.failed += 1
-            logger.debug(f"tournament {tournament_id}: {kind} has no bracket data")
-            return False
+        # Cache the raw payload of the source we actually used, before storing
+        # the parsed bracket: the provider's answer survives even if the parsed
+        # write fails, so brackets stay re-derivable offline.
+        if payload is not None and kind == "plusforward":
+            self._db.upsert_raw_bracket(
+                tournament_id, "plusforward",
+                json.dumps(payload, ensure_ascii=False),
+            )
 
-        # Don't persist an empty bracket (stages present but zero matches) —
-        # that's a transient API miss, not a real bracket. Leaving it unstored
-        # lets fetch_for_tournament_if_needed retry on a later pass.
-        if not self._has_matches(normalized):
+        if not normalized.get("stages") or not self._has_matches(normalized):
             BracketFetcher.failed += 1
             logger.warning(
                 f"tournament {tournament_id}: {kind} bracket empty (no matches), not storing"
@@ -328,6 +348,92 @@ class BracketFetcher:
     # bracket schema, no network). Successful payloads are persisted in the
     # raw_brackets table so brackets survive `reset.py parsed` wipes and can
     # be replayed offline after parsing changes.
+
+    @staticmethod
+    def _real_match_count(normalized: dict) -> int:
+        """Matches with two actual players (byes/placeholders excluded)."""
+        return sum(
+            1
+            for st in normalized.get("stages", []) or []
+            for g in st.get("groups", []) or []
+            for r in g.get("rounds", []) or []
+            for m in r.get("matches", []) or []
+            if m.get("p1") and m.get("p2")
+        )
+
+    def _covers_known_matches(self, tournament_id: int, normalized: dict) -> bool:
+        """True if a native bracket accounts for every match we have stored.
+
+        Guards against preferring a native bracket that omits real matches
+        (observed on tid 95983). Group-stage events can legitimately have more
+        DB matches than playoff-bracket slots; there the guard simply keeps the
+        external bracket, which carries the same view — never a data loss.
+        """
+        try:
+            known = self._db.client.execute(
+                "SELECT count() FROM matches FINAL WHERE tournament_id = %(t)s",
+                {"t": tournament_id},
+            )[0][0]
+        except Exception as e:
+            logger.debug(f"coverage check failed for {tournament_id}: {e}")
+            return True
+        if known and self._real_match_count(normalized) < known:
+            logger.info(
+                f"tournament {tournament_id}: native bracket covers "
+                f"{self._real_match_count(normalized)}/{known} known matches; "
+                f"not preferring it"
+            )
+            return False
+        return True
+
+    def _fetch_external_bracket(self, tournament_id: int, source):
+        """Fetch + normalize one external provider bracket, or None.
+
+        Caches the raw payload before normalizing so the provider's answer
+        survives a normalization/store failure (offline rebuilds).
+        """
+        kind, ref = source
+        try:
+            payload = self._fetch_payload(kind, ref)
+            if payload is not None:
+                self._db.upsert_raw_bracket(
+                    tournament_id, kind,
+                    json.dumps(payload, ensure_ascii=False),
+                )
+            normalized = self._normalize_payload(kind, payload or {})
+        except Exception as e:
+            BracketFetcher.failed += 1
+            logger.warning(
+                f"bracket fetch failed for tournament {tournament_id} ({kind}): {e}")
+            return None
+        if not normalized or not normalized.get("stages"):
+            logger.debug(f"tournament {tournament_id}: {kind} has no bracket data")
+            return None
+        if not self._has_matches(normalized):
+            logger.warning(
+                f"tournament {tournament_id}: {kind} bracket empty (no matches)")
+            return None
+        return {"kind": kind, "payload": payload, "normalized": normalized}
+
+    def _pf_native_fallback(self, tournament_id: int):
+        """Fetch + normalize PlusForward's own (native) bracket, or None.
+
+        Probed on every fetch: PF native brackets are the page's own source of
+        truth and are preferred whenever they carry matches (see
+        fetch_for_tournament). Returns {payload, normalized} or None.
+        """
+        try:
+            payload = self._pf_native_payload(tournament_id)
+            if not payload:
+                return None
+            normalized = self._pf_native_normalize(payload)
+            if not self._has_matches(normalized):
+                return None
+            return {"payload": payload, "normalized": normalized}
+        except Exception as e:
+            logger.debug(
+                f"native bracket fallback failed for {tournament_id}: {e}")
+            return None
 
     def _fetch_payload(self, kind: str, ref) -> dict | None:
         """Fetch one provider's raw data into a JSON-safe payload (network).
@@ -533,7 +639,15 @@ class BracketFetcher:
             return src
         # No external provider link — but PlusForward itself may render the
         # bracket natively (the AJAX response is bracket HTML, not a link).
-        if '<div class="bracket"' in body:
+        # Two markup generations exist: the old `div.bracket` tree and the
+        # 2026-10 rewrite (`div.pf_tour_brackets` / `pf-bracket-cont` with
+        # `pf-bracket-col` columns). PlusForward now serves the new one, so
+        # checking only the old class made every natively-bracketed event come
+        # back as "no source" (observed: NAQCL Duel #76, tid 96814, whose page
+        # also carries a placeholder toornament link — no real id — so the AJAX
+        # fallback is the only chance to find the bracket).
+        if '<div class="bracket"' in body or "pf_tour_brackets" in body \
+                or "pf-bracket-cont" in body:
             return ("plusforward", tournament_id)
         return None
 
@@ -1612,6 +1726,73 @@ class BracketFetcher:
         }
 
     @staticmethod
+    def _pf_ent_round(el) -> dict:
+        """Parse one pf-bracket-match-ent cell (new 2026-10 markup).
+
+        Returns {name, score, winner}. A bye slot (class `pf-bracket-bye`,
+        text "BYE") yields an empty name so the frontend renders it as an
+        empty slot rather than a player called BYE — matching the old markup,
+        where byes were player-less cells.
+        """
+        cls = el.get("class") or []
+        if "pf-bracket-bye" in cls:
+            return {"name": "", "score": "", "winner": False}
+        name_el = el.find("div", class_="name")
+        score_el = el.find("div", class_="score")
+        return {
+            "name": name_el.get_text(strip=True) if name_el else "",
+            "score": score_el.get_text(strip=True) if score_el else "",
+            "winner": "pf-bracket-match-winner" in cls,
+        }
+
+    @staticmethod
+    def _parse_pf_native_rounds_new(body: str) -> list:
+        """Parse the 2026-10 PlusForward-native bracket markup into rounds.
+
+        The rewrite replaced the old `div.bracket` / `div.bracket-column` /
+        `bracket-match` tree with `div.pf_tour_brackets` > `div.pf-bracket-cont`
+        containing one `div.pf-bracket` (wb/lb/gf) per bracket, each holding
+        `div.pf-bracket-col` columns (`div.pf-bracket-col-label` title) of
+        `div.pf-bracket-match` rows. Winners are marked by the
+        `pf-bracket-match-winner` class (no bold styling any more).
+        """
+        try:
+            soup = BeautifulSoup(body, "html.parser")
+        except Exception:
+            return []
+        cont = soup.find("div", class_="pf-bracket-cont") \
+            or soup.find("div", class_="pf_tour_brackets")
+        if not cont:
+            return []
+        rounds = []
+        for col in cont.find_all("div", class_="pf-bracket-col", recursive=True):
+            label_el = col.find("div", class_="pf-bracket-col-label")
+            title = label_el.get_text(strip=True) if label_el else ""
+            matches = []
+            for m in col.find_all("div", class_="pf-bracket-match", recursive=True):
+                main = m.find("div", class_="pf-bracket-match-main", recursive=True)
+                if not main:
+                    continue
+                ents = main.find_all(
+                    "div", class_="pf-bracket-match-ent", recursive=True)
+                if len(ents) < 2:
+                    continue
+                p1 = BracketFetcher._pf_ent_round(ents[0])
+                p2 = BracketFetcher._pf_ent_round(ents[1])
+                matches.append({
+                    "p1": p1["name"],
+                    "p2": p2["name"],
+                    "score1": int(p1["score"]) if p1["score"].isdigit() else None,
+                    "score2": int(p2["score"]) if p2["score"].isdigit() else None,
+                    "winner": "p1" if p1["winner"] else ("p2" if p2["winner"] else None),
+                })
+            if matches:
+                rounds.append({"title": title, "matches": matches,
+                               "consolidation": bool(
+                                   _PF_CONSOLIDATION_RE.search(title or ""))})
+        return rounds
+
+    @staticmethod
     def _parse_pf_native_rounds(body: str) -> list:
         """Parse PlusForward-native bracket HTML into a list of round dicts.
 
@@ -1621,6 +1802,9 @@ class BracketFetcher:
         the main round plus optional sub-headed sections (a bracket-match-title
         header, e.g. a '3rd Place Match' decider) — each becomes its own round
         dict, with consolidation segments flagged for separate grouping.
+
+        Handles both the legacy `div.bracket` tree and the 2026-10 rewrite
+        (`div.pf_tour_brackets`); the new markup has its own parser.
         """
         try:
             soup = BeautifulSoup(body, "html.parser")
@@ -1628,7 +1812,7 @@ class BracketFetcher:
             return []
         bracket = soup.find("div", class_="bracket")
         if not bracket:
-            return []
+            return BracketFetcher._parse_pf_native_rounds_new(body)
         rounds = []
         for col in bracket.find_all("div", class_="bracket-column"):
             title_el = col.find("div", class_="bracket-round-title")
