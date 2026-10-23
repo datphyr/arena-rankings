@@ -83,12 +83,18 @@ _TOORNAMENT_RE = re.compile(
     r"play\.toornament\.com/[a-z_]+/tournaments/(\d+)", re.IGNORECASE)
 _SHAMBLER_RE = re.compile(
     r"shambler\.site/(?:[a-z0-9_-]+/)*brackets\.php\?cup=(\d+)", re.IGNORECASE)
-# EGB cup links: egb.com / egb.net / egabetz.com / egabe.online with a hash
-# route /cup#/t/<slug> (optionally followed by /bracket). Slug is the part
-# after /t/. egabe.online is an alias that no longer resolves in a browser but
-# the API still serves the bracket (cup.egb.net), so we accept it for detection.
+# EGB cup links: egb.com / egb.net / egabetz.com / egabe.online / egalive.net
+# with a hash route /cup#/t/<slug> (optionally followed by /bracket). Slug is
+# the part after /t/. egabe.online is an alias that no longer resolves in a
+# browser but the API still serves the bracket (cup.egb.net), so we accept it
+# for detection. egalive.net is PlusForward's current EGB link host: the slugs
+# on it resolve at cup.egb.net just the same (verified on
+# qc-egb-three-map-cup-1), so omitting it silently dropped the bracket for
+# every tournament using that host.
 _EGB_RE = re.compile(
-    r"(?:egb\.com|egb\.net|egabetz\.com|egabe\.online)/cup#/t/([a-z0-9_-]+)", re.IGNORECASE)
+    r"(?:egb\.com|egb\.net|egabetz\.com|egabe\.online|egalive\.net)"
+    r"/cup#/t/([a-z0-9_-]+)",
+    re.IGNORECASE)
 
 # kuachi.gg cups: /cups/<uuid>/stage/<stage_no> (kuachi cups — AU/NZ/Oceania
 # AFPS tournaments). The bracket is served by the kuachi REST API.
