@@ -19,6 +19,7 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 
 from .data_provider import DataProvider, _sort_matches
+from .bracket_match_backfill import is_synthetic_match_id
 from config import MIN_MATCHES_ELO, MIN_MATCHES_GLICKO2
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -751,8 +752,12 @@ def _match_page(request: Request, match_id: int):
         ctx["match"] = m
         ctx["played_at_str"] = _fmt_dt(m.get("played_at"))
         # Link to the source match post on PlusForward (origin data).
-        # Match posts are at /post/{match_id}/ — the same id as the match.
-        ctx["plusforward_url"] = f"https://www.plusforward.net/post/{match_id}/"
+        # Match posts are at /post/{match_id}/ — the same id as the match —
+        # except for bracket-derived matches, which have no PF post at all
+        # (see src/bracket_match_backfill.py), so linking would 404.
+        if not is_synthetic_match_id(match_id):
+            ctx["plusforward_url"] = (
+                f"https://www.plusforward.net/post/{match_id}/")
         # Ratings each player had just before the match (per game + system).
         ctx["pre_ratings"] = dx.get_ratings_before_match(match_id)
         # Elo K-factor each player had going into the match (per game), for the

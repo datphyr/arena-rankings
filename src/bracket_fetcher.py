@@ -179,6 +179,12 @@ _API_LIMIT = 50
 # winners from a player reappearing in a later round (_infer_bracket_winners).
 _TOORNAMENT_ROUND_ROBIN_TYPES = {"league", "pools", "swiss", "round_robin"}
 
+# First id used for matches reconstructed from a bracket rather than parsed
+# from a PlusForward post (see src/bracket_match_backfill.py). Real post ids
+# are ~1e5, so anything at or above 2**56 is bracket-derived, and code that
+# assumes "one match row == one PlusForward post" must treat it specially.
+SYNTHETIC_MATCH_ID_BASE = 1 << 56
+
 
 class BracketFetcher:
     """Fetch + normalize + store brackets for a tournament."""
@@ -374,11 +380,18 @@ class BracketFetcher:
         (observed on tid 95983). Group-stage events can legitimately have more
         DB matches than playoff-bracket slots; there the guard simply keeps the
         external bracket, which carries the same view — never a data loss.
+
+        Bracket-derived rows are excluded from `known`: they were reconstructed
+        FROM the external bracket (src/bracket_match_backfill.py), so counting
+        them would make every backfilled event look like a native-bracket
+        coverage failure and silently flip the preferred source — the exact
+        opposite of intent, since preference must not depend on backfill.
         """
         try:
             known = self._db.client.execute(
-                "SELECT count() FROM matches FINAL WHERE tournament_id = %(t)s",
-                {"t": tournament_id},
+                "SELECT count() FROM matches FINAL WHERE tournament_id = %(t)s "
+                "AND match_id < %(b)s",
+                {"t": tournament_id, "b": SYNTHETIC_MATCH_ID_BASE},
             )[0][0]
         except Exception as e:
             logger.debug(f"coverage check failed for {tournament_id}: {e}")
@@ -544,8 +557,17 @@ class BracketFetcher:
                 part = o.get("participant") or {}
                 opps.append({"participant": {"name": part.get("name", "")},
                              "score": o.get("score"),
-                             "result": o.get("result")})
+                             "result": o.get("result"),
+                             "forfeit": bool(o.get("forfeit", False))})
             projected.append({
+                # id + playedAt are kept for bracket-derived match backfill
+                # (src/bracket_match_backfill.py): it needs a stable provider
+                # key for each slot and the real kickoff time. Both are small
+                # and normalization ignores them, so the parsed bracket shape
+                # is unchanged.
+                "id": m.get("id"),
+                "played_at": m.get("playedAt"),
+                "status": m.get("status", ""),
                 "stage": {"id": (m.get("stage") or {}).get("id")},
                 "group": {"id": (m.get("group") or {}).get("id"),
                           "name": (m.get("group") or {}).get("name", "")},
